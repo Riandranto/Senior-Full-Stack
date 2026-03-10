@@ -1,0 +1,206 @@
+Tu es un ingénieur full-stack senior. Construis une application “Farady” (Taxi/Bajaj) où le CHAUFFEUR PROPOSE LE PRIX. Ne m’impose pas une stack unique: propose 3 architectures possibles (Web/PWA, Mobile, Firebase-first) puis implémente EN CODE sur Replit la meilleure option “Web/PWA” (la plus simple à lancer sur Replit). L’app doit être prête MVP, sécurisée, temps réel, et avec solution MAP 100% gratuite (OpenStreetMap).
+
+0) RÈGLES IMPORTANTES
+- Ne pas utiliser Google Maps ni services payants.
+- Carte gratuite obligatoire: OpenStreetMap.
+- Langue par défaut: Malagasy (MG). Français (FR) option dans paramètres.
+- Modèle prix: le chauffeur envoie une OFFRE (prix) et le passager choisit.
+- Admin valide les documents chauffeurs avant qu’ils puissent travailler.
+- MVP = paiement CASH uniquement (prévoir extension mobile money plus tard).
+- Code propre, TypeScript strict si utilisé, validation stricte des entrées, gestion erreurs, RBAC.
+
+1) LIVRABLES ATTENDUS
+A) Application qui tourne sur Replit en 1 clic (Start).
+B) README très clair:
+- variables d’environnement
+- comment lancer DB / migrations / seed
+- comptes de test (admin/driver/passenger)
+- comment tester le temps réel
+C) UI complète pour:
+- Passager
+- Chauffeur
+- Admin
+D) Temps réel fonctionnel:
+- offres chauffeurs en direct
+- suivi position chauffeur en direct
+E) DB + seed de données.
+
+2) OPTIONS D’ARCHITECTURE (NE PAS IMPOSER)
+Commence ta réponse par une section “Choix d’architecture” avec 3 options:
+Option A: Web/PWA (recommandée pour Replit)
+Option B: Mobile (Flutter/React Native) + backend
+Option C: Firebase-first
+Explique en 5 lignes max les avantages/limites de chaque, puis choisis Option A pour l’implémentation Replit.
+
+3) SOLUTION MAP GRATUITE (PRÉCISE) OBLIGATOIRE
+Séparer clairement:
+- Affichage carte: OpenStreetMap tiles + MapLibre GL JS (ou Leaflet si plus simple).
+- Recherche adresse (geocoding): Nominatim (MVP, faible volume) avec cache local.
+- Routing distance/ETA + “snap to road”:
+  - Utiliser OSRM PUBLIC en MVP SI disponible, sinon fallback calcul Haversine + estimation vitesse.
+  - IMPORTANT: fournir un mode “Self-host ready” (documenter comment remplacer l’URL par OSRM auto-hébergé plus tard).
+- Tracking précision:
+  - Envoi position chauffeur toutes les 2–5s.
+  - Filtre anti-sauts (vitesse max, lissage simple).
+  - Option “snap”: appeler OSRM/matching si activé.
+
+4) FONCTIONNALITÉS MÉTIER (OBLIGATOIRES)
+4.1 Rôles
+- PASSENGER (Mpandeha)
+- DRIVER (Mpamily)
+- ADMIN
+
+4.2 Workflow course (RideStatus)
+- REQUESTED (demande créée)
+- BIDDING (offres ouvertes)
+- ASSIGNED (offre acceptée)
+- DRIVER_EN_ROUTE
+- DRIVER_ARRIVED
+- IN_PROGRESS
+- COMPLETED
+- CANCELED
+
+4.3 Offres (OfferStatus)
+- SENT, ACCEPTED, REJECTED, EXPIRED
+
+4.4 Règles
+- Une demande n’accepte qu’une seule offre.
+- Quand une offre est acceptée, toutes les autres passent EXPIRED automatiquement.
+- Les offres expirent après N secondes (config DB, défaut 90s).
+- Chauffeur doit être APPROVED + ONLINE pour recevoir des demandes.
+- Annulation: enregistrer “cancelBy” (passenger/driver/admin) + raison + timestamp.
+- Anti-spam: un chauffeur ne peut envoyer qu’une offre par ride.
+
+5) ÉCRANS UI (OBLIGATOIRES)
+5.1 Passager
+- Inscription/connexion par téléphone + OTP (MVP OTP simulé: affiché côté serveur/log + stocké DB).
+- Page “Hanao dia”:
+  - carte + sélection départ/destination (pin + recherche)
+  - type véhicule (Taxi/Bajaj)
+  - note au chauffeur
+  - bouton “Mangataka”
+- Page “Tolo-bidy”:
+  - liste temps réel des offres (prix, ETA, chauffeur, note)
+  - countdown expiration
+  - boutons “Ekena” / “Lavina”
+- Page “Dia an-dalana” (ride live):
+  - tracking chauffeur sur carte
+  - statut ride + actions annuler/appeler/chat
+- Fin de course:
+  - reçu + évaluation 1–5 + commentaire
+- Historique courses
+
+5.2 Chauffeur
+- Onboarding + upload documents (CIN, permis, doc véhicule, photo).
+- Statut “Miandry fanamarinana” tant que admin n’a pas approuvé.
+- Mode “En ligne / Hors ligne”
+- Liste demandes proches en temps réel
+- Formulaire offre: prix (Ar) + ETA + message optionnel
+- Ride live: boutons “Tonga” / “Atombohy” / “Vita”
+- Dashboard gains + historique
+
+5.3 Admin
+- Dashboard KPI
+- Validation chauffeurs:
+  - voir documents + APPROVE/REJECT avec raison
+- Gestion utilisateurs (passagers)
+- Gestion rides + détails offres + annulations
+- Paramètres config:
+  - searchRadiusKm
+  - offerExpirySeconds
+  - commissionPercent (MVP peut être 0)
+
+6) DONNÉES & BASE DE DONNÉES (MINIMUM)
+Implémente une DB relationnelle (SQLite pour Replit OK, PostgreSQL préférable si facile).
+Modèle minimum:
+- users: id, phone, name, role, language(mg|fr), passwordHash ou otpAuth, isBlocked, createdAt
+- driver_profiles: id, userId, vehicleType(TAXI|BAJAJ), status(PENDING|APPROVED|REJECTED|SUSPENDED), online, zone, ratingAvg, ratingCount
+- driver_documents: id, driverId, type(CIN|PERMIS|VEHICLE|PHOTO), url, uploadedAt
+- rides: id, passengerId, driverId nullable, status, pickupLat/Lng/Address, dropLat/Lng/Address, distanceKm, etaMinutes, selectedPriceAr, cancelBy, cancelReason, createdAt, updatedAt
+- offers: id, rideId, driverId, priceAr, etaMinutes, message, status, expiresAt, createdAt
+- driver_locations: id, driverId, lat, lng, timestamp
+- audit_logs: id, adminId, action, entityType, entityId, metadata(json), createdAt
+- app_config: id=1, searchRadiusKm, offerExpirySeconds, commissionPercent
+
+7) API (OBLIGATOIRES)
+Endpoints / routes:
+- auth:
+  - POST /auth/request-otp (phone)
+  - POST /auth/verify-otp (phone, otp)
+- passenger:
+  - POST /rides (create request)
+  - GET /rides/:id
+  - GET /rides (history)
+  - POST /rides/:id/cancel
+  - POST /rides/:id/rate
+- driver:
+  - POST /driver/documents (upload)
+  - POST /driver/online (true/false)
+  - GET /driver/requests (open bidding rides in radius)
+  - POST /offers (send offer)
+  - POST /rides/:id/status (arrived/start/end)
+  - POST /driver/location (send position)
+- admin:
+  - GET /admin/drivers?status=PENDING
+  - POST /admin/drivers/:id/approve
+  - POST /admin/drivers/:id/reject
+  - POST /admin/drivers/:id/suspend
+  - GET /admin/users
+  - GET /admin/rides
+  - GET/POST /admin/config
+
+8) TEMPS RÉEL (OBLIGATOIRE)
+Implémente un canal temps réel (WebSocket recommandé, SSE acceptable).
+Events minimum:
+- ride:new_request (aux drivers proches)
+- offer:new (au passenger du ride)
+- offer:expired
+- offer:accepted (au driver gagnant)
+- ride:status_changed (aux 2 parties)
+- driver:location (au passenger en ride live)
+Inclure reconnexion + gestion offline simple.
+
+9) LOGIQUE “PROXIMITÉ” (OBLIGATOIRE)
+- Lors de création d’une demande, détecter chauffeurs ONLINE+APPROVED dans un rayon (config km).
+- Calcul distance chauffeur->pickup via:
+  - OSRM route distance si possible,
+  - sinon Haversine.
+- Envoyer la demande à ces chauffeurs.
+
+10) SÉCURITÉ & QUALITÉ
+- RBAC middleware: deny by default.
+- Validation de toutes entrées (Zod ou équivalent).
+- Protection spam OTP: 1 demande OTP / minute / phone.
+- Upload: limite taille, types fichiers, stockage local ./uploads.
+- Logs:
+  - logs serveur
+  - audit logs admin actions
+
+11) SEED & COMPTES DE TEST
+Créer seed:
+- admin: phone=0340000000 otp/ mdp “123456”
+- 5 drivers APPROVED + ONLINE
+- 2 drivers PENDING
+- 10 passengers
+- 5 rides d’exemple + offres
+
+12) UI TEXTES (MG PAR DÉFAUT)
+Créer dictionnaire i18n:
+- mg.json (par défaut)
+- fr.json
+Exemples boutons MG:
+- Mangataka, Tolo-bidy, Ekena, Lavina, Ajanony, Tonga, Atombohy, Vita
+
+13) CONTRAINTES DE RÉPONSE
+- Génère tout le projet (structure dossiers, scripts).
+- Aucun fichier manquant.
+- Assure que “Run” sur Replit démarre l’app.
+- Fournis étapes exactes: install, migrate, seed, run.
+- En fin de réponse: checklist “Test rapide” (3 minutes) pour vérifier:
+  1) passager crée demande
+  2) driver reçoit et propose prix
+  3) passager accepte
+  4) tracking position en direct
+  5) admin approuve un driver pending
+
+COMMENCE MAINTENANT: produis le code complet et l’organisation du repo, avec README, migrations, seed, et UI/temps réel opérationnels.
