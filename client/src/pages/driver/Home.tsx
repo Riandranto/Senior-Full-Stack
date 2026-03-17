@@ -32,7 +32,6 @@ import { Progress } from '@/components/ui/progress';
 
 import { GEOCENTER } from '@shared/schema';
 
-
 interface ActiveRide {
   id: number;
   passengerName: string;
@@ -40,11 +39,70 @@ interface ActiveRide {
   pickupAddress: string;
   dropAddress: string;
   status: string;
-  priceAr: number;
+  // 🔥 Le prix peut être dans différents champs
+  price?: number;
+  priceAr?: number;
+  amount?: number;
+  total?: number;
+  fare?: number;
   etaMinutes: number;
   distanceKm: number;
   createdAt: string;
+  pickupLat?: string | number;
+  pickupLng?: string | number;
+  dropLat?: string | number;
+  dropLng?: string | number;
+  // Propriétés additionnelles
+  [key: string]: any;
 }
+
+// 🔥 Fonction de débogage pour voir la structure complète
+const debugRideStructure = (ride: any) => {
+  if (!ride) return;
+  
+  console.log('=== STRUCTURE COMPLÈTE DE LA COURSE ===');
+  console.log('Toutes les propriétés:', Object.keys(ride));
+  console.log('Valeurs:', ride);
+  
+  // Chercher le prix dans toutes les propriétés
+  const possiblePriceFields = ['price', 'priceAr', 'amount', 'total', 'fare', 'cost', 'value'];
+  possiblePriceFields.forEach(field => {
+    if (ride[field] !== undefined) {
+      console.log(`🔍 ${field}:`, ride[field], 'type:', typeof ride[field]);
+    }
+  });
+};
+
+// 🔥 Fonction pour extraire le prix avec priorité
+const extractPrice = (ride: any): number => {
+  if (!ride) return 0;
+
+  const possibleFields = [
+    'price',
+    'priceAr',
+    'price_ar',
+    'amount',
+    'total',
+    'fare',
+    'cost',
+    'value',
+    'offerPrice',
+    'driverPrice'
+  ];
+
+  for (const key of possibleFields) {
+    const val = ride[key];
+
+    if (val !== undefined && val !== null) {
+      const num = Number(val);
+      if (!isNaN(num) && num > 0) {
+        return num;
+      }
+    }
+  }
+
+  return 0;
+};
 
 export default function DriverHome() {
   const { t, lang } = useTranslation();
@@ -75,21 +133,37 @@ export default function DriverHome() {
   const [etaAdjustmentError, setEtaAdjustmentError] = useState<string | null>(null);
   const [timeElapsed, setTimeElapsed] = useState<number>(0);
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
-  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0); // 🔥 NOUVEAU: secondes restantes
+  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0);
   const [showArrivalConfirm, setShowArrivalConfirm] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [timerStarted, setTimerStarted] = useState(false);
-  const [startTime, setStartTime] = useState<number | null>(null); // 🔥 NOUVEAU: timestamp de début
+  const [startTime, setStartTime] = useState<number | null>(null);
   
   const etaTimeoutRef = useRef<NodeJS.Timeout>();
   const timerIntervalRef = useRef<NodeJS.Timeout>();
-  const secondsIntervalRef = useRef<NodeJS.Timeout>(); // 🔥 NOUVEAU: intervalle pour les secondes
+  const secondsIntervalRef = useRef<NodeJS.Timeout>();
 
-
-  // Dans le composant DriverHome, ajoutez ces états
   const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
+
+  // 🔥 Debug: Afficher la structure complète de activeRide quand il change
+  useEffect(() => {
+    if (activeRide) {
+      console.log('🔥 activeRide mis à jour:', activeRide);
+      console.log('🔍 Propriétés disponibles:', Object.keys(activeRide));
+      console.log('💰 Recherche du prix...');
+      
+      const price = extractPrice(activeRide);
+      console.log('💰 Prix extrait:', price);
+    }
+  }, [activeRide]);
+
+  // 🔥 Prix formaté pour l'affichage
+  const formattedPrice = useMemo(() => {
+    const price = extractPrice(activeRide);
+    return price ? price.toLocaleString('fr-FR') : "0";
+  }, [activeRide]);
 
   // Afficher la fenêtre de suivi quand une course est active
   useEffect(() => {
@@ -111,7 +185,7 @@ export default function DriverHome() {
         });
       }
 
-       // Calculer l'itinéraire complet
+      // Calculer l'itinéraire complet
       if (activeRide.pickupLat && activeRide.pickupLng && activeRide.dropLat && activeRide.dropLng) {
         const pickup = { 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -183,11 +257,10 @@ export default function DriverHome() {
       setShowRideTracking(false);
       setTimerStarted(false);
       setStartTime(null);
-
-        // Réinitialiser quand la course n'est plus active
-        setRouteCoords(undefined);
-        setPickupCoords(null);
-        setDropoffCoords(null);
+      setRouteCoords(undefined);
+      setPickupCoords(null);
+      setDropoffCoords(null);
+      
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = undefined;
@@ -208,9 +281,9 @@ export default function DriverHome() {
         secondsIntervalRef.current = undefined;
       }
     };
-  }, [activeRide, lang, timerStarted, startTime, timeRemaining, timeRemainingSeconds]);
+  }, [activeRide, lang, timerStarted, startTime, timeRemaining, timeRemainingSeconds, toast]);
 
-  // Modifiez le tableau markers dans MapView pour inclure les marqueurs de la course active
+  // Marqueurs pour la carte
   const pickupMarkers = useMemo(() => {
     const markers = requests.map((r: any) => ({
       lat: parseFloat(r.pickupLat as any),
@@ -282,7 +355,7 @@ export default function DriverHome() {
     return () => {
       unsubscribe();
     };
-  }, [connected, profile?.userId, refetchActiveRide, subscribe, lang]);
+  }, [connected, profile?.userId, refetchActiveRide, subscribe, lang, toast]);
 
   // Validation de l'ajustement ETA
   const validateEtaAdjustment = useCallback((value: string): string | null => {
@@ -328,7 +401,7 @@ export default function DriverHome() {
     } catch (error) {}
   };
 
-  // 🔥 CORRIGÉ: Gestionnaire pour "makanesa / Commencer"
+  // Gestionnaire pour "makanesa / Commencer"
   const handleStartJourney = async () => {
     if (!activeRide) {
       console.error("No active ride");
@@ -340,10 +413,6 @@ export default function DriverHome() {
       return;
     }
   
-    console.log("1. Active ride:", activeRide);
-    console.log("2. Current status:", activeRide.status);
-    console.log("3. Trying to update to: DRIVER_EN_ROUTE");
-  
     try {
       // Afficher le chargement
       toast({
@@ -351,25 +420,18 @@ export default function DriverHome() {
       });
   
       // Appel API
-      const result = await updateRideStatus.mutateAsync('DRIVER_EN_ROUTE');
-      console.log("4. Mutation result:", result);
+      await updateRideStatus.mutateAsync('DRIVER_EN_ROUTE');
   
       // Mise à jour UI
       setTimerStarted(true);
       setStartTime(Date.now());
       await refetchActiveRide();
-      console.log("5. UI updated, timer started");
   
       toast({
         title: lang === 'mg' ? "makanesa!" : "C'est parti!",
       });
     } catch (error: any) {
       console.error("ERROR in handleStartJourney:", error);
-      console.error("Error details:", {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-      });
   
       // Annuler la mise à jour UI
       setTimerStarted(false);
@@ -589,11 +651,6 @@ export default function DriverHome() {
     return driverPos || GEOCENTER;
   }, [requests, driverPos, activeRide]);
 
-  /*const pickupMarkers = requests.map((r: any) => ({
-    lat: parseFloat(r.pickupLat as any),
-    lng: parseFloat(r.pickupLng as any),
-  }));*/
-
   if (profileLoading) {
     return (
       <MobileLayout role="driver">
@@ -636,7 +693,6 @@ export default function DriverHome() {
           zoom={16}
           interactive={true} 
           markers={pickupMarkers}
-          // Ajoutez ces props pour afficher le trajet complet
           pickupMarker={pickupCoords}
           dropoffMarker={dropoffCoords}
           showRoute={!!routeCoords}
@@ -679,6 +735,14 @@ export default function DriverHome() {
         </div>
       )}
 
+      {/* 🔥 AFFICHAGE DEBUG TEMPORAIRE - À SUPPRIMER PLUS TARD */}
+      {activeRide && (
+        <div className="absolute top-36 left-1/2 -translate-x-1/2 z-50 bg-yellow-100 text-black p-2 rounded text-xs">
+          <div>Debug Prix: {formattedPrice} Ar</div>
+          <div>Props dispo: {Object.keys(activeRide).join(', ')}</div>
+        </div>
+      )}
+
       {/* Fenêtre de suivi de course */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
@@ -701,8 +765,9 @@ export default function DriverHome() {
                     {activeRide.status === 'DRIVER_ARRIVED' && (lang === 'mg' ? 'Tonga' : 'Arrivé')}
                     {activeRide.status === 'IN_PROGRESS' && (lang === 'mg' ? 'An-dalana' : 'En cours')}
                   </Badge>
+                  {/* 🔥 CORRIGÉ: Affichage du prix avec fallback et debug */}
                   <h3 className="font-display font-bold text-xl">
-                    {activeRide.priceAr?.toLocaleString() || '0'} Ar
+                    {formattedPrice} Ar
                   </h3>
                 </div>
                 <div className="text-right">
@@ -761,7 +826,6 @@ export default function DriverHome() {
 
               {/* Actions selon le statut */}
               <div className="space-y-3">
-                {/* 🔥 CORRIGÉ: Bouton "makanesa" - disparaît après clic */}
                 {activeRide.status === 'ASSIGNED' && !timerStarted && (
                   <Button 
                     onClick={handleStartJourney}
@@ -921,7 +985,7 @@ export default function DriverHome() {
           <div className="py-4 text-center">
             <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-3" />
             <p className="text-lg font-bold text-primary mb-1">
-              {activeRide?.priceAr?.toLocaleString() || '0'} Ar
+              {formattedPrice} Ar
             </p>
             <p className="text-sm text-muted-foreground">
               {lang === 'mg' 

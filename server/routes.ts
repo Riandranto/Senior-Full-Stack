@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { api, errorSchemas } from "@shared/routes";
+import { api } from "@shared/routes";
 import { users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, isWithinRange, calculateDistance, WS_EVENTS } from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
@@ -45,7 +45,6 @@ export async function registerRoutes(
   const clients = new Map<number, WebSocket>();
 
   wss.on('connection', (ws, req) => {
-    // Simple authentication for WS: client sends { type: 'auth', payload: { userId } }
     let userId: number | null = null;
     
     ws.on('message', (message) => {
@@ -54,21 +53,22 @@ export async function registerRoutes(
         if (data.type === 'auth' && data.payload?.userId) {
           userId = data.payload.userId;
           clients.set(userId!, ws);
+          console.log(`✅ WebSocket authenticated for user ${userId}`);
         }
       } catch (e) {
-        console.error("WS error:", e);
+        console.error("❌ WS error:", e);
       }
     });
 
     ws.on('close', () => {
       if (userId) {
         clients.delete(userId);
+        console.log(`🔌 WebSocket closed for user ${userId}`);
       }
     });
   });
 
   const broadcastToDrivers = async (message: any) => {
-    // In a real app, query online drivers within radius
     const drivers = await storage.getAllDrivers();
     const onlineDrivers = drivers.filter(d => d.online);
     for (const d of onlineDrivers) {
@@ -86,70 +86,146 @@ export async function registerRoutes(
     }
   };
 
-  // Auth Routes
+  // ==================== AUTH ROUTES ====================
+
+  // Route OTP
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
+      console.log('📞 Backend - requestOtp called');
+      console.log('📦 Body:', req.body);
+      console.log('📦 Headers:', req.headers);
+      console.log('📦 Session ID:', req.session.id);
+      
       const input = api.auth.requestOtp.input.parse(req.body);
-      // Simulate OTP
-      console.log(`OTP for ${input.phone} is 123456`);
-      res.json({ message: "OTP sent" });
+      console.log(`✅ OTP for ${input.phone} is 123456`);
+      
+      res.json({ message: "OTP sent", success: true });
     } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
+      console.error('❌ OTP request error:', e);
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Numéro de téléphone invalide" });
+      }
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
 
+  // Route verify OTP
+  // Dans routes.ts, assurez-vous que la route verifyOtp a ces en-têtes
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
+      console.log('🔐 Backend - verifyOtp called');
+      console.log('📦 Body:', req.body);
+      console.log('📦 Session ID avant:', req.session.id);
+      
       const input = api.auth.verifyOtp.input.parse(req.body);
+      
       if (input.otp !== "123456") {
-        return res.status(401).json({ message: "Invalid OTP" });
+        return res.status(401).json({ message: "Code invalide" });
       }
 
       let user = await storage.getUserByPhone(input.phone);
       if (!user) {
-        user = await storage.createUser({ phone: input.phone, name: "User " + input.phone.slice(-4), role: "PASSENGER", language: "mg" });
+        user = await storage.createUser({ 
+          phone: input.phone, 
+          name: "User " + input.phone.slice(-4), 
+          role: "PASSENGER", 
+          language: "mg" 
+        });
       }
 
+      // Sauvegarder l'utilisateur dans la session
       req.session.userId = user.id;
       req.session.role = user.role;
+      
+      console.log('✅ Session avant sauvegarde:', { userId: req.session.userId, role: req.session.role });
+      
+      // Sauvegarder la session
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
-          if (err) reject(err);
-          else resolve();
+          if (err) {
+            console.error('❌ Session save error:', err);
+            reject(err);
+          } else {
+            console.log('✅ Session saved successfully');
+            resolve();
+          }
         });
       });
 
-      res.json({ user });
+      console.log('✅ User authenticated:', user.id, user.role);
+      console.log('📦 Session après:', req.session);
+      
+      // IMPORTANT: Définir les en-têtes CORS explicites
+      //res.setHeader('Access-Control-Allow-Origin', 'http://192.168.1.102:8081'); // URL de votre app Expo
+      //res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
+      
+      res.json({ user, success: true });
+      
     } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
+      console.error('❌ Backend error:', e);
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Données invalides" });
+      }
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
 
+  // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {
+    console.log('👤 Backend - getMe called');
+    console.log('📦 Session:', req.session);
+    
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      return res.status(401).json({ message: "Non authentifié" });
     }
+    
     const user = await storage.getUser(req.session.userId);
     if (!user) {
-      return res.status(401).json({ message: "User not found" });
+      return res.status(401).json({ message: "Utilisateur non trouvé" });
     }
+    
     res.json(user);
   });
 
+  // Route logout
   app.post(api.auth.logout.path, (req, res) => {
-    req.session.destroy(() => {
-      res.json({ message: "Logged out" });
+    console.log('🚪 Backend - logout called');
+    
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('❌ Logout error:', err);
+        return res.status(500).json({ message: "Erreur lors de la déconnexion" });
+      }
+      res.json({ message: "Déconnexion réussie" });
     });
   });
 
-  // Passenger Routes
+  // ==================== DEBUG ROUTE ====================
+  app.get('/api/debug/session', (req, res) => {
+    console.log('🔍 Debug session:');
+    console.log('Session ID:', req.session.id);
+    console.log('Session data:', req.session);
+    console.log('User ID:', req.session.userId);
+    console.log('Role:', req.session.role);
+    
+    res.json({
+      sessionId: req.session.id,
+      userId: req.session.userId,
+      role: req.session.role,
+      cookie: req.session.cookie
+    });
+  });
+
+  // ==================== PASSENGER ROUTES ====================
+
   app.post(api.passenger.createRide.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     
     try {
       const input = api.passenger.createRide.input.parse(req.body);
       
-      // Geo-restriction check
       if (!isWithinRange(input.pickupLat, input.pickupLng) || 
           !isWithinRange(input.dropLat, input.dropLng)) {
         return res.status(400).json({ 
@@ -172,7 +248,6 @@ export async function registerRoutes(
         etaMinutes,
       });
 
-      // Broadcast to nearby drivers
       const user = await storage.getUser(req.session.userId);
       await broadcastToDrivers({
         type: WS_EVENTS.RIDE_NEW_REQUEST,
@@ -182,6 +257,7 @@ export async function registerRoutes(
       res.status(201).json(ride);
     } catch (e) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: e.errors[0].message });
+      console.error('❌ Create ride error:', e);
       res.status(500).json({ message: "Internal error" });
     }
   });
@@ -212,7 +288,6 @@ export async function registerRoutes(
       const input = api.passenger.cancelRide.input.parse(req.body);
       const ride = await storage.cancelRide(id, input.reason, req.session.role || "PASSENGER");
       
-      // Notify parties
       await broadcastToDrivers({ type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: ride });
       
       res.json(ride);
@@ -287,7 +362,8 @@ export async function registerRoutes(
     }
   });
 
-  // Driver Routes
+  // ==================== DRIVER ROUTES ====================
+
   app.post(api.driver.setOnline.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     try {
@@ -309,10 +385,8 @@ export async function registerRoutes(
   app.get(api.driver.getRequests.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     
-    // In real app, we would use driver's current location to filter
     const rides = await storage.getNearbyRequests();
     
-    // Attach passenger info
     const enrichedRides = await Promise.all(rides.map(async r => {
       const passenger = await storage.getUser(r.passengerId);
       return { ...r, passenger };
@@ -361,7 +435,6 @@ export async function registerRoutes(
     try {
       const input = api.driver.updateRideStatus.input.parse(req.body);
       
-      // Vérifier que le conducteur est bien assigné à cette course
       const ride = await storage.getRide(id);
       if (!ride) {
         return res.status(404).json({ message: "Ride not found" });
@@ -371,7 +444,6 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Forbidden - not your ride" });
       }
       
-      // Vérifier que la transition de statut est valide
       const validTransitions: Record<string, string[]> = {
         'ASSIGNED': ['DRIVER_EN_ROUTE'],
         'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED'],
@@ -387,7 +459,6 @@ export async function registerRoutes(
       
       const updatedRide = await storage.updateRideStatus(id, input.status);
       
-      // Notifier via WebSocket
       sendToUser(ride.passengerId, { 
         type: WS_EVENTS.RIDE_STATUS_CHANGED, 
         payload: updatedRide 
@@ -434,17 +505,87 @@ export async function registerRoutes(
     }
   });
 
-  // Admin Routes
+  app.get('/api/driver/active-ride', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    
+    try {
+      const activeRide = await storage.getDriverActiveRide(req.session.userId);
+      
+      if (!activeRide) {
+        return res.status(404).json({ message: "No active ride" });
+      }
+      
+      const passenger = await storage.getUser(activeRide.passengerId);
+      
+      res.json({
+        ...activeRide,
+        passengerName: passenger?.name,
+        passengerPhone: passenger?.phone,
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  app.post('/api/rides/:id/eta', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    
+    const id = parseInt(req.params.id);
+    const { additionalMinutes } = req.body;
+    
+    try {
+      const ride = await storage.updateRideEta(id, additionalMinutes);
+      res.json(ride);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update ETA" });
+    }
+  });
+
+  // ==================== ADMIN ROUTES ====================
+
   app.get('/api/admin/stats', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const stats = await storage.getAdminStats();
-    res.json(stats);
+    console.log('📊 Admin stats called');
+    console.log('Session:', req.session);
+    console.log('User ID:', req.session.userId);
+    console.log('Role:', req.session.role);
+    
+    if (!req.session.userId) {
+      console.log('❌ No userId in session');
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    if (req.session.role !== 'ADMIN') {
+      console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
+      return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
+    }
+    
+    try {
+      const stats = await storage.getAdminStats();
+      console.log('✅ Stats retrieved successfully');
+      res.json(stats);
+    } catch (error) {
+      console.error('❌ Error getting stats:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   app.get(api.admin.getDrivers.path, async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const drivers = await storage.getDriversWithDetails();
-    res.json(drivers);
+    console.log('👥 Admin getDrivers called');
+    console.log('Session:', req.session);
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const drivers = await storage.getDriversWithDetails();
+      console.log(`✅ ${drivers.length} drivers retrieved`);
+      res.json(drivers);
+    } catch (error) {
+      console.error('❌ Error getting drivers:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   app.post(api.admin.updateDriverStatus.path, async (req, res) => {
@@ -461,15 +602,39 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getUsers.path, async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const allUsers = await storage.getAllUsers();
-    res.json(allUsers);
+    console.log('👥 Admin getUsers called');
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const allUsers = await storage.getAllUsers();
+      console.log(`✅ ${allUsers.length} users retrieved`);
+      res.json(allUsers);
+    } catch (error) {
+      console.error('❌ Error getting users:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   app.get(api.admin.getRides.path, async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const ridesData = await storage.getRidesWithDetails();
-    res.json(ridesData);
+    console.log('🚗 Admin getRides called');
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const ridesData = await storage.getRidesWithDetails();
+      console.log(`✅ ${ridesData.length} rides retrieved`);
+      res.json(ridesData);
+    } catch (error) {
+      console.error('❌ Error getting rides:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   app.post('/api/admin/users/:id/block', async (req, res) => {
@@ -504,9 +669,21 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getConfig.path, async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const config = await storage.getConfig();
-    res.json(config);
+    console.log('⚙️ Admin getConfig called');
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const config = await storage.getConfig();
+      console.log('✅ Config retrieved');
+      res.json(config);
+    } catch (error) {
+      console.error('❌ Error getting config:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   app.post(api.admin.updateConfig.path, async (req, res) => {
@@ -519,6 +696,8 @@ export async function registerRoutes(
       res.status(400).json({ message: "Invalid input" });
     }
   });
+
+  // ==================== DOCUMENT ROUTES ====================
 
   app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
@@ -546,6 +725,8 @@ export async function registerRoutes(
     res.status(201).json(doc);
   });
 
+  // ==================== USER ROUTES ====================
+
   app.post('/api/user/update', async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const { name } = req.body;
@@ -553,7 +734,8 @@ export async function registerRoutes(
     res.json(user);
   });
 
-  // Rating endpoint
+  // ==================== RATING ROUTES ====================
+
   app.post(api.passenger.rateRide.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const id = parseInt(req.params.id);
@@ -581,7 +763,8 @@ export async function registerRoutes(
     }
   });
 
-  // Notification routes
+  // ==================== NOTIFICATION ROUTES ====================
+
   app.get('/api/notifications', async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const notifs = await storage.getNotifications(req.session.userId);
@@ -606,13 +789,13 @@ export async function registerRoutes(
     res.json({ message: "ok" });
   });
 
-  // Public custom places endpoint
+  // ==================== PLACES ROUTES ====================
+
   app.get('/api/places', async (_req, res) => {
     const places = await storage.getCustomPlaces();
     res.json(places);
   });
 
-  // Admin custom places CRUD
   app.get('/api/admin/places', async (req, res) => {
     if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const places = await storage.getCustomPlaces();
@@ -643,65 +826,34 @@ export async function registerRoutes(
     res.json({ message: "Deleted" });
   });
 
-  // Seed DB on start
+  // ==================== SEED DATABASE ====================
+
   async function seedDatabase() {
-    const existingConfig = await storage.getConfig();
-    // Admin
-    const admin = await storage.getUserByPhone("0340000000");
-    if (!admin) {
-      await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });
-    }
-    // Passenger
-    const passenger = await storage.getUserByPhone("0341111111");
-    if (!passenger) {
-      await storage.createUser({ phone: "0341111111", name: "Rabe Passenger", role: "PASSENGER" });
-    }
-    // Driver
-    const driver = await storage.getUserByPhone("0342222222");
-    if (!driver) {
-      const d = await storage.createUser({ phone: "0342222222", name: "Rakoto Driver", role: "DRIVER" });
-      await storage.createDriverProfile({ userId: d.id, vehicleType: "TAXI", status: "APPROVED", online: true });
+    try {
+      const existingConfig = await storage.getConfig();
+      
+      const admin = await storage.getUserByPhone("0340000000");
+      if (!admin) {
+        await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });
+        console.log('✅ Admin user created');
+      }
+      
+      const passenger = await storage.getUserByPhone("0341111111");
+      if (!passenger) {
+        await storage.createUser({ phone: "0341111111", name: "Rabe Passenger", role: "PASSENGER" });
+        console.log('✅ Passenger user created');
+      }
+      
+      const driver = await storage.getUserByPhone("0342222222");
+      if (!driver) {
+        const d = await storage.createUser({ phone: "0342222222", name: "Rakoto Driver", role: "DRIVER" });
+        await storage.createDriverProfile({ userId: d.id, vehicleType: "TAXI", status: "APPROVED", online: true });
+        console.log('✅ Driver user created');
+      }
+    } catch (error) {
+      console.error('❌ Error seeding database:', error);
     }
   }
-
-  // 🔥 NOUVEAU: Endpoint pour récupérer la course active du conducteur
-app.get('/api/driver/active-ride', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-  
-  try {
-    const activeRide = await storage.getDriverActiveRide(req.session.userId);
-    
-    if (!activeRide) {
-      return res.status(404).json({ message: "No active ride" });
-    }
-    
-    // Enrichir avec les infos du passager
-    const passenger = await storage.getUser(activeRide.passengerId);
-        
-        res.json({
-          ...activeRide,
-          passengerName: passenger?.name,
-          passengerPhone: passenger?.phone,
-        });
-      } catch (error) {
-        res.status(500).json({ message: "Internal error" });
-      }
-    });
-
-    // 🔥 NOUVEAU: Endpoint pour mettre à jour l'ETA
-    app.post('/api/rides/:id/eta', async (req, res) => {
-      if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-      
-      const id = parseInt(req.params.id);
-      const { additionalMinutes } = req.body;
-      
-      try {
-        const ride = await storage.updateRideEta(id, additionalMinutes);
-        res.json(ride);
-      } catch (error) {
-        res.status(400).json({ message: "Failed to update ETA" });
-      }
-    });
 
   seedDatabase().catch(console.error);
 
