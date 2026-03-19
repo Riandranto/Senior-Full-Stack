@@ -286,6 +286,34 @@ export async function registerRoutes(
     });
   });
 
+  // Dans server/routes.ts, ajoutez
+  app.get('/api/debug/paths', (req, res) => {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const currentDir = process.cwd();
+    const distPublic = path.join(currentDir, 'dist', 'public');
+    
+    let files = {};
+    if (fs.existsSync(distPublic)) {
+      files = fs.readdirSync(distPublic).reduce((acc, file) => {
+        if (file === 'assets') {
+          acc[file] = fs.readdirSync(path.join(distPublic, file));
+        } else {
+          acc[file] = true;
+        }
+        return acc;
+      }, {});
+    }
+    
+    res.json({
+      currentDirectory: currentDir,
+      distPublicExists: fs.existsSync(distPublic),
+      distPublicContent: files,
+      env: process.env.NODE_ENV,
+    });
+  });
+
   app.get(api.passenger.getRide.path, async (req, res) => {
     const id = parseInt(req.params.id);
     const ride = await storage.getRide(id);
