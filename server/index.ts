@@ -75,35 +75,31 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 
 // Configuration CORS simplifiée et plus permissive
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Permettre toutes les origines en développement
-    if (process.env.NODE_ENV !== "production") {
-      callback(null, true);
-    } else {
-      // En production, limiter aux origines connues
-      const allowedOrigins = [
-        'http://localhost:8081',
-        'http://192.168.1.105:8081',
-        'http://192.168.1.102:8081',
-        'http://192.168.1.101:8081',
-        /\.exp\.host$/  // Pour Expo
-      ];
-      
-      if (!origin || allowedOrigins.some(o => 
-        typeof o === 'string' ? o === origin : o.test(origin)
-      )) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With', 'Cookie'],
-  exposedHeaders: ['set-cookie'],
-};
+// server/index.ts - Ajoutez ceci AVANT les routes
+
+// Middleware CORS personnalisé
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // En production, autorisez votre domaine Railway
+  if (process.env.NODE_ENV === 'production') {
+    // Autoriser tous les origins pour l'instant (à restreindre plus tard)
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie');
+  
+  // Répondre aux preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
 
 // Appliquer CORS à toutes les routes
 app.use(cors(corsOptions));
