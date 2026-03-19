@@ -1,0 +1,8 @@
+# Démarrer PgBouncer
+docker-compose up -d
+
+# Vérifier qu'il tourne
+docker ps
+
+# Modifier .env pour utiliser PgBouncer local
+DATABASE_URL=postgresql://neondb_owner:npg_HnpZrL8usV0W@localhost:6432/neondb?sslmode=disable
