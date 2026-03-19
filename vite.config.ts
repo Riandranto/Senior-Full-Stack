@@ -19,7 +19,6 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
-    // Ajoutez cette ligne pour les assets
     assetsDir: "assets",
   },
   server: {
@@ -27,6 +26,5 @@ export default defineConfig({
       strict: true,
     },
   },
-  // Base URL explicite
   base: '/',
 });
