@@ -93,22 +93,23 @@ app.use(cors(corsOptions));
 // Configuration de la session - CORRIGÉE
 app.use(
   session({
-    cookie: { 
-      maxAge: 86400000, // 24 heures
-      secure: false, // Important: false en développement
+    cookie: {
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours (augmenté)
+      secure: process.env.NODE_ENV === 'production', // true en production
       httpOnly: true,
-      sameSite: 'none', // Changé de 'lax' à 'none' pour cross-origin
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       path: '/',
+      domain: process.env.NODE_ENV === 'production' ? '.railway.app' : undefined
     },
     store: new MemoryStore({
-      checkPeriod: 86400000, // Nettoyer les sessions expirées toutes les 24h
+      checkPeriod: 86400000,
     }),
-    resave: false,
-    saveUninitialized: false,
-    secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
-    name: 'farady.sid', // Nom explicite pour le cookie
-    rolling: true, // Renouveler le cookie à chaque requête
-    proxy: true, // Important pour les requêtes proxy/load balancer
+    resave: true, // Changé à true pour forcer la sauvegarde
+    saveUninitialized: true, // Changé à true pour créer la session même si vide
+    secret: process.env.SESSION_SECRET,
+    name: 'farady.sid',
+    rolling: true,
+    proxy: process.env.NODE_ENV === 'production',
   })
 );
 
