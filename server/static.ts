@@ -17,14 +17,18 @@ export function serveStatic(app: Express) {
   if (!fs.existsSync(distPath)) {
     console.error(`❌ Could not find build directory: ${distPath}`);
     console.error('💡 Current directory:', process.cwd());
-    console.error('💡 Files in current directory:', fs.readdirSync(process.cwd()));
+    try {
+      console.error('💡 Files in current directory:', fs.readdirSync(process.cwd()));
+    } catch (e) {
+      console.error('💡 Cannot read directory');
+    }
     return;
   }
 
   // Servir les fichiers statiques
   app.use(express.static(distPath));
 
-  // Log les requêtes statiques
+  // Log les requêtes statiques (optionnel)
   app.use((req, res, next) => {
     if (req.path.startsWith('/assets/')) {
       console.log('📦 Static request:', req.path);
@@ -32,14 +36,15 @@ export function serveStatic(app: Express) {
     next();
   });
 
+  // IMPORTANT: Correction ici - utilisation de '*' au lieu de "{*path}"
   // Fallback pour SPA - retourner index.html pour toutes les routes non-API
   app.get('*', (req, res, next) => {
+    // Ne pas intercepter les routes API
     if (req.path.startsWith('/api')) {
       return next();
     }
     
     const indexPath = path.join(distPath, 'index.html');
-    console.log('📄 Serving index.html for:', req.path);
     
     if (fs.existsSync(indexPath)) {
       res.sendFile(indexPath);
