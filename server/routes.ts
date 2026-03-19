@@ -262,6 +262,17 @@ export async function registerRoutes(
     }
   });
 
+  app.get('/api/debug/session-state', (req, res) => {
+    res.json({
+      sessionID: req.sessionID,
+      userId: req.session.userId,
+      role: req.session.role,
+      cookie: req.session.cookie,
+      headers: req.headers['cookie'],
+      timestamp: new Date().toISOString()
+    });
+  });
+
   app.get(api.passenger.getRide.path, async (req, res) => {
     const id = parseInt(req.params.id);
     const ride = await storage.getRide(id);
