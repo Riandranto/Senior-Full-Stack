@@ -21,15 +21,20 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center bg-background text-foreground">Loading...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
   }
 
   if (!user) {
+    console.log('🔒 No user, redirecting to login');
     return <Redirect to="/login" />;
   }
 
   if (!allowedRoles.includes(user.role)) {
-    // Redirect based on role
+    console.log(`🔒 Role ${user.role} not allowed, redirecting`);
     if (user.role === 'DRIVER') return <Redirect to="/driver" />;
     if (user.role === 'ADMIN') return <Redirect to="/admin" />;
     return <Redirect to="/passenger" />;
@@ -40,6 +45,7 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 
 function Router() {
   const { user, isLoading } = useAuth();
+  console.log('🔄 Router - user:', user, 'isLoading:', isLoading);
 
   if (isLoading) {
     return (
@@ -53,7 +59,11 @@ function Router() {
     <Switch>
       <Route path="/">
         {user ? (
-          <Redirect to={user.role === 'DRIVER' ? '/driver' : user.role === 'ADMIN' ? '/admin' : '/passenger'} />
+          <Redirect to={
+            user.role === 'DRIVER' ? '/driver' : 
+            user.role === 'ADMIN' ? '/admin' : 
+            '/passenger'
+          } />
         ) : (
           <Redirect to="/login" />
         )}

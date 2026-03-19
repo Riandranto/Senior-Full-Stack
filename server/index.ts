@@ -44,14 +44,12 @@ function getLocalIP(): string {
     }
     console.log('='.repeat(50) + '\n');
     
-    // Priorité aux IPs 192.168.1.x
     const preferred = results.find(r => r.address.startsWith('192.168.1.'));
     if (preferred) {
       console.log(`✅ IP sélectionnée: ${preferred.address} (${preferred.name})`);
       return preferred.address;
     }
     
-    // Sinon prendre la première IP externe
     if (results.length > 0) {
       console.log(`⚠️ IP sélectionnée: ${results[0].address} (${results[0].name})`);
       return results[0].address;
@@ -74,11 +72,10 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configuration CORS simplifiée et plus permissive
-// server/index.ts - Remettez ceci AVANT de l'utiliser
+// Configuration CORS simplifiée
 const corsOptions = {
   origin: function(origin, callback) {
-    callback(null, true); // Tout autoriser pour l'instant
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -86,32 +83,38 @@ const corsOptions = {
   exposedHeaders: ['set-cookie'],
 };
 
-
-// Appliquer CORS à toutes les routes
 app.use(cors(corsOptions));
 
-// Configuration de la session - CORRIGÉE
-app.use(
-  session({
-    cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours (augmenté)
-      secure: process.env.NODE_ENV === 'production', // true en production
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      path: '/',
-      domain: process.env.NODE_ENV === 'production' ? '.railway.app' : undefined
-    },
-    store: new MemoryStore({
-      checkPeriod: 86400000,
-    }),
-    resave: true, // Changé à true pour forcer la sauvegarde
-    saveUninitialized: true, // Changé à true pour créer la session même si vide
-    secret: process.env.SESSION_SECRET,
-    name: 'farady.sid',
-    rolling: true,
-    proxy: process.env.NODE_ENV === 'production',
-  })
-);
+// Configuration de la session - CORRIGÉE POUR PRODUCTION
+const sessionConfig = {
+  cookie: {
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    secure: process.env.NODE_ENV === 'production', // true en production (HTTPS)
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' pour cross-origin en prod
+    path: '/',
+    domain: undefined, // Laisser undefined pour qu'il s'adapte automatiquement
+  },
+  store: new MemoryStore({
+    checkPeriod: 86400000, // Nettoyer les sessions expirées toutes les 24h
+  }),
+  resave: true,
+  saveUninitialized: true,
+  secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
+  name: 'farady.sid',
+  rolling: true,
+  proxy: process.env.NODE_ENV === 'production', // Important pour les proxys (Railway)
+};
+
+// Ajouter un log pour debug
+console.log('📦 Session config:', {
+  secure: sessionConfig.cookie.secure,
+  sameSite: sessionConfig.cookie.sameSite,
+  proxy: sessionConfig.proxy,
+  env: process.env.NODE_ENV
+});
+
+app.use(session(sessionConfig));
 
 // Middleware pour logger les requêtes
 export function log(message: string, source = "express") {
@@ -125,6 +128,7 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Middleware de logging des requêtes
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -143,7 +147,6 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-
       log(logLine);
     }
   });
@@ -168,6 +171,20 @@ app.get('/api/test', (req, res) => {
     cors: 'enabled',
     ip: getLocalIP()
   });
+});
+
+// Middleware de debug des sessions
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    console.log('📦 Session Debug:', {
+      path: req.path,
+      sessionID: req.sessionID,
+      userId: (req.session as any).userId,
+      role: (req.session as any).role,
+      cookie: req.headers.cookie,
+    });
+  }
+  next();
 });
 
 (async () => {
@@ -209,8 +226,6 @@ app.get('/api/test', (req, res) => {
     console.log('📝 Test avec:');
     console.log(`   curl http://localhost:${port}/api/test`);
     console.log(`   curl http://${localIP}:${port}/api/test\n`);
-    
-    console.log(`⚠️ IMPORTANT: Utilisez cette IP dans votre app mobile: ${localIP}`);
   });
 
   httpServer.on('error', (error: any) => {

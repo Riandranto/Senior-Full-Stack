@@ -9,21 +9,29 @@ export function useAuth() {
   const { toast } = useToast();
   const { lang } = useTranslation();
 
-  // Vérification de l'authentification avec retry limité
+  // Configuration de base pour fetch avec credentials
+  const fetchWithCredentials = (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...options.headers,
+      },
+    });
+  };
+
+  // Vérification de l'authentification
   const { data: user, isLoading, error, refetch } = useQuery<User>({
     queryKey: [api.auth.me.path],
     queryFn: async () => {
       try {
-        const res = await fetch(api.auth.me.path, { 
-          credentials: "include",
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        });
+        console.log('🔍 Checking authentication...');
+        const res = await fetchWithCredentials(api.auth.me.path);
         
         if (res.status === 401) {
-          // Pas authentifié - pas d'erreur, juste null
+          console.log('👤 No active session');
           return null;
         }
         
@@ -32,47 +40,30 @@ export function useAuth() {
           throw new Error(errorData.message || "Erreur d'authentification");
         }
         
-        return res.json();
+        const userData = await res.json();
+        console.log('✅ User authenticated:', userData);
+        return userData;
       } catch (e) {
-        // En cas d'erreur réseau, on retourne null mais on log
         console.error("Auth check failed:", e);
         return null;
       }
     },
-    retry: 1, // Réessayer une fois en cas d'erreur réseau
-    staleTime: 5 * 60 * 1000, // 5 minutes avant de revalider
-    refetchOnWindowFocus: false, // Éviter les refetch intempestifs
+    retry: 1,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true, // Important pour vérifier si la session est toujours valide
   });
 
-  // Demande d'OTP avec validation du numéro
+  // Demande d'OTP
   const requestOtpMutation = useMutation({
     mutationFn: async (phone: string) => {
-      // Validation du numéro malgache
-      const phoneRegex = /^(0|\\+261)[0-9]{9}$/;
-      if (!phoneRegex.test(phone)) {
-        throw new Error(lang === 'mg' 
-          ? "Laharana tsy mety. Ampidiro 0341234567 na +261341234567"
-          : "Numéro invalide. Entrez 0341234567 ou +261341234567"
-        );
-      }
-
-      const res = await fetch(api.auth.requestOtp.path, {
+      const res = await fetchWithCredentials(api.auth.requestOtp.path, {
         method: api.auth.requestOtp.method,
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
-        credentials: "include",
       });
       
       const data = await res.json().catch(() => ({}));
       
       if (!res.ok) {
-        // Messages d'erreur spécifiques
-        if (res.status === 429) {
-          throw new Error(lang === 'mg'
-            ? "Bebe loatra ny fangatahana. Andraso kely."
-            : "Trop de demandes. Veuillez patienter."
-          );
-        }
         throw new Error(data.message || (lang === 'mg' 
           ? "Tsy afaka nandefa kaody"
           : "Échec de l'envoi du code"
@@ -98,34 +89,20 @@ export function useAuth() {
     },
   });
 
-  // Vérification OTP avec gestion des tentatives
+  // Vérification OTP
   const loginMutation = useMutation({
     mutationFn: async (data: { phone: string; otp: string }) => {
-      // Validation OTP (6 chiffres)
-      if (!/^\d{6}$/.test(data.otp)) {
-        throw new Error(lang === 'mg'
-          ? "Kaody tsy mety. 6 tarehimarika no ilaina."
-          : "Code invalide. 6 chiffres requis."
-        );
-      }
-
-      const res = await fetch(api.auth.verifyOtp.path, {
+      console.log('🔐 Attempting login for:', data.phone);
+      
+      const res = await fetchWithCredentials(api.auth.verifyOtp.path, {
         method: api.auth.verifyOtp.method,
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
-        credentials: "include",
       });
       
       const result = await res.json().catch(() => ({}));
+      console.log('📦 Login response:', result);
       
       if (!res.ok) {
-        // Messages d'erreur spécifiques
-        if (res.status === 429) {
-          throw new Error(lang === 'mg'
-            ? "Bebe loatra ny andrana. Andraso 15 minitra."
-            : "Trop de tentatives. Attendez 15 minutes."
-          );
-        }
         if (res.status === 401) {
           throw new Error(lang === 'mg'
             ? "Kaody disy na lany daty"
@@ -140,9 +117,14 @@ export function useAuth() {
       
       return result;
     },
-    onSuccess: (data) => {
-      // Mettre à jour le cache avec l'utilisateur
+    onSuccess: async (data) => {
+      console.log('✅ Login successful, user:', data.user);
+      
+      // Mettre à jour le cache immédiatement
       queryClient.setQueryData([api.auth.me.path], data.user);
+      
+      // Attendre un peu pour que la session soit bien établie
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       toast({
         title: lang === 'mg' ? "Tafiditra!" : "Connecté!",
@@ -161,6 +143,7 @@ export function useAuth() {
       }
     },
     onError: (error: Error) => {
+      console.error('❌ Login failed:', error);
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
@@ -169,36 +152,11 @@ export function useAuth() {
     },
   });
 
-  // Renvoi OTP (après expiration)
-  const resendOtpMutation = useMutation({
-    mutationFn: async (phone: string) => {
-      const res = await fetch('/api/auth/resend-otp', {
-        method: 'POST',
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-        credentials: "include",
-      });
-      
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || "Failed to resend OTP");
-      }
-      
-      return res.json();
-    },
-    onSuccess: (_, phone) => {
-      toast({
-        title: lang === 'mg' ? "Kaody vaovao nalefa!" : "Nouveau code envoyé!",
-      });
-    },
-  });
-
   // Déconnexion
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(api.auth.logout.path, { 
-        method: api.auth.logout.method, 
-        credentials: "include" 
+      const res = await fetchWithCredentials(api.auth.logout.path, { 
+        method: api.auth.logout.method,
       });
       
       if (!res.ok) {
@@ -214,7 +172,6 @@ export function useAuth() {
         title: lang === 'mg' ? "Tafivoaka" : "Déconnecté",
       });
       
-      // Rediriger vers login
       window.location.href = '/login';
     },
   });
@@ -222,10 +179,9 @@ export function useAuth() {
   return {
     user,
     isLoading,
-    isAuthenticated: !!user && !user.isBlocked, // Vérifier si l'utilisateur n'est pas bloqué
+    isAuthenticated: !!user && !user.isBlocked,
     login: loginMutation.mutateAsync,
     requestOtp: requestOtpMutation.mutateAsync,
-    resendOtp: resendOtpMutation.mutateAsync,
     logout: logoutMutation.mutateAsync,
     isLoginPending: loginMutation.isPending,
     isRequestOtpPending: requestOtpMutation.isPending,

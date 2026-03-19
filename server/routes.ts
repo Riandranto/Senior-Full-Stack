@@ -116,13 +116,14 @@ export async function registerRoutes(
       console.log('🔐 Backend - verifyOtp called');
       console.log('📦 Body:', req.body);
       console.log('📦 Session ID avant:', req.session.id);
+      console.log('📦 Cookie reçu:', req.headers.cookie);
       
       const input = api.auth.verifyOtp.input.parse(req.body);
       
       if (input.otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
-
+  
       let user = await storage.getUserByPhone(input.phone);
       if (!user) {
         user = await storage.createUser({ 
@@ -132,14 +133,18 @@ export async function registerRoutes(
           language: "mg" 
         });
       }
-
+  
       // Sauvegarder l'utilisateur dans la session
       req.session.userId = user.id;
       req.session.role = user.role;
       
-      console.log('✅ Session avant sauvegarde:', { userId: req.session.userId, role: req.session.role });
+      console.log('✅ Session avant sauvegarde:', { 
+        userId: req.session.userId, 
+        role: req.session.role,
+        sessionID: req.session.id 
+      });
       
-      // Sauvegarder la session
+      // Sauvegarder la session avec Promise
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
           if (err) {
@@ -147,20 +152,24 @@ export async function registerRoutes(
             reject(err);
           } else {
             console.log('✅ Session saved successfully');
+            console.log('📦 Session après sauvegarde:', {
+              id: req.session.id,
+              userId: req.session.userId,
+              role: req.session.role
+            });
             resolve();
           }
         });
       });
-
+  
       console.log('✅ User authenticated:', user.id, user.role);
-      console.log('📦 Session après:', req.session);
       
-      // IMPORTANT: Définir les en-têtes CORS explicites
-      //res.setHeader('Access-Control-Allow-Origin', 'http://192.168.1.102:8081'); // URL de votre app Expo
-      //res.setHeader('Access-Control-Allow-Credentials', 'true');
+      // Forcer l'envoi du cookie dans la réponse
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
       
+      // Répondre avec l'utilisateur
       res.json({ user, success: true });
       
     } catch (e) {
@@ -175,7 +184,9 @@ export async function registerRoutes(
   // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 Backend - getMe called');
-    console.log('📦 Session:', req.session);
+    console.log('📦 Session ID:', req.session.id);
+    console.log('📦 Session userId:', req.session.userId);
+    console.log('📦 Cookie reçu:', req.headers.cookie);
     
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
@@ -268,7 +279,9 @@ export async function registerRoutes(
       userId: req.session.userId,
       role: req.session.role,
       cookie: req.session.cookie,
-      headers: req.headers['cookie'],
+      cookieHeader: req.headers['cookie'],
+      hasSession: !!req.session.userId,
+      environment: process.env.NODE_ENV,
       timestamp: new Date().toISOString()
     });
   });
