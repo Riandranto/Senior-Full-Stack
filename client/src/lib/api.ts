@@ -1,4 +1,5 @@
 // api.ts
+import { api } from '@shared/routes';
 const getBaseUrl = () => {
   // Check if we're in production (Railway)
   // In Railway, process.env.NODE_ENV is 'production'

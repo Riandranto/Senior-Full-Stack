@@ -4,18 +4,15 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  root: './client', // La racine du projet
+  root: 'client', // ← Important : dit à Vite que la racine est le dossier client
   build: {
-    outDir: 'dist/public', // Où Vite mettra les fichiers compilés
+    outDir: '../dist/public', // ← Sortie dans dist/public à la racine
     emptyOutDir: true,
     sourcemap: true,
-    rollupOptions: {
-      input: path.resolve(__dirname, 'index.html'), // Point d'entrée
-    },
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(__dirname, './client/src'),
       '@shared': path.resolve(__dirname, './shared'),
     },
   },
