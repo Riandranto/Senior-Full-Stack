@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "tsx watch server/index.ts",
-    "dev:frontend": "vite"
+    "dev:frontend": "vite",
+    "postbuild": "cp -r dist/public/* dist/public/ || true"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

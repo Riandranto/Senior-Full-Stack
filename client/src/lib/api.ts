@@ -1,11 +1,12 @@
 // api.ts
 import { api } from '@shared/routes';
+
 const getBaseUrl = () => {
   // Check if we're in production (Railway)
-  // In Railway, process.env.NODE_ENV is 'production'
   if (import.meta.env.PROD) {
     console.log('🚀 Running in PRODUCTION mode');
-    return ''; // Empty string means use same origin
+    // Utiliser l'URL complète du backend
+    return 'https://ride-mada-mg.up.railway.app';
   }
   
   // Check if we have a VITE_API_URL environment variable
@@ -28,9 +29,9 @@ console.log('📦 import.meta.env.MODE:', import.meta.env.MODE);
 // Fonction fetch unifiée
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   // Build the URL correctly
-  const url = API_BASE_URL 
-    ? `${API_BASE_URL}${endpoint}`
-    : endpoint;
+  const url = endpoint.startsWith('http') 
+    ? endpoint 
+    : `${API_BASE_URL}${endpoint}`;
   
   console.log('🌐 Fetching:', url);
   
@@ -49,9 +50,9 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
 
 // Pour les formulaires (multipart/form-data)
 export async function apiFetchFormData(endpoint: string, formData: FormData) {
-  const url = API_BASE_URL 
-    ? `${API_BASE_URL}${endpoint}`
-    : endpoint;
+  const url = endpoint.startsWith('http') 
+    ? endpoint 
+    : `${API_BASE_URL}${endpoint}`;
   
   const response = await fetch(url, {
     method: 'POST',

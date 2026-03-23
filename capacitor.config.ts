@@ -9,12 +9,12 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     // En production, le serveur doit être accessible depuis l'appareil
     url: 'https://ride-mada-mg.up.railway.app',
-    // Alternative: utiliser cleartext pour le développement
-    // cleartext: true
+    // Configurer les en-têtes CORS
+    cleartext: false,
   },
   android: {
-    // Permettre les connexions HTTP en développement (décommentez si besoin)
-     allowMixedContent: true
+    // Permettre les connexions HTTPS
+    allowMixedContent: false,
   }
 };
 

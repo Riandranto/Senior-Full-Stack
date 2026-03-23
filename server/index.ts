@@ -72,76 +72,75 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configuration CORS - À mettre AVANT les routes
-const corsOptions = {
-  origin: function(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+// Configuration CORS - CORRIGÉE
+const allowedOrigins = [
+  'https://ride-mada-mg.up.railway.app',
+  'capacitor://localhost',
+  'http://localhost',
+  'http://localhost:5000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5000',
+  'http://127.0.0.1:5173',
+];
+
+// En développement, accepter toutes les origines
+if (process.env.NODE_ENV !== 'production') {
+  allowedOrigins.push('*');
+}
+
+app.use(cors({
+  origin: function(origin, callback) {
     // Accepter les requêtes sans origin (comme les apps mobiles)
-    if (!origin) {
+    if (!origin) return callback(null, true);
+    
+    // En développement, tout accepter
+    if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
     
-    // Liste des origines autorisées
-    const allowedOrigins = [
-      'https://ride-mada-mg.up.railway.app',
-      'https://ride-mada-mg.up.railway.app', // With https
-      'capacitor://localhost',
-      'http://localhost',
-      'http://localhost:5000',
-      'http://localhost:5173',
-      'http://127.0.0.1:5000',
-      'http://127.0.0.1:5173',
-    ];
-    
-    // En développement, accepter toutes les origines
-    if (process.env.NODE_ENV === 'development') {
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin) || origin.startsWith('capacitor://')) {
       callback(null, true);
     } else {
       console.log(`❌ CORS blocked origin: ${origin}`);
-      callback(null, false);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With', 'Cookie'],
   exposedHeaders: ['set-cookie'],
-};
+}));
 
-app.use(cors(corsOptions));
-
-// S'assurer que les preflight requests sont gérées
-//app.options('*', cors(corsOptions));
-
-// Configuration de la session - CORRIGÉE POUR PRODUCTION
+// Configuration de la session - CORRIGÉE POUR RAILWAY
+const isProduction = process.env.NODE_ENV === 'production';
 const sessionConfig = {
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-    secure: process.env.NODE_ENV === 'production', // true pour HTTPS
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    secure: isProduction, // true pour HTTPS
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' pour cross-origin
+    sameSite: isProduction ? 'none' : 'lax', // 'none' pour cross-origin
     path: '/',
-    domain: undefined,
+    domain: isProduction ? '.railway.app' : undefined,
   },
   store: new MemoryStore({
     checkPeriod: 86400000,
   }),
-  resave: true,
-  saveUninitialized: true,
+  resave: false, // IMPORTANT: mettre false pour éviter les erreurs
+  saveUninitialized: false, // IMPORTANT: ne pas sauvegarder les sessions vides
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   name: 'farady.sid',
   rolling: true,
-  proxy: process.env.NODE_ENV === 'production', // Important pour Railway
+  proxy: isProduction, // Important pour Railway (trust proxy)
 };
 
-// Ajouter un log pour debug
 console.log('📦 Session config:', {
   secure: sessionConfig.cookie.secure,
   sameSite: sessionConfig.cookie.sameSite,
   proxy: sessionConfig.proxy,
-  env: process.env.NODE_ENV
+  env: process.env.NODE_ENV,
+  domain: sessionConfig.cookie.domain,
+  resave: sessionConfig.resave,
+  saveUninitialized: sessionConfig.saveUninitialized,
 });
 
 app.use(session(sessionConfig));
