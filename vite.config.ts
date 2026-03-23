@@ -4,7 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  root: '.', // La racine du projet
+  root: './client', // La racine du projet
   build: {
     outDir: 'dist/public', // Où Vite mettra les fichiers compilés
     emptyOutDir: true,
