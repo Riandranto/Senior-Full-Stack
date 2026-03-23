@@ -72,10 +72,25 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configuration CORS simplifiée
+// Configuration CORS pour accepter toutes les origines en production
 const corsOptions = {
   origin: function(origin, callback) {
-    callback(null, true);
+    // Accepter les requêtes sans origin (comme les apps mobiles)
+    if (!origin) return callback(null, true);
+    
+    // Accepter les URLs de production
+    const allowedOrigins = [
+      'https://ride-mada-mg.up.railway.app',
+      'capacitor://localhost',
+      'http://localhost',
+      'http://localhost:5000',
+    ];
+    
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -88,22 +103,22 @@ app.use(cors(corsOptions));
 // Configuration de la session - CORRIGÉE POUR PRODUCTION
 const sessionConfig = {
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-    secure: process.env.NODE_ENV === 'production', // true en production (HTTPS)
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production', // true pour HTTPS
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' pour cross-origin en prod
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' pour cross-origin
     path: '/',
-    domain: undefined, // Laisser undefined pour qu'il s'adapte automatiquement
+    domain: undefined,
   },
   store: new MemoryStore({
-    checkPeriod: 86400000, // Nettoyer les sessions expirées toutes les 24h
+    checkPeriod: 86400000,
   }),
   resave: true,
   saveUninitialized: true,
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   name: 'farady.sid',
   rolling: true,
-  proxy: process.env.NODE_ENV === 'production', // Important pour les proxys (Railway)
+  proxy: process.env.NODE_ENV === 'production', // Important pour Railway
 };
 
 // Ajouter un log pour debug

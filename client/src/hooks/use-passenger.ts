@@ -3,6 +3,7 @@ import { api, buildUrl } from "@shared/routes";
 import { type Ride, type Offer, type CreateRideRequest, type RateRideRequest } from "@shared/schema";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
 
 // Création de course avec validation
 export function useCreateRide() {
@@ -20,7 +21,7 @@ export function useCreateRide() {
         );
       }
 
-      const res = await fetch(api.passenger.createRide.path, {
+      const res = await apiFetch(api.passenger.createRide.path, {
         method: api.passenger.createRide.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -76,7 +77,7 @@ export function useRide(id: number | null) {
       if (!id) return null;
       
       const url = buildUrl(api.passenger.getRide.path, { id });
-      const res = await fetch(url, { 
+      const res = await apiFetch(url, { 
         credentials: "include",
         headers: {
           'Cache-Control': 'no-cache'
@@ -88,14 +89,14 @@ export function useRide(id: number | null) {
           return null;
         }
         const error = await res.json();
-        throw new Error(error.message || "Failed to fetch ride");
+        throw new Error(error.message || "Failed to apiFetch ride");
       }
       
       return res.json();
     },
     enabled: !!id,
     // Polling intelligent basé sur le statut
-    refetchInterval: (query) => {
+    reapiFetchInterval: (query) => {
       const status = query.state.data?.status;
       
       if (!status) return false;
@@ -133,7 +134,7 @@ export function useRideOffers(rideId: number | null) {
       if (!rideId) return [];
       
       const url = buildUrl(api.passenger.getOffers.path, { id: rideId });
-      const res = await fetch(url, { 
+      const res = await apiFetch(url, { 
         credentials: "include",
         headers: {
           'Cache-Control': 'no-cache'
@@ -148,7 +149,7 @@ export function useRideOffers(rideId: number | null) {
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 3000, // 3 secondes
+    reapiFetchInterval: 3000, // 3 secondes
     staleTime: 2000,
   });
 }
@@ -162,7 +163,7 @@ export function useAcceptOffer(rideId: number) {
   return useMutation({
     mutationFn: async (offerId: number) => {
       const url = buildUrl(api.passenger.acceptOffer.path, { id: rideId });
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: api.passenger.acceptOffer.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ offerId }),
@@ -214,7 +215,7 @@ export function useCancelRide(rideId: number) {
   return useMutation({
     mutationFn: async (reason: string = "Nofoanana") => {
       const url = buildUrl(api.passenger.cancelRide.path, { id: rideId });
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: api.passenger.cancelRide.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),
@@ -263,7 +264,7 @@ export function useRateRide(rideId: number) {
       }
 
       const url = buildUrl(api.passenger.rateRide.path, { id: rideId });
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: api.passenger.rateRide.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -302,7 +303,7 @@ export function useRideHistory() {
   return useQuery<Ride[]>({
     queryKey: [api.passenger.history.path],
     queryFn: async () => {
-      const res = await fetch(api.passenger.history.path, {
+      const res = await apiFetch(api.passenger.history.path, {
         credentials: "include"
       });
       
@@ -323,7 +324,7 @@ export function useRideViews(rideId: number | null) {
     queryFn: async () => {
       if (!rideId) return { viewCount: 0 };
       
-      const res = await fetch(`/api/rides/${rideId}/views`, { 
+      const res = await apiFetch(`/api/rides/${rideId}/views`, { 
         credentials: 'include' 
       });
       
@@ -334,6 +335,6 @@ export function useRideViews(rideId: number | null) {
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 10000, // 10 secondes
+    reapiFetchInterval: 10000, // 10 secondes
   });
 }

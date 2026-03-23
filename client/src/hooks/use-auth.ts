@@ -3,6 +3,7 @@ import { api } from "@shared/routes";
 import { type User } from "@shared/schema";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
 
 export function useAuth() {
   const queryClient = useQueryClient();
@@ -11,14 +12,9 @@ export function useAuth() {
 
   // Configuration de base pour fetch avec credentials
   const fetchWithCredentials = (url: string, options: RequestInit = {}) => {
-    return fetch(url, {
+    return apiFetch(url, {
       ...options,
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...options.headers,
-      },
     });
   };
 

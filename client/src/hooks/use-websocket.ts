@@ -1,15 +1,17 @@
+// src/hooks/use-websocket.ts
 import { useState, useRef, useEffect, useCallback } from "react";
 import { type WsMessage, WS_EVENTS } from "@shared/schema";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
 import { api } from "@shared/routes";
+import { API_BASE_URL } from "@/lib/api";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_RECONNECT_DELAY = 1000; // 1 seconde
 
 export function useWebSocket() {
-  const [connected, setConnected] = useState(false); // <- C'est 'connected' qu'il faut utiliser
+  const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<string, Set<(data: any) => void>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
@@ -17,6 +19,19 @@ export function useWebSocket() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { lang } = useTranslation();
+
+  const getWebSocketUrl = useCallback(() => {
+    // En production (APK ou site déployé)
+    if (import.meta.env.PROD) {
+      // Utiliser l'URL publique de Railway
+      return `wss://ride-mada-mg.up.railway.app/ws`;
+    }
+    
+    // En développement local
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    return `${protocol}//${host}/ws`;
+  }, []);
 
   const connect = useCallback(() => {
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
@@ -31,18 +46,18 @@ export function useWebSocket() {
       return;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = getWebSocketUrl();
     
     if (wsRef.current) {
       wsRef.current.close();
     }
 
+    console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
     wsRef.current = new WebSocket(wsUrl);
 
     wsRef.current.onopen = () => {
       setConnected(true);
-      reconnectAttemptsRef.current = 0; // Réinitialiser les tentatives
+      reconnectAttemptsRef.current = 0;
       
       // Authentifier avec userId si disponible
       const user = queryClient.getQueryData([api.auth.me.path]) as any;
@@ -53,7 +68,7 @@ export function useWebSocket() {
         }));
       }
 
-      console.log("WebSocket connected");
+      console.log("✅ WebSocket connected");
     };
 
     wsRef.current.onclose = (event) => {
@@ -133,7 +148,7 @@ export function useWebSocket() {
         console.error("Failed to parse WS message", err);
       }
     };
-  }, [queryClient, toast, lang]);
+  }, [queryClient, toast, lang, getWebSocketUrl]);
 
   useEffect(() => {
     connect();
@@ -168,7 +183,7 @@ export function useWebSocket() {
   }, []);
 
   return { 
-    connected,  // <- C'est 'connected' qu'on retourne
+    connected,
     subscribe, 
     emit 
   };

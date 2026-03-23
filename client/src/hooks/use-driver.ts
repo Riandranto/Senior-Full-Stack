@@ -3,6 +3,7 @@ import { api, buildUrl } from "@shared/routes";
 import { type Ride, type CreateOfferRequest, type DriverProfile } from "@shared/schema";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
+import { apiFetch } from "@/lib/api";
 
 export interface DriverDocument {
   id: number;
@@ -20,7 +21,7 @@ export function useDriverProfile() {
   return useQuery<DriverProfile & { documents: DriverDocument[] }>({
     queryKey: [api.driver.getProfile.path],
     queryFn: async () => {
-      const res = await fetch(api.driver.getProfile.path, { 
+      const res = await apiFetch(api.driver.getProfile.path, { 
         credentials: "include",
         headers: {
           'Cache-Control': 'no-cache'
@@ -33,7 +34,7 @@ export function useDriverProfile() {
           return null;
         }
         const error = await res.json();
-        throw new Error(error.message || "Failed to fetch driver profile");
+        throw new Error(error.message || "Failed to apiFetch driver profile");
       }
       
       return res.json();
@@ -71,7 +72,7 @@ export function useUploadDocument() {
       formData.append('file', file);
       formData.append('type', type);
 
-      const res = await fetch(api.driver.uploadDocument.path, {
+      const res = await apiFetch(api.driver.uploadDocument.path, {
         method: api.driver.uploadDocument.method,
         body: formData,
         credentials: "include",
@@ -114,7 +115,7 @@ export function useDriverDocuments() {
   return useQuery<DriverDocument[]>({
     queryKey: ['/api/driver/documents'],
     queryFn: async () => {
-      const res = await fetch('/api/driver/documents', {
+      const res = await apiFetch('/api/driver/documents', {
         credentials: 'include'
       });
       if (!res.ok) return [];
@@ -131,7 +132,7 @@ export function useSetOnline() {
 
   return useMutation({
     mutationFn: async (online: boolean) => {
-      const res = await fetch(api.driver.setOnline.path, {
+      const res = await apiFetch(api.driver.setOnline.path, {
         method: api.driver.setOnline.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ online }),
@@ -175,7 +176,7 @@ export function useDriverRequests() {
   return useQuery<any[]>({
     queryKey: [api.driver.getRequests.path],
     queryFn: async () => {
-      const res = await fetch(api.driver.getRequests.path, { 
+      const res = await apiFetch(api.driver.getRequests.path, { 
         credentials: "include",
         headers: {
           'Cache-Control': 'no-cache'
@@ -192,7 +193,7 @@ export function useDriverRequests() {
       
       return res.json();
     },
-    refetchInterval: (query) => {
+    reapiFetchInterval: (query) => {
       const data = query.state.data;
       // Si le conducteur n'est pas approuvé, ne pas rafraîchir
       if (data && typeof data === 'object' && 'error' in data) {
@@ -226,7 +227,7 @@ export function useSendOffer() {
         );
       }
 
-      const res = await fetch(api.driver.sendOffer.path, {
+      const res = await apiFetch(api.driver.sendOffer.path, {
         method: api.driver.sendOffer.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -272,7 +273,7 @@ export function useUpdateLocation() {
 
   return useMutation({
     mutationFn: async (location: { lat: number; lng: number }) => {
-      const res = await fetch(api.driver.updateLocation.path, {
+      const res = await apiFetch(api.driver.updateLocation.path, {
         method: api.driver.updateLocation.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(location),
@@ -297,7 +298,7 @@ export function useUpdateLocation() {
     return useQuery({
       queryKey: ['/api/driver/active-ride'],
       queryFn: async () => {
-        const res = await fetch('/api/driver/active-ride', {
+        const res = await apiFetch('/api/driver/active-ride', {
           credentials: 'include',
         });
         
@@ -306,12 +307,12 @@ export function useUpdateLocation() {
         }
         
         if (!res.ok) {
-          throw new Error('Failed to fetch active ride');
+          throw new Error('Failed to apiFetch active ride');
         }
         
         return res.json();
       },
-      refetchInterval: 10000, // Rafraîchir toutes les 10 secondes
+      reapiFetchInterval: 10000, // Rafraîchir toutes les 10 secondes
     });
   }
 
@@ -324,7 +325,7 @@ export function useUpdateLocation() {
     return useMutation({
       mutationFn: async (status: string) => {
         const url = buildUrl(api.driver.updateRideStatus.path, { id: rideId });
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: api.driver.updateRideStatus.method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status }),
@@ -339,7 +340,7 @@ export function useUpdateLocation() {
         return res.json();
       },
       onSuccess: (data) => {
-        // Invalider le cache pour forcer un refetch
+        // Invalider le cache pour forcer un reapiFetch
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: [api.driver.getRequests.path] });
         
@@ -367,7 +368,7 @@ export function useUpdateLocation() {
 
     return useMutation({
       mutationFn: async (additionalMinutes: number) => {
-        const res = await fetch(`/api/rides/${rideId}/eta`, {
+        const res = await apiFetch(`/api/rides/${rideId}/eta`, {
           method: 'POST',
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ additionalMinutes }),
