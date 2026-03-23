@@ -1,19 +1,20 @@
-// vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  root: path.resolve(__dirname, "client"),  // <-- Important: spécifier le root
+  build: {
+    outDir: path.resolve(__dirname, "dist"),
+    emptyOutDir: true,
+    sourcemap: true,
+  },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "@shared": path.resolve(__dirname, "./shared"),
+      "@": path.resolve(__dirname, "client/src"),
+      "@shared": path.resolve(__dirname, "shared"),
     },
-  },
-  build: {
-    outDir: "dist",
-    sourcemap: true,
   },
   server: {
     port: 5173,
@@ -27,9 +28,5 @@ export default defineConfig({
         ws: true,
       },
     },
-  },
-  define: {
-    // Ne pas définir de variables d'environnement spécifiques
-    // Laissez le code détecter automatiquement
   },
 });

@@ -14,7 +14,7 @@ const config: CapacitorConfig = {
   },
   android: {
     // Permettre les connexions HTTP en développement (décommentez si besoin)
-    // allowMixedContent: true
+     allowMixedContent: true
   }
 };
 
