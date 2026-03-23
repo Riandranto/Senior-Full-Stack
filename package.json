@@ -5,9 +5,9 @@
   "license": "MIT",
   "scripts": {
     "build": "npm run build:client && npm run build:server",
-    "build:client": "vite build",
-    "build:server": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js"
+    "build:client": "cd client && npm run build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

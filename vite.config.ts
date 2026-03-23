@@ -4,10 +4,16 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  root: './client',  // ← Important: point to client directory
+  build: {
+    outDir: '../dist/public',  // Output to dist/public in root
+    emptyOutDir: true,
+    sourcemap: true,
+  },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../shared'),
+      '@': path.resolve(__dirname, './client/src'),
+      '@shared': path.resolve(__dirname, './shared'),
     },
   },
   server: {
@@ -22,9 +28,5 @@ export default defineConfig({
         ws: true,
       },
     },
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
   },
 });
