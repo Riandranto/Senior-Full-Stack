@@ -10,6 +10,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import path from "path";
 import express from "express";
+import cors from "cors";
 
 const uploadStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, 'uploads/'),
@@ -29,6 +30,15 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.use(cors({
+    origin: [
+      "http://localhost:5173", // dev
+      "https://ride-mada-mg.up.railway.app" // prod (important)
+    ],
+    credentials: true
+  }));
+
   app.use('/uploads', express.static('uploads'));
   const wss = new WebSocketServer({ noServer: true });
 
