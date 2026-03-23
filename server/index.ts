@@ -83,10 +83,13 @@ const corsOptions = {
     // Liste des origines autorisées
     const allowedOrigins = [
       'https://ride-mada-mg.up.railway.app',
+      'https://ride-mada-mg.up.railway.app', // With https
       'capacitor://localhost',
       'http://localhost',
       'http://localhost:5000',
       'http://localhost:5173',
+      'http://127.0.0.1:5000',
+      'http://127.0.0.1:5173',
     ];
     
     // En développement, accepter toutes les origines
