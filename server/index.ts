@@ -2,8 +2,8 @@ import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
+import { registerRoutes } from "./routes.js";
+import { serveStatic } from "./static.js";
 import { createServer } from "http";
 import os from "os";
 import cors from 'cors';
@@ -18,7 +18,14 @@ declare module "http" {
   }
 }
 
-// Fonction pour obtenir l'IP locale
+// Extension du type Session
+declare module "express-session" {
+  interface SessionData {
+    userId: number;
+    role: string;
+  }
+}
+
 function getLocalIP(): string {
   try {
     const nets = os.networkInterfaces();
@@ -111,26 +118,25 @@ app.use(cors({
   exposedHeaders: ['set-cookie'],
 }));
 
-// Configuration de la session - CORRIGÉE POUR RAILWAY
+// Configuration de la session - CORRIGÉE
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionConfig = {
-  cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-    secure: isProduction, // true pour HTTPS
-    httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax', // 'none' pour cross-origin
-    path: '/',
-    domain: isProduction ? '.railway.app' : undefined,
-  },
   store: new MemoryStore({
     checkPeriod: 86400000,
   }),
-  resave: false, // IMPORTANT: mettre false pour éviter les erreurs
-  saveUninitialized: false, // IMPORTANT: ne pas sauvegarder les sessions vides
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
+  resave: false,
+  saveUninitialized: false,
   name: 'farady.sid',
+  cookie: {
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: isProduction ? 'none' as const : 'lax' as const,
+    path: '/',
+  },
   rolling: true,
-  proxy: isProduction, // Important pour Railway (trust proxy)
+  proxy: isProduction,
 };
 
 console.log('📦 Session config:', {
@@ -138,7 +144,6 @@ console.log('📦 Session config:', {
   sameSite: sessionConfig.cookie.sameSite,
   proxy: sessionConfig.proxy,
   env: process.env.NODE_ENV,
-  domain: sessionConfig.cookie.domain,
   resave: sessionConfig.resave,
   saveUninitialized: sessionConfig.saveUninitialized,
 });
@@ -208,8 +213,8 @@ app.use((req, res, next) => {
     console.log('📦 Session Debug:', {
       path: req.path,
       sessionID: req.sessionID,
-      userId: (req.session as any).userId,
-      role: (req.session as any).role,
+      userId: req.session.userId,
+      role: req.session.role,
       cookie: req.headers.cookie,
     });
   }

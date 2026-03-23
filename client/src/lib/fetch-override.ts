@@ -12,17 +12,23 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
     console.log(`🌐 [OVERRIDE] ${url} -> ${fullUrl}`);
     
     // Ajouter les credentials par défaut
-    const newOptions = {
+    const newOptions: RequestInit = {
       ...options,
       credentials: 'include',
     };
     
     // Ajouter les headers par défaut si pas déjà présents
     if (!newOptions.headers) {
-      newOptions.headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
+      newOptions.headers = {};
+    }
+    
+    // Ne pas écraser les headers existants
+    const headers = newOptions.headers as Record<string, string>;
+    if (!headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (!headers['Accept']) {
+      headers['Accept'] = 'application/json';
     }
     
     return originalFetch(fullUrl, newOptions);
@@ -32,7 +38,6 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
   return originalFetch(url, options);
 };
 
-console.log('✅ Fetch override installed'); // Pour debug
+console.log('✅ Fetch override installed');
 
-// Exporter pour s'assurer que le fichier est importé
 export const fetchOverride = true;

@@ -10,21 +10,13 @@ export function useAuth() {
   const { toast } = useToast();
   const { lang } = useTranslation();
 
-  // Configuration de base pour fetch avec credentials
-  const fetchWithCredentials = (url: string, options: RequestInit = {}) => {
-    return apiFetch(url, {
-      ...options,
-      credentials: 'include',
-    });
-  };
-
-  // Vérification de l'authentification
-  const { data: user, isLoading, error, refetch } = useQuery<User>({
+  // Vérification de l'authentification avec retry et refetch
+  const { data: user, isLoading, error, refetch } = useQuery<User | null>({
     queryKey: [api.auth.me.path],
     queryFn: async () => {
       try {
         console.log('🔍 Checking authentication...');
-        const res = await fetchWithCredentials(api.auth.me.path);
+        const res = await apiFetch(api.auth.me.path);
         
         if (res.status === 401) {
           console.log('👤 No active session');
@@ -46,13 +38,15 @@ export function useAuth() {
     },
     retry: 1,
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true, // Important pour vérifier si la session est toujours valide
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
 
   // Demande d'OTP
   const requestOtpMutation = useMutation({
     mutationFn: async (phone: string) => {
-      const res = await fetchWithCredentials(api.auth.requestOtp.path, {
+      console.log('📞 Requesting OTP for:', phone);
+      const res = await apiFetch(api.auth.requestOtp.path, {
         method: api.auth.requestOtp.method,
         body: JSON.stringify({ phone }),
       });
@@ -90,13 +84,13 @@ export function useAuth() {
     mutationFn: async (data: { phone: string; otp: string }) => {
       console.log('🔐 Attempting login for:', data.phone);
       
-      const res = await fetchWithCredentials(api.auth.verifyOtp.path, {
+      const res = await apiFetch(api.auth.verifyOtp.path, {
         method: api.auth.verifyOtp.method,
         body: JSON.stringify(data),
       });
       
       const result = await res.json().catch(() => ({}));
-      console.log('📦 Login response:', result);
+      console.log('📦 Login response status:', res.status);
       
       if (!res.ok) {
         if (res.status === 401) {
@@ -121,6 +115,9 @@ export function useAuth() {
       
       // Attendre un peu pour que la session soit bien établie
       await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Rafraîchir pour s'assurer que la session est valide
+      await refetch();
       
       toast({
         title: lang === 'mg' ? "Tafiditra!" : "Connecté!",
@@ -151,14 +148,17 @@ export function useAuth() {
   // Déconnexion
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetchWithCredentials(api.auth.logout.path, { 
+      console.log('🚪 Logging out...');
+      const res = await apiFetch(api.auth.logout.path, { 
         method: api.auth.logout.method,
       });
       
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.message || "Logout failed");
       }
+      
+      return res.json();
     },
     onSuccess: () => {
       // Nettoyer le cache
@@ -168,6 +168,11 @@ export function useAuth() {
         title: lang === 'mg' ? "Tafivoaka" : "Déconnecté",
       });
       
+      window.location.href = '/login';
+    },
+    onError: (error: Error) => {
+      console.error('Logout error:', error);
+      // Forcer la redirection même en cas d'erreur
       window.location.href = '/login';
     },
   });

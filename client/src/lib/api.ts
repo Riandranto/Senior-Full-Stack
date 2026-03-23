@@ -2,20 +2,14 @@
 import { api } from '@shared/routes';
 
 const getBaseUrl = () => {
-  // Check if we're in production (Railway)
+  // En production (Railway)
   if (import.meta.env.PROD) {
     console.log('🚀 Running in PRODUCTION mode');
     // Utiliser l'URL complète du backend
     return 'https://ride-mada-mg.up.railway.app';
   }
   
-  // Check if we have a VITE_API_URL environment variable
-  if (import.meta.env.VITE_API_URL) {
-    console.log('📡 Using VITE_API_URL:', import.meta.env.VITE_API_URL);
-    return import.meta.env.VITE_API_URL;
-  }
-  
-  // In development, use localhost
+  // En développement
   console.log('💻 Running in DEVELOPMENT mode');
   return 'http://localhost:5000';
 };
@@ -26,24 +20,32 @@ console.log('🌐 API_BASE_URL:', API_BASE_URL);
 console.log('📦 import.meta.env.PROD:', import.meta.env.PROD);
 console.log('📦 import.meta.env.MODE:', import.meta.env.MODE);
 
-// Fonction fetch unifiée
+// Fonction fetch unifiée avec gestion d'erreur améliorée
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  // Build the URL correctly
+  // Construire l'URL correctement
   const url = endpoint.startsWith('http') 
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`;
   
   console.log('🌐 Fetching:', url);
   
-  const response = await fetch(url, {
-    ...options,
+  // Configuration par défaut
+  const defaultOptions: RequestInit = {
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       ...options.headers,
     },
+  };
+  
+  const response = await fetch(url, {
+    ...defaultOptions,
+    ...options,
   });
+  
+  // Log pour debug
+  console.log(`📡 Response: ${response.status} ${response.statusText}`);
   
   return response;
 }
@@ -53,6 +55,8 @@ export async function apiFetchFormData(endpoint: string, formData: FormData) {
   const url = endpoint.startsWith('http') 
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`;
+  
+  console.log('🌐 Uploading to:', url);
   
   const response = await fetch(url, {
     method: 'POST',

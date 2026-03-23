@@ -20,15 +20,14 @@ export function useWebSocket() {
   const { lang } = useTranslation();
 
   const getWebSocketUrl = useCallback(() => {
-    // In production (deployed on Railway)
+    // En production (deployed on Railway)
     if (import.meta.env.PROD) {
-      // Use relative URL - will use same domain
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.host;
       return `${protocol}//${host}/ws`;
     }
     
-    // In development
+    // En développement
     return 'ws://localhost:5000/ws';
   }, []);
 
@@ -48,16 +47,18 @@ export function useWebSocket() {
     const wsUrl = getWebSocketUrl();
     console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
     
-    if (wsRef.current) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.close();
     }
 
     wsRef.current = new WebSocket(wsUrl);
 
     wsRef.current.onopen = () => {
+      console.log("✅ WebSocket connected");
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
+      // Authentifier après connexion
       const user = queryClient.getQueryData([api.auth.me.path]) as any;
       if (user?.id) {
         wsRef.current?.send(JSON.stringify({
@@ -65,18 +66,19 @@ export function useWebSocket() {
           payload: { userId: user.id }
         }));
       }
-
-      console.log("✅ WebSocket connected");
     };
 
     wsRef.current.onclose = (event) => {
+      console.log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason}`);
       setConnected(false);
       
+      // Ne pas reconnecter pour les fermetures normales
       if (event.code === 1000 || event.code === 1001) {
         console.log("WebSocket closed cleanly");
         return;
       }
 
+      // Reconnecter avec backoff exponentiel
       const delay = Math.min(
         BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttemptsRef.current),
         30000
@@ -97,12 +99,15 @@ export function useWebSocket() {
     wsRef.current.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as WsMessage;
+        console.log(`📨 WebSocket message: ${msg.type}`);
         
+        // Exécuter les handlers enregistrés
         const handlers = handlersRef.current.get(msg.type);
         if (handlers) {
           handlers.forEach(fn => fn(msg.payload));
         }
         
+        // Invalider les requêtes selon le type de message
         switch (msg.type) {
           case WS_EVENTS.RIDE_STATUS_CHANGED:
             queryClient.invalidateQueries({ 

@@ -111,37 +111,29 @@ export async function registerRoutes(
 
   // Route verify OTP
   // Dans routes.ts, assurez-vous que la route verifyOtp a ces en-têtes
-  // Dans routes.ts, modifiez la route verifyOtp
-app.post(api.auth.verifyOtp.path, async (req, res) => {
-  try {
-    console.log('🔐 Backend - verifyOtp called');
-    console.log('📦 Body:', req.body);
-    console.log('📦 Session ID avant:', req.session.id);
-    console.log('📦 Cookie reçu:', req.headers.cookie);
-    
-    const input = api.auth.verifyOtp.input.parse(req.body);
-    
-    if (input.otp !== "123456") {
-      return res.status(401).json({ message: "Code invalide" });
-    }
-
-    let user = await storage.getUserByPhone(input.phone);
-    if (!user) {
-      user = await storage.createUser({ 
-        phone: input.phone, 
-        name: "User " + input.phone.slice(-4), 
-        role: "PASSENGER", 
-        language: "mg" 
-      });
-    }
-
-    // Régénérer l'ID de session pour éviter la fixation de session
-    req.session.regenerate(async (err) => {
-      if (err) {
-        console.error('❌ Session regenerate error:', err);
-        return res.status(500).json({ message: "Erreur serveur" });
-      }
+  app.post(api.auth.verifyOtp.path, async (req, res) => {
+    try {
+      console.log('🔐 Backend - verifyOtp called');
+      console.log('📦 Body:', req.body);
+      console.log('📦 Session ID avant:', req.session.id);
+      console.log('📦 Cookie reçu:', req.headers.cookie);
       
+      const input = api.auth.verifyOtp.input.parse(req.body);
+      
+      if (input.otp !== "123456") {
+        return res.status(401).json({ message: "Code invalide" });
+      }
+  
+      let user = await storage.getUserByPhone(input.phone);
+      if (!user) {
+        user = await storage.createUser({ 
+          phone: input.phone, 
+          name: "User " + input.phone.slice(-4), 
+          role: "PASSENGER", 
+          language: "mg" 
+        });
+      }
+  
       // Sauvegarder l'utilisateur dans la session
       req.session.userId = user.id;
       req.session.role = user.role;
@@ -152,38 +144,42 @@ app.post(api.auth.verifyOtp.path, async (req, res) => {
         sessionID: req.session.id 
       });
       
-      // Sauvegarder la session
-      req.session.save((err) => {
-        if (err) {
-          console.error('❌ Session save error:', err);
-          return res.status(500).json({ message: "Erreur serveur" });
-        }
-        
-        console.log('✅ Session saved successfully');
-        console.log('📦 Session après sauvegarde:', {
-          id: req.session.id,
-          userId: req.session.userId,
-          role: req.session.role
+      // Sauvegarder la session avec Promise
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error('❌ Session save error:', err);
+            reject(err);
+          } else {
+            console.log('✅ Session saved successfully');
+            console.log('📦 Session après sauvegarde:', {
+              id: req.session.id,
+              userId: req.session.userId,
+              role: req.session.role
+            });
+            resolve();
+          }
         });
-        
-        // Forcer l'envoi du cookie dans la réponse
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
-        
-        // Répondre avec l'utilisateur
-        res.json({ user, success: true });
       });
-    });
-    
-  } catch (e) {
-    console.error('❌ Backend error:', e);
-    if (e instanceof z.ZodError) {
-      return res.status(400).json({ message: "Données invalides" });
+  
+      console.log('✅ User authenticated:', user.id, user.role);
+      
+      // Forcer l'envoi du cookie dans la réponse
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      
+      // Répondre avec l'utilisateur
+      res.json({ user, success: true });
+      
+    } catch (e) {
+      console.error('❌ Backend error:', e);
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: "Données invalides" });
+      }
+      res.status(500).json({ message: "Erreur serveur" });
     }
-    res.status(500).json({ message: "Erreur serveur" });
-  }
-});
+  });
 
   // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {

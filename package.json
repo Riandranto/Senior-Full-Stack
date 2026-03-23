@@ -4,13 +4,10 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "build": "npm run build:frontend && npm run build:backend",
-    "build:frontend": "vite build",
-    "build:backend": "tsc --project tsconfig.server.json",
-    "start": "node dist/server/index.js",
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "tsx watch server/index.ts",
-    "dev:frontend": "vite"
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "start": "NODE_ENV=production node dist/index.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
@@ -98,7 +95,6 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
     "@replit/vite-plugin-cartographer": "^0.4.4",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
@@ -115,14 +111,13 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
-    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.8",
     "esbuild": "^0.25.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.0"
   },
   "overrides": {
     "drizzle-kit": {

@@ -30,7 +30,8 @@ export interface IStorage {
   cancelRide(id: number, reason: string, cancelBy: string): Promise<Ride>;
   acceptOffer(rideId: number, offerId: number, price: number, driverId: number): Promise<Ride>;
   getPassengerRides(passengerId: number): Promise<Ride[]>;
-  getNearbyRequests(): Promise<Ride[]>;
+  getRideHistory(userId: number): Promise<Ride[]>;
+  getNearbyRequests(lat?: number, lng?: number): Promise<Ride[]>;
   getAllRides(): Promise<Ride[]>;
 
   // Offers
@@ -76,6 +77,10 @@ export interface IStorage {
   // App Config
   getConfig(): Promise<AppConfig>;
   updateConfig(config: any): Promise<AppConfig>;
+  
+  // Additional
+  getDriverActiveRide(driverId: number): Promise<Ride | undefined>;
+  updateRideEta(id: number, additionalMinutes: number): Promise<Ride>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -83,7 +88,11 @@ export class DatabaseStorage implements IStorage {
   async getConfig(): Promise<AppConfig> {
     const configs = await db.select().from(appConfig);
     if (configs.length === 0) {
-      const [newConfig] = await db.insert(appConfig).values({}).returning();
+      const [newConfig] = await db.insert(appConfig).values({
+        searchRadiusKm: "5.0",
+        offerExpirySeconds: 90,
+        commissionPercent: "0.0"
+      }).returning();
       return newConfig;
     }
     return configs[0];
@@ -92,7 +101,11 @@ export class DatabaseStorage implements IStorage {
   async updateConfig(config: any): Promise<AppConfig> {
     const existing = await this.getConfig();
     const [updated] = await db.update(appConfig)
-      .set(config)
+      .set({
+        searchRadiusKm: config.searchRadiusKm?.toString(),
+        offerExpirySeconds: config.offerExpirySeconds,
+        commissionPercent: config.commissionPercent?.toString()
+      })
       .where(eq(appConfig.id, existing.id))
       .returning();
     return updated;
@@ -110,7 +123,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const [user] = await db.insert(users).values({
+      phone: insertUser.phone,
+      name: insertUser.name,
+      role: insertUser.role || "PASSENGER",
+      language: insertUser.language || "mg",
+    }).returning();
     return user;
   }
 
@@ -131,7 +149,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDriverProfile(profile: any): Promise<DriverProfile> {
-    const [newProfile] = await db.insert(driverProfiles).values(profile).returning();
+    const [newProfile] = await db.insert(driverProfiles).values({
+      userId: profile.userId,
+      vehicleType: profile.vehicleType,
+      vehicleNumber: profile.vehicleNumber,
+      licenseNumber: profile.licenseNumber,
+      status: profile.status || "PENDING",
+      online: profile.online || false,
+    }).returning();
     return newProfile;
   }
 
@@ -159,7 +184,20 @@ export class DatabaseStorage implements IStorage {
 
   // Rides
   async createRide(ride: any): Promise<Ride> {
-    const [newRide] = await db.insert(rides).values(ride).returning();
+    const [newRide] = await db.insert(rides).values({
+      passengerId: ride.passengerId,
+      status: ride.status || "REQUESTED",
+      pickupLat: ride.pickupLat,
+      pickupLng: ride.pickupLng,
+      pickupAddress: ride.pickupAddress,
+      dropLat: ride.dropLat,
+      dropLng: ride.dropLng,
+      dropAddress: ride.dropAddress,
+      vehicleType: ride.vehicleType,
+      note: ride.note,
+      distanceKm: ride.distanceKm,
+      etaMinutes: ride.etaMinutes,
+    }).returning();
     return newRide;
   }
 
@@ -174,17 +212,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async cancelRide(id: number, reason: string, cancelBy: string): Promise<Ride> {
-    const [ride] = await db.update(rides).set({ status: "CANCELED", cancelReason: reason, cancelBy, updatedAt: new Date() }).where(eq(rides.id, id)).returning();
+    const [ride] = await db.update(rides).set({ 
+      status: "CANCELED", 
+      cancelReason: reason, 
+      cancelBy, 
+      updatedAt: new Date() 
+    }).where(eq(rides.id, id)).returning();
     return ride;
   }
 
   async acceptOffer(rideId: number, offerId: number, price: number, driverId: number): Promise<Ride> {
-    // Set offer to ACCEPTED
     await db.update(offers).set({ status: "ACCEPTED" }).where(eq(offers.id, offerId));
-    // Set other offers to EXPIRED
     await db.update(offers).set({ status: "EXPIRED" }).where(and(eq(offers.rideId, rideId), sql`${offers.id} != ${offerId}`));
-    // Update ride
-    const [ride] = await db.update(rides).set({ status: "ASSIGNED", driverId, selectedPriceAr: price, updatedAt: new Date() }).where(eq(rides.id, rideId)).returning();
+    const [ride] = await db.update(rides).set({ 
+      status: "ASSIGNED", 
+      driverId, 
+      selectedPriceAr: price, 
+      updatedAt: new Date() 
+    }).where(eq(rides.id, rideId)).returning();
     return ride;
   }
 
@@ -197,17 +242,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getNearbyRequests(lat?: number, lng?: number): Promise<Ride[]> {
-    // Basic implementation: get all requested and bidding rides
-    let query = db.select().from(rides).where(or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING")));
-    
-    const allRequests = await query.orderBy(sql`${rides.createdAt} DESC`);
-    
-    // If driver location provided, filter by 100km radius
+    const allRequests = await db.select().from(rides).where(or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING"))).orderBy(sql`${rides.createdAt} DESC`);
     if (lat !== undefined && lng !== undefined) {
-      const { isWithinRange } = await import("@shared/schema");
       return allRequests.filter(r => isWithinRange(Number(r.pickupLat), Number(r.pickupLng)));
     }
-    
     return allRequests;
   }
 
@@ -217,8 +255,14 @@ export class DatabaseStorage implements IStorage {
 
   // Offers
   async createOffer(offer: any): Promise<Offer> {
-    const [newOffer] = await db.insert(offers).values(offer).returning();
-    // Update ride status to BIDDING if it was REQUESTED
+    const [newOffer] = await db.insert(offers).values({
+      rideId: offer.rideId,
+      driverId: offer.driverId,
+      priceAr: offer.priceAr,
+      etaMinutes: offer.etaMinutes,
+      message: offer.message,
+      expiresAt: offer.expiresAt,
+    }).returning();
     await db.update(rides).set({ status: "BIDDING" }).where(and(eq(rides.id, offer.rideId), eq(rides.status, "REQUESTED")));
     return newOffer;
   }
@@ -309,7 +353,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async adminCancelRide(id: number, reason: string): Promise<Ride> {
-    const [ride] = await db.update(rides).set({ status: "CANCELED", cancelReason: reason, cancelBy: "ADMIN", updatedAt: new Date() }).where(eq(rides.id, id)).returning();
+    const [ride] = await db.update(rides).set({ 
+      status: "CANCELED", 
+      cancelReason: reason, 
+      cancelBy: "ADMIN", 
+      updatedAt: new Date() 
+    }).where(eq(rides.id, id)).returning();
     return ride;
   }
 
@@ -318,7 +367,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDriverDocument(doc: { driverId: number; type: string; url: string }): Promise<DriverDocument> {
-    const [result] = await db.insert(driverDocuments).values(doc).returning();
+    const [result] = await db.insert(driverDocuments).values({
+      driverId: doc.driverId,
+      type: doc.type,
+      url: doc.url,
+    }).returning();
     return result;
   }
 
@@ -356,7 +409,6 @@ export class DatabaseStorage implements IStorage {
     await db.delete(customPlaces).where(eq(customPlaces.id, id));
   }
 
-  // 🔥 NOUVEAU: Récupérer la course active d'un conducteur
   async getDriverActiveRide(driverId: number): Promise<Ride | undefined> {
     const [ride] = await db.select().from(rides)
       .where(and(
@@ -370,29 +422,15 @@ export class DatabaseStorage implements IStorage {
       ))
       .orderBy(sql`${rides.createdAt} DESC`)
       .limit(1);
-    
     return ride;
   }
 
-  // 🔥 NOUVEAU: Mettre à jour l'ETA d'une course
   async updateRideEta(id: number, additionalMinutes: number): Promise<Ride> {
-    const [ride] = await db.select().from(rides).where(eq(rides.id, id));
-    
-    if (!ride) {
-      throw new Error("Ride not found");
-    }
-    
+    const ride = await this.getRide(id);
+    if (!ride) throw new Error("Ride not found");
     const currentEta = ride.etaMinutes || 0;
     const newEta = currentEta + additionalMinutes;
-    
-    const [updated] = await db.update(rides)
-      .set({ 
-        etaMinutes: newEta,
-        updatedAt: new Date()
-      })
-      .where(eq(rides.id, id))
-      .returning();
-    
+    const [updated] = await db.update(rides).set({ etaMinutes: newEta, updatedAt: new Date() }).where(eq(rides.id, id)).returning();
     return updated;
   }
 }
