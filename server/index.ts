@@ -72,33 +72,45 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configuration CORS pour accepter toutes les origines en production
+// Configuration CORS - À mettre AVANT les routes
 const corsOptions = {
-  origin: function(origin, callback) {
+  origin: function(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     // Accepter les requêtes sans origin (comme les apps mobiles)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      return callback(null, true);
+    }
     
-    // Accepter les URLs de production
+    // Liste des origines autorisées
     const allowedOrigins = [
       'https://ride-mada-mg.up.railway.app',
       'capacitor://localhost',
       'http://localhost',
       'http://localhost:5000',
+      'http://localhost:5173',
     ];
     
-    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+    // En développement, accepter toutes les origines
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.log(`❌ CORS blocked origin: ${origin}`);
       callback(null, false);
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With', 'Cookie'],
   exposedHeaders: ['set-cookie'],
 };
 
 app.use(cors(corsOptions));
+
+// S'assurer que les preflight requests sont gérées
+app.options('*', cors(corsOptions));
 
 // Configuration de la session - CORRIGÉE POUR PRODUCTION
 const sessionConfig = {

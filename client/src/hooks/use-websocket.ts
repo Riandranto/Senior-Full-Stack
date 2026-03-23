@@ -5,10 +5,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
 import { api } from "@shared/routes";
-import { API_BASE_URL } from "@/lib/api";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
-const BASE_RECONNECT_DELAY = 1000; // 1 seconde
+const BASE_RECONNECT_DELAY = 1000;
 
 export function useWebSocket() {
   const [connected, setConnected] = useState(false);
@@ -21,9 +20,8 @@ export function useWebSocket() {
   const { lang } = useTranslation();
 
   const getWebSocketUrl = useCallback(() => {
-    // En production (APK ou site déployé)
+    // En production (déployé sur Railway)
     if (import.meta.env.PROD) {
-      // Utiliser l'URL publique de Railway
       return `wss://ride-mada-mg.up.railway.app/ws`;
     }
     
@@ -47,19 +45,18 @@ export function useWebSocket() {
     }
 
     const wsUrl = getWebSocketUrl();
+    console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
     
     if (wsRef.current) {
       wsRef.current.close();
     }
 
-    console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
     wsRef.current = new WebSocket(wsUrl);
 
     wsRef.current.onopen = () => {
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
-      // Authentifier avec userId si disponible
       const user = queryClient.getQueryData([api.auth.me.path]) as any;
       if (user?.id) {
         wsRef.current?.send(JSON.stringify({
@@ -74,16 +71,14 @@ export function useWebSocket() {
     wsRef.current.onclose = (event) => {
       setConnected(false);
       
-      // Ne pas reconnecter si fermeture propre
       if (event.code === 1000 || event.code === 1001) {
         console.log("WebSocket closed cleanly");
         return;
       }
 
-      // Tentative de reconnexion avec backoff exponentiel
       const delay = Math.min(
         BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttemptsRef.current),
-        30000 // Max 30 secondes
+        30000
       );
       
       console.log(`WebSocket closed, reconnecting in ${delay}ms...`);
@@ -102,13 +97,11 @@ export function useWebSocket() {
       try {
         const msg = JSON.parse(e.data) as WsMessage;
         
-        // Appeler les handlers
         const handlers = handlersRef.current.get(msg.type);
         if (handlers) {
           handlers.forEach(fn => fn(msg.payload));
         }
         
-        // Auto-invalidation intelligente
         switch (msg.type) {
           case WS_EVENTS.RIDE_STATUS_CHANGED:
             queryClient.invalidateQueries({ 
@@ -137,7 +130,6 @@ export function useWebSocket() {
             break;
             
           case WS_EVENTS.DRIVER_LOCATION:
-            // Mettre à jour la position du conducteur dans le cache
             queryClient.setQueryData(
               ['/api/driver', msg.payload.driverId, 'location'],
               { lat: msg.payload.lat, lng: msg.payload.lng }

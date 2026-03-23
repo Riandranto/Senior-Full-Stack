@@ -9,7 +9,7 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
   // Si c'est une chaîne et que ça commence par / (chemin relatif)
   if (typeof url === 'string' && url.startsWith('/')) {
     const fullUrl = `${API_BASE_URL}${url}`;
-    console.log(`🌐 API Request: ${fullUrl}`);
+    console.log(`🌐 [OVERRIDE] ${url} -> ${fullUrl}`);
     
     // Ajouter les credentials par défaut
     const newOptions = {
@@ -31,6 +31,8 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
   // Pour les URLs absolues, les laisser telles quelles
   return originalFetch(url, options);
 };
+
+console.log('✅ Fetch override installed'); // Pour debug
 
 // Exporter pour s'assurer que le fichier est importé
 export const fetchOverride = true;
