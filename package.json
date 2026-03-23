@@ -6,12 +6,11 @@
   "scripts": {
     "build": "npm run build:frontend && npm run build:backend",
     "build:frontend": "vite build",
-    "build:backend": "tsc -p tsconfig.server.json",
-    "start": "node dist/index.js",
+    "build:backend": "tsc --project tsconfig.server.json",
+    "start": "node dist/server/index.js",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "tsx watch server/index.ts",
-    "dev:frontend": "vite",
-    "postbuild": "cp -r dist/public/* dist/public/ || true"
+    "dev:frontend": "vite"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
