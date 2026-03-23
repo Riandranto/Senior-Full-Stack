@@ -1,27 +1,37 @@
-
+// api.ts
 const getBaseUrl = () => {
-  // En production (déployé sur Railway)
+  // Check if we're in production (Railway)
+  // In Railway, process.env.NODE_ENV is 'production'
   if (import.meta.env.PROD) {
-    // Utiliser l'URL publique de Railway
-    return 'https://ride-mada-mg.up.railway.app';
+    console.log('🚀 Running in PRODUCTION mode');
+    return ''; // Empty string means use same origin
   }
   
-  // En développement local
-  if (import.meta.env.DEV) {
-    return 'http://localhost:5000';
+  // Check if we have a VITE_API_URL environment variable
+  if (import.meta.env.VITE_API_URL) {
+    console.log('📡 Using VITE_API_URL:', import.meta.env.VITE_API_URL);
+    return import.meta.env.VITE_API_URL;
   }
   
-  return '';
+  // In development, use localhost
+  console.log('💻 Running in DEVELOPMENT mode');
+  return 'http://localhost:5000';
 };
 
 export const API_BASE_URL = getBaseUrl();
 
-console.log('🌐 API_BASE_URL:', API_BASE_URL); // Pour debug
+console.log('🌐 API_BASE_URL:', API_BASE_URL);
+console.log('📦 import.meta.env.PROD:', import.meta.env.PROD);
+console.log('📦 import.meta.env.MODE:', import.meta.env.MODE);
 
 // Fonction fetch unifiée
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
-  console.log('🌐 Fetching:', url); // Pour debug
+  // Build the URL correctly
+  const url = API_BASE_URL 
+    ? `${API_BASE_URL}${endpoint}`
+    : endpoint;
+  
+  console.log('🌐 Fetching:', url);
   
   const response = await fetch(url, {
     ...options,
@@ -38,7 +48,9 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
 
 // Pour les formulaires (multipart/form-data)
 export async function apiFetchFormData(endpoint: string, formData: FormData) {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = API_BASE_URL 
+    ? `${API_BASE_URL}${endpoint}`
+    : endpoint;
   
   const response = await fetch(url, {
     method: 'POST',

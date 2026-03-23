@@ -20,15 +20,16 @@ export function useWebSocket() {
   const { lang } = useTranslation();
 
   const getWebSocketUrl = useCallback(() => {
-    // En production (déployé sur Railway)
+    // In production (deployed on Railway)
     if (import.meta.env.PROD) {
-      return `wss://ride-mada-mg.up.railway.app/ws`;
+      // Use relative URL - will use same domain
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host;
+      return `${protocol}//${host}/ws`;
     }
     
-    // En développement local
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    return `${protocol}//${host}/ws`;
+    // In development
+    return 'ws://localhost:5000/ws';
   }, []);
 
   const connect = useCallback(() => {
