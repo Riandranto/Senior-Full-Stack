@@ -4,30 +4,22 @@
       "module": "NodeNext",
       "moduleResolution": "NodeNext",
       "lib": ["ES2022"],
-      "outDir": "./dist",
+      "outDir": "./dist/public",
       "rootDir": ".",
       "strict": true,
       "esModuleInterop": true,
       "skipLibCheck": true,
       "forceConsistentCasingInFileNames": true,
       "resolveJsonModule": true,
-      "allowJs": true,
-      "declaration": false,
-      "noEmit": false,
-      "emitDeclarationOnly": false,
-      "isolatedModules": true,
-      "allowSyntheticDefaultImports": true
+      "allowJs": true
     },
     "include": [
-      "server/**/*",
-      "shared/**/*",
-      "drizzle.config.ts",
-      "vite.config.ts"
+      "server/**/*.ts",
+      "shared/**/*.ts"
     ],
     "exclude": [
       "node_modules",
-      "dist",
-      "client",
-      "**/*.test.ts"
+      "dist/public",
+      "client"
     ]
   }
