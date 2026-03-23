@@ -110,7 +110,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // S'assurer que les preflight requests sont gérées
-app.options('*', cors(corsOptions));
+app.options('/*', cors(corsOptions));
 
 // Configuration de la session - CORRIGÉE POUR PRODUCTION
 const sessionConfig = {
