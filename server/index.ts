@@ -7,6 +7,13 @@ import { serveStatic } from "./static.js";
 import { createServer } from "http";
 import os from "os";
 import cors from 'cors';
+import { redisStore } from './services/redis';
+import { initializeRedis } from './services/redis';
+
+
+// Au démarrage
+await initializeRedis();
+
 
 const app = express();
 const httpServer = createServer(app);
@@ -96,7 +103,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 app.use(cors({
-  origin: true,
+  origin: allowedOrigins,
   credentials: true,
 }));
 
@@ -105,9 +112,7 @@ app.use(cors({
 const isProduction = process.env.NODE_ENV === 'production';
 
 const sessionConfig = {
-  store: new MemoryStore({
-    checkPeriod: 86400000,
-  }),
+  store: redisStore,
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   resave: false,
   saveUninitialized: false,
