@@ -100,10 +100,6 @@ app.use(cors({
   credentials: true,
 }));
 
-app.options('*', cors({
-  origin: true,
-  credentials: true,
-}));
 
 // Configuration de la session - CORRIGÉE
 const isProduction = process.env.NODE_ENV === 'production';
