@@ -3,16 +3,19 @@ import { useLocation } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
 import { useCreateRide } from '@/hooks/use-passenger';
+import { useWebSocketEvents } from '@/hooks/use-websocket-events';
+import { useAutoRefresh } from '@/hooks/use-auto-refresh';
+import { RefreshIndicator } from '@/components/RefreshIndicator';
+import { LoadingAnimation } from '@/components/LoadingAnimation';
 import { useTranslation } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, Route } from 'lucide-react';
-import { motion } from 'framer-motion';
-
+import { MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, Route, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 interface NominatimResult {
   place_id: number;
@@ -115,6 +118,7 @@ export default function PassengerHome() {
   const { t, lang } = useTranslation();
   const createRide = useCreateRide();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
@@ -125,6 +129,7 @@ export default function PassengerHome() {
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [mapCenter, setMapCenter] = useState<LatLng>(GEOCENTER);
   const [flyTrigger, setFlyTrigger] = useState(0);
+  const [hasActiveRide, setHasActiveRide] = useState(false);
 
   const [pickupSuggestions, setPickupSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
@@ -135,6 +140,16 @@ export default function PassengerHome() {
   const pickupDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropoffDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 🔥 Auto-refresh des données
+  const { refresh, isRefreshing } = useAutoRefresh({
+    queryKeys: [
+      ['/api/places'],
+      ['/api/rides/active']
+    ],
+    interval: 10000,
+    enabled: !hasActiveRide
+  });
+
   const { data: dbPlaces = [] } = useQuery<any[]>({
     queryKey: ['/api/places'],
     queryFn: async () => {
@@ -144,6 +159,29 @@ export default function PassengerHome() {
     },
     staleTime: 60000,
   });
+
+  // 🔥 Vérifier s'il y a une course active
+  const { data: activeRide } = useQuery({
+    queryKey: ['/api/rides/active'],
+    queryFn: async () => {
+      const res = await fetch('/api/rides/active', { credentials: 'include' });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 10000,
+  });
+
+  // 🔥 WebSocket events
+  useWebSocketEvents(activeRide?.passengerId);
+
+  useEffect(() => {
+    if (activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED') {
+      setHasActiveRide(true);
+      setLocation(`/passenger/ride/${activeRide.id}`);
+    } else {
+      setHasActiveRide(false);
+    }
+  }, [activeRide, setLocation]);
 
   const searchLocalPlaces = useCallback((query: string) => {
     const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -247,9 +285,6 @@ export default function PassengerHome() {
     }
   }, [searchLocalPlaces]);
 
-  //nouveau
-  
-
   const selectSuggestion = useCallback((type: 'pickup' | 'dropoff', result: any) => {
     const loc = { lat: parseFloat(result.lat), lng: parseFloat(result.lon) };
     const label = result.isLocal ? result.name : formatAddress(result);
@@ -268,52 +303,51 @@ export default function PassengerHome() {
     setFlyTrigger(prev => prev + 1);
   }, []);
 
-  // Dans la fonction handleMapSelect
-const handleMapSelect = useCallback(async (loc: LatLng) => {
-  if (!isWithinRange(loc.lat, loc.lng)) {
-    toast({
-      variant: "destructive",
-      title: lang === 'mg' ? "Tsy ao anatin'ny faritra" : "Hors zone",
-      description: lang === 'mg' 
-        ? "Fort-Dauphin ihany no misy"
-        : "Uniquement Fort-Dauphin"
-    });
-    return;
-  }
-
-  setIsGeocoding(true);
-  try {
-    const address = await reverseGeocode(loc.lat, loc.lng);
-    
-    if (selectMode === 'pickup') {
-      setPickupCoords(loc);
-      setPickup(address);
-      setSelectMode('dropoff');
+  const handleMapSelect = useCallback(async (loc: LatLng) => {
+    if (!isWithinRange(loc.lat, loc.lng)) {
       toast({
-        title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
-        description: address,
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy ao anatin'ny faritra" : "Hors zone",
+        description: lang === 'mg' 
+          ? "Fort-Dauphin ihany no misy"
+          : "Uniquement Fort-Dauphin"
       });
-    } else if (selectMode === 'dropoff') {
-      setDropoffCoords(loc);
-      setDropoff(address);
-      setSelectMode(null);
-      toast({
-        title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
-        description: address,
-      });
+      return;
     }
-  } catch (error) {
-    toast({
-      variant: "destructive",
-      title: lang === 'mg' ? "Tsy nety" : "Erreur",
-      description: lang === 'mg' 
-        ? "Tsy hita ny adiresy"
-        : "Adresse non trouvée"
-    });
-  } finally {
-    setIsGeocoding(false);
-  }
-}, [selectMode, lang, toast]);
+
+    setIsGeocoding(true);
+    try {
+      const address = await reverseGeocode(loc.lat, loc.lng);
+      
+      if (selectMode === 'pickup') {
+        setPickupCoords(loc);
+        setPickup(address);
+        setSelectMode('dropoff');
+        toast({
+          title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
+          description: address,
+        });
+      } else if (selectMode === 'dropoff') {
+        setDropoffCoords(loc);
+        setDropoff(address);
+        setSelectMode(null);
+        toast({
+          title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
+          description: address,
+        });
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' 
+          ? "Tsy hita ny adiresy"
+          : "Adresse non trouvée"
+      });
+    } finally {
+      setIsGeocoding(false);
+    }
+  }, [selectMode, lang, toast]);
 
   const handleRequest = async () => {
     if (!pickup || !dropoff || !pickupCoords || !dropoffCoords) {
@@ -335,8 +369,8 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
       dropLng: dropoffCoords.lng,
       dropAddress: dropoff,
       vehicleType: vehicle,
-      distanceKm: distanceKm ?? undefined,
-      etaMinutes: etaMin ?? undefined,
+      distanceKm: osrmDistance ?? undefined,
+      etaMinutes: osrmDuration ?? undefined,
     });
     
     if (ride) {
@@ -379,15 +413,26 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
       });
     }, { enableHighAccuracy: true, timeout: 10000 });
   }, [lang, toast]);
-  
 
   const distanceKm = osrmDistance ?? (pickupCoords && dropoffCoords 
     ? haversineKm(pickupCoords.lat, pickupCoords.lng, dropoffCoords.lat, dropoffCoords.lng) 
     : null);
   const etaMin = osrmDuration ?? (distanceKm ? Math.max(1, Math.ceil(distanceKm / 25 * 60)) : null);
 
+  if (hasActiveRide) {
+    return (
+      <MobileLayout role="passenger">
+        <div className="flex h-screen items-center justify-center">
+          <LoadingAnimation />
+        </div>
+      </MobileLayout>
+    );
+  }
+
   return (
     <MobileLayout role="passenger">
+      <RefreshIndicator isRefreshing={isRefreshing} />
+      
       <div className="absolute inset-0 z-0 pt-14">
         <MapView 
           center={mapCenter} 
@@ -462,40 +507,48 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
                   </button>
                 </div>
               </div>
-              {showPickupSuggestions && (pickupSuggestions.length > 0 || pickupNoResults) && (
-                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto" data-testid="pickup-suggestions">
-                  {pickupSuggestions.map((result: any) => (
-                    <button
-                      key={result.place_id}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => selectSuggestion('pickup', result)}
-                      className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
-                      data-testid={`pickup-suggestion-${result.place_id}`}
-                    >
-                      <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-green-500'}`} />
-                      <div className="min-w-0">
-                        <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
-                        {!result.isLocal && (
-                          <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                  {pickupNoResults && (
-                    <button
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => { setSelectMode('pickup'); setShowPickupSuggestions(false); setPickupNoResults(false); }}
-                      className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
-                      data-testid="pickup-mark-on-map"
-                    >
-                      <Crosshair className="w-4 h-4 text-primary shrink-0" />
-                      <span className="font-medium text-primary">
-                        {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
-                      </span>
-                    </button>
-                  )}
-                </div>
-              )}
+              <AnimatePresence>
+                {showPickupSuggestions && (pickupSuggestions.length > 0 || pickupNoResults) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
+                    data-testid="pickup-suggestions"
+                  >
+                    {pickupSuggestions.map((result: any) => (
+                      <button
+                        key={result.place_id}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectSuggestion('pickup', result)}
+                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
+                        data-testid={`pickup-suggestion-${result.place_id}`}
+                      >
+                        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-green-500'}`} />
+                        <div className="min-w-0">
+                          <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
+                          {!result.isLocal && (
+                            <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                    {pickupNoResults && (
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { setSelectMode('pickup'); setShowPickupSuggestions(false); setPickupNoResults(false); }}
+                        className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
+                        data-testid="pickup-mark-on-map"
+                      >
+                        <Crosshair className="w-4 h-4 text-primary shrink-0" />
+                        <span className="font-medium text-primary">
+                          {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
+                        </span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             
             <div className="relative" data-testid="dropoff-field">
@@ -522,45 +575,57 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
                   </button>
                 </div>
               </div>
-              {showDropoffSuggestions && (dropoffSuggestions.length > 0 || dropoffNoResults) && (
-                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto" data-testid="dropoff-suggestions">
-                  {dropoffSuggestions.map((result: any) => (
-                    <button
-                      key={result.place_id}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => selectSuggestion('dropoff', result)}
-                      className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
-                      data-testid={`dropoff-suggestion-${result.place_id}`}
-                    >
-                      <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-red-500'}`} />
-                      <div className="min-w-0">
-                        <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
-                        {!result.isLocal && (
-                          <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                  {dropoffNoResults && (
-                    <button
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => { setSelectMode('dropoff'); setShowDropoffSuggestions(false); setDropoffNoResults(false); }}
-                      className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
-                      data-testid="dropoff-mark-on-map"
-                    >
-                      <Crosshair className="w-4 h-4 text-primary shrink-0" />
-                      <span className="font-medium text-primary">
-                        {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
-                      </span>
-                    </button>
-                  )}
-                </div>
-              )}
+              <AnimatePresence>
+                {showDropoffSuggestions && (dropoffSuggestions.length > 0 || dropoffNoResults) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
+                    data-testid="dropoff-suggestions"
+                  >
+                    {dropoffSuggestions.map((result: any) => (
+                      <button
+                        key={result.place_id}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectSuggestion('dropoff', result)}
+                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
+                        data-testid={`dropoff-suggestion-${result.place_id}`}
+                      >
+                        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-red-500'}`} />
+                        <div className="min-w-0">
+                          <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
+                          {!result.isLocal && (
+                            <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                    {dropoffNoResults && (
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { setSelectMode('dropoff'); setShowDropoffSuggestions(false); setDropoffNoResults(false); }}
+                        className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
+                        data-testid="dropoff-mark-on-map"
+                      >
+                        <Crosshair className="w-4 h-4 text-primary shrink-0" />
+                        <span className="font-medium text-primary">
+                          {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
+                        </span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
 
           {distanceKm !== null && etaMin !== null && (
-            <div className="flex items-center gap-3 mb-3 px-1">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-3 mb-3 px-1"
+            >
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Route className="w-3.5 h-3.5" />
                 <span className="font-semibold text-foreground">{distanceKm.toFixed(1)} km</span>
@@ -570,7 +635,7 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
                 <Navigation className="w-3.5 h-3.5" />
                 <span className="font-semibold text-foreground">~{etaMin} min</span>
               </div>
-            </div>
+            </motion.div>
           )}
 
           <div className="flex gap-2.5 mb-4">
@@ -592,14 +657,26 @@ const handleMapSelect = useCallback(async (loc: LatLng) => {
             </button>
           </div>
 
-          <Button 
-            onClick={handleRequest}
-            disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending}
-            className="w-full h-12 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-all"
-            data-testid="button-request-ride"
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
           >
-            {createRide.isPending ? t('finding_drivers') : t('request_ride')}
-          </Button>
+            <Button 
+              onClick={handleRequest}
+              disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending}
+              className="w-full h-12 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-all"
+              data-testid="button-request-ride"
+            >
+              {createRide.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t('finding_drivers')}
+                </>
+              ) : (
+                t('request_ride')
+              )}
+            </Button>
+          </motion.div>
         </Card>
       </motion.div>
     </MobileLayout>

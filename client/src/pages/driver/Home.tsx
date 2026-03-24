@@ -11,7 +11,10 @@ import {
   useUpdateRideStatus,
   useExtendEta
 } from '@/hooks/use-driver';
-import { useWebSocket } from '@/hooks/use-websocket';
+import { useWebSocketEvents } from '@/hooks/use-websocket-events';
+import { useAutoRefresh } from '@/hooks/use-auto-refresh';
+import { RefreshIndicator } from '@/components/RefreshIndicator';
+import { LoadingAnimation } from '@/components/LoadingAnimation';
 import { useTranslation } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -39,7 +42,6 @@ interface ActiveRide {
   pickupAddress: string;
   dropAddress: string;
   status: string;
-  // 🔥 Le prix peut être dans différents champs
   price?: number;
   priceAr?: number;
   amount?: number;
@@ -52,66 +54,46 @@ interface ActiveRide {
   pickupLng?: string | number;
   dropLat?: string | number;
   dropLng?: string | number;
-  // Propriétés additionnelles
   [key: string]: any;
 }
 
-// 🔥 Fonction de débogage pour voir la structure complète
-const debugRideStructure = (ride: any) => {
-  if (!ride) return;
-  
-  console.log('=== STRUCTURE COMPLÈTE DE LA COURSE ===');
-  console.log('Toutes les propriétés:', Object.keys(ride));
-  console.log('Valeurs:', ride);
-  
-  // Chercher le prix dans toutes les propriétés
-  const possiblePriceFields = ['price', 'priceAr', 'amount', 'total', 'fare', 'cost', 'value'];
-  possiblePriceFields.forEach(field => {
-    if (ride[field] !== undefined) {
-      console.log(`🔍 ${field}:`, ride[field], 'type:', typeof ride[field]);
-    }
-  });
-};
+const extractPrice = (ride: any): number => {
+  if (!ride) return 0;
 
-  const extractPrice = (ride: any): number => {
-    if (!ride) return 0;
+  const possibleFields = [
+    'selectedPriceAr',
+    'price',
+    'priceAr',
+    'price_ar',
+    'amount',
+    'total',
+    'fare',
+    'cost',
+    'value',
+    'offerPrice',
+    'driverPrice'
+  ];
 
-    const possibleFields = [
-      'selectedPriceAr',  // 🔥 AJOUTÉ - c'est le champ qui contient le prix
-      'price',
-      'priceAr',
-      'price_ar',
-      'amount',
-      'total',
-      'fare',
-      'cost',
-      'value',
-      'offerPrice',
-      'driverPrice'
-    ];
+  for (const key of possibleFields) {
+    const val = ride[key];
 
-    for (const key of possibleFields) {
-      const val = ride[key];
-
-      if (val !== undefined && val !== null) {
-        const num = Number(val);
-        if (!isNaN(num) && num > 0) {
-          console.log(`✅ Prix trouvé dans ${key}: ${num}`); // Pour déboguer
-          return num;
-        }
+    if (val !== undefined && val !== null) {
+      const num = Number(val);
+      if (!isNaN(num) && num > 0) {
+        return num;
       }
     }
+  }
 
-    console.log('❌ Aucun prix trouvé dans:', Object.keys(ride));
-    return 0;
-  };
+  return 0;
+};
 
 export default function DriverHome() {
   const { t, lang } = useTranslation();
   const [, setLocation] = useLocation();
   const { data: profile, isLoading: profileLoading } = useDriverProfile();
   const setOnline = useSetOnline();
-  const { data: requests = [], isLoading: requestsLoading } = useDriverRequests();
+  const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useDriverRequests();
   const sendOffer = useSendOffer();
   const updateLocation = useUpdateLocation();
   const { connected, subscribe } = useWebSocket();
@@ -120,6 +102,19 @@ export default function DriverHome() {
   const { data: activeRide, refetch: refetchActiveRide } = useDriverActiveRide();
   const updateRideStatus = useUpdateRideStatus(activeRide?.id || 0);
   const extendEta = useExtendEta(activeRide?.id || 0);
+
+  // 🔥 Auto-refresh des données
+  const { refresh, isRefreshing } = useAutoRefresh({
+    queryKeys: [
+      ['/api/driver/requests'],
+      ['/api/driver/active-ride']
+    ],
+    interval: 10000,
+    enabled: !activeRide
+  });
+
+  // 🔥 WebSocket events
+  useWebSocketEvents(profile?.userId);
 
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [price, setPrice] = useState('');
@@ -149,18 +144,6 @@ export default function DriverHome() {
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
 
-  // 🔥 Debug: Afficher la structure complète de activeRide quand il change
-  useEffect(() => {
-    if (activeRide) {
-      console.log('🔥 activeRide mis à jour:', activeRide);
-      console.log('🔍 Propriétés disponibles:', Object.keys(activeRide));
-      console.log('💰 Recherche du prix...');
-      
-      const price = extractPrice(activeRide);
-      console.log('💰 Prix extrait:', price);
-    }
-  }, [activeRide]);
-
   // 🔥 Prix formaté pour l'affichage
   const formattedPrice = useMemo(() => {
     const price = extractPrice(activeRide);
@@ -172,7 +155,6 @@ export default function DriverHome() {
     if (activeRide && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {
       setShowRideTracking(true);
 
-      // Extraire les coordonnées de la course active
       if (activeRide.pickupLat && activeRide.pickupLng) {
         setPickupCoords({ 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -187,7 +169,6 @@ export default function DriverHome() {
         });
       }
 
-      // Calculer l'itinéraire complet
       if (activeRide.pickupLat && activeRide.pickupLng && activeRide.dropLat && activeRide.dropLng) {
         const pickup = { 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -205,7 +186,6 @@ export default function DriverHome() {
         });
       }
       
-      // Si le statut est ASSIGNED, on affiche mais on ne démarre pas le timer
       if (activeRide.status === 'ASSIGNED') {
         setTimeElapsed(0);
         setTimeRemaining(activeRide.etaMinutes);
@@ -222,14 +202,11 @@ export default function DriverHome() {
           secondsIntervalRef.current = undefined;
         }
       } 
-      // Si le timer a déjà été démarré ou si on est dans un statut avancé
       else if (timerStarted || ['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {
-        // Si on n'a pas encore de startTime, l'initialiser
         if (!startTime && activeRide.status !== 'ASSIGNED') {
           setStartTime(Date.now());
         }
         
-        // Mettre à jour le timer toutes les secondes
         if (!secondsIntervalRef.current) {
           secondsIntervalRef.current = setInterval(() => {
             if (startTime) {
@@ -285,14 +262,12 @@ export default function DriverHome() {
     };
   }, [activeRide, lang, timerStarted, startTime, timeRemaining, timeRemainingSeconds, toast]);
 
-  // Marqueurs pour la carte
   const pickupMarkers = useMemo(() => {
     const markers = requests.map((r: any) => ({
       lat: parseFloat(r.pickupLat as any),
       lng: parseFloat(r.pickupLng as any),
     }));
     
-    // Ajouter le marqueur de prise en charge de la course active si elle existe
     if (activeRide && ['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status) && activeRide.pickupLat) {
       markers.push({
         lat: parseFloat(activeRide.pickupLat as any),
@@ -302,62 +277,6 @@ export default function DriverHome() {
   
     return markers;
   }, [requests, activeRide]);
-
-  // Souscription aux notifications WebSocket
-  useEffect(() => {
-    if (!connected || !profile?.userId) return;
-
-    const unsubscribe = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
-      if (data.driverId === profile?.userId) {
-        refetchActiveRide();
-        
-        switch(data.status) {
-          case 'ASSIGNED':
-            toast({
-              title: lang === 'mg' ? "Dia vaovao!" : "Nouvelle course!",
-              description: lang === 'mg' 
-                ? "Nekena ny tolobidinao"
-                : "Votre offre a été acceptée",
-            });
-            break;
-          case 'DRIVER_EN_ROUTE':
-            // Le timer démarrera via le useEffect
-            break;
-          case 'DRIVER_ARRIVED':
-            toast({
-              title: lang === 'mg' ? "Tonga!" : "Arrivé!",
-              description: lang === 'mg' 
-                ? "Miandrasa ny mpandeha"
-                : "Attendez le passager",
-            });
-            break;
-          case 'IN_PROGRESS':
-            toast({
-              title: lang === 'mg' ? "Manomboka!" : "Départ!",
-              description: lang === 'mg' 
-                ? "Manomboka ny dia"
-                : "Course en cours",
-            });
-            break;
-          case 'COMPLETED':
-            toast({
-              title: lang === 'mg' ? "Vita!" : "Terminé!",
-              description: lang === 'mg' 
-                ? "Vita soamantsara ny dia"
-                : "Course terminée avec succès",
-            });
-            setShowRideTracking(false);
-            setTimerStarted(false);
-            setStartTime(null);
-            break;
-        }
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [connected, profile?.userId, refetchActiveRide, subscribe, lang, toast]);
 
   // Validation de l'ajustement ETA
   const validateEtaAdjustment = useCallback((value: string): string | null => {
@@ -373,7 +292,6 @@ export default function DriverHome() {
     return null;
   }, [lang]);
 
-  // Gestionnaire pour "Toujours en route"
   const handleStillEnRoute = async () => {
     if (!etaAdjustment) {
       setEtaAdjustmentError(lang === 'mg' 
@@ -391,19 +309,19 @@ export default function DriverHome() {
     await extendEta.mutateAsync(parseInt(etaAdjustment));
     setEtaAdjustment('');
     setEtaAdjustmentError(null);
+    refresh();
   };
 
-  // Gestionnaire pour "Arrivé"
   const handleArrived = async () => {
     if (!activeRide) return;
     
     try {
       await updateRideStatus.mutateAsync('DRIVER_ARRIVED');
       setShowArrivalConfirm(false);
+      refresh();
     } catch (error) {}
   };
 
-  // Gestionnaire pour "makanesa / Commencer"
   const handleStartJourney = async () => {
     if (!activeRide) {
       console.error("No active ride");
@@ -416,18 +334,15 @@ export default function DriverHome() {
     }
   
     try {
-      // Afficher le chargement
       toast({
         title: lang === 'mg' ? "Fanombohana..." : "Démarrage...",
       });
   
-      // Appel API
       await updateRideStatus.mutateAsync('DRIVER_EN_ROUTE');
   
-      // Mise à jour UI
       setTimerStarted(true);
       setStartTime(Date.now());
-      await refetchActiveRide();
+      await refresh();
   
       toast({
         title: lang === 'mg' ? "makanesa!" : "C'est parti!",
@@ -435,7 +350,6 @@ export default function DriverHome() {
     } catch (error: any) {
       console.error("ERROR in handleStartJourney:", error);
   
-      // Annuler la mise à jour UI
       setTimerStarted(false);
       setStartTime(null);
   
@@ -447,16 +361,15 @@ export default function DriverHome() {
     }
   };
 
-  // Gestionnaire pour "Commencer la course"
   const handleStartRide = async () => {
     if (!activeRide) return;
     
     try {
       await updateRideStatus.mutateAsync('IN_PROGRESS');
+      refresh();
     } catch (error) {}
   };
 
-  // Gestionnaire pour "Terminer la course"
   const handleCompleteRide = async () => {
     if (!activeRide) return;
     
@@ -465,10 +378,10 @@ export default function DriverHome() {
       setShowCompletionConfirm(false);
       setTimerStarted(false);
       setStartTime(null);
+      refresh();
     } catch (error) {}
   };
 
-  // Gestionnaire pour "Annuler la course"
   const handleCancelRide = async () => {
     if (!activeRide) return;
     
@@ -482,9 +395,9 @@ export default function DriverHome() {
     setShowRideTracking(false);
     setTimerStarted(false);
     setStartTime(null);
+    refresh();
   };
 
-  // Validation du prix
   const validatePrice = useCallback((value: string): string | null => {
     if (!value) return null;
     
@@ -498,7 +411,6 @@ export default function DriverHome() {
     return null;
   }, [lang]);
 
-  // Gestionnaire de changement de prix
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPrice(value);
@@ -511,7 +423,6 @@ export default function DriverHome() {
     }
   };
 
-  // Gestionnaire d'envoi d'offre
   const handleSendOffer = async () => {
     if (!selectedRequest || !price) {
       toast({
@@ -544,15 +455,15 @@ export default function DriverHome() {
       setAutoEta(null);
       setCalculatingEta(false);
       
+      refresh();
+      
       toast({
         title: lang === 'mg' ? 'Tolobidy nalefa!' : 'Offre envoyée !',
         description: lang === 'mg' 
           ? `Ar ${price} - ${eta} minitra`
           : `Ar ${price} - ${eta} minutes`
       });
-    } catch (err: any) {
-      // Erreur déjà gérée par le hook
-    }
+    } catch (err: any) {}
   };
 
   // Obtenir la position du conducteur
@@ -657,7 +568,7 @@ export default function DriverHome() {
     return (
       <MobileLayout role="driver">
         <div className="flex h-screen items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <LoadingAnimation />
         </div>
       </MobileLayout>
     );
@@ -667,20 +578,26 @@ export default function DriverHome() {
     return (
       <MobileLayout role="driver">
         <div className="p-4 pt-20 space-y-4">
-          <Card className="p-6 rounded-2xl text-center">
-            <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold font-display mb-2">
-              {lang === 'mg' ? 'Miandry fankatoavana' : 'En attente de validation'}
-            </h2>
-            <p className="text-muted-foreground mb-4">
-              {lang === 'mg' 
-                ? 'Ny antontan-taratasinao dia mbola jerena. Afaka 24 ora monja.'
-                : 'Vos documents sont en cours de vérification. Cela peut prendre 24h.'}
-            </p>
-            <Button onClick={() => setLocation('/driver/documents')} className="rounded-xl">
-              {lang === 'mg' ? 'Jereo ny antontan-taratasy' : 'Voir mes documents'}
-            </Button>
-          </Card>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+          >
+            <Card className="p-6 rounded-2xl text-center">
+              <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+              <h2 className="text-xl font-bold font-display mb-2">
+                {lang === 'mg' ? 'Miandry fankatoavana' : 'En attente de validation'}
+              </h2>
+              <p className="text-muted-foreground mb-4">
+                {lang === 'mg' 
+                  ? 'Ny antontan-taratasinao dia mbola jerena. Afaka 24 ora monja.'
+                  : 'Vos documents sont en cours de vérification. Cela peut prendre 24h.'}
+              </p>
+              <Button onClick={() => setLocation('/driver/documents')} className="rounded-xl">
+                {lang === 'mg' ? 'Jereo ny antontan-taratasy' : 'Voir mes documents'}
+              </Button>
+            </Card>
+          </motion.div>
         </div>
       </MobileLayout>
     );
@@ -688,6 +605,8 @@ export default function DriverHome() {
 
   return (
     <MobileLayout role="driver">
+      <RefreshIndicator isRefreshing={isRefreshing} />
+      
       {/* Carte */}
       <div className="absolute inset-0 z-0 pt-16">
         <MapView 
@@ -704,27 +623,38 @@ export default function DriverHome() {
 
       {/* Indicateur de connexion */}
       <div className="absolute top-20 left-4 z-10">
-        <div className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${
-          connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'
-        }`}>
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${
+            connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'
+          }`}
+        >
           {connected ? (
             <><Wifi className="w-3 h-3" />{lang === 'mg' ? 'Mifandray' : 'Connecté'}</>
           ) : (
             <><WifiOff className="w-3 h-3" />{lang === 'mg' ? 'Tsy mifandray' : 'Déconnecté'}</>
           )}
-        </div>
+        </motion.div>
       </div>
 
       {/* Contrôle en ligne */}
       <div className="absolute top-20 right-4 z-10">
-        <Card className="px-4 py-2 rounded-full shadow-lg flex items-center space-x-3 bg-background/90 backdrop-blur-sm border-0">
-          <span className="font-bold text-sm">{isOnline ? t('online') : t('offline')}</span>
-          <Switch 
-            checked={isOnline} 
-            onCheckedChange={(v) => setOnline.mutate(v)} 
-            className="data-[state=checked]:bg-green-500"
-          />
-        </Card>
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+        >
+          <Card className="px-4 py-2 rounded-full shadow-lg flex items-center space-x-3 bg-background/90 backdrop-blur-sm border-0">
+            <span className="font-bold text-sm">{isOnline ? t('online') : t('offline')}</span>
+            <Switch 
+              checked={isOnline} 
+              onCheckedChange={(v) => setOnline.mutate(v)} 
+              className="data-[state=checked]:bg-green-500"
+            />
+          </Card>
+        </motion.div>
       </div>
 
       {/* Erreur GPS */}
@@ -737,14 +667,6 @@ export default function DriverHome() {
         </div>
       )}
 
-      {/* 🔥 AFFICHAGE DEBUG TEMPORAIRE - À SUPPRIMER PLUS TARD */}
-      {activeRide && (
-        <div className="absolute top-36 left-1/2 -translate-x-1/2 z-50 bg-yellow-100 text-black p-2 rounded text-xs">
-          <div>Debug Prix: {formattedPrice} Ar</div>
-          <div>Props dispo: {Object.keys(activeRide).join(', ')}</div>
-        </div>
-      )}
-
       {/* Fenêtre de suivi de course */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
@@ -752,6 +674,7 @@ export default function DriverHome() {
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
             className="absolute bottom-0 w-full z-20 p-4"
           >
             <Card className="p-5 rounded-3xl shadow-2xl border-0 bg-background/95 backdrop-blur-xl">
@@ -767,16 +690,21 @@ export default function DriverHome() {
                     {activeRide.status === 'DRIVER_ARRIVED' && (lang === 'mg' ? 'Tonga' : 'Arrivé')}
                     {activeRide.status === 'IN_PROGRESS' && (lang === 'mg' ? 'An-dalana' : 'En cours')}
                   </Badge>
-                  {/* 🔥 CORRIGÉ: Affichage du prix avec fallback et debug */}
                   <h3 className="font-display font-bold text-xl">
                     {formattedPrice} Ar
                   </h3>
                 </div>
                 <div className="text-right">
                   {timerStarted || activeRide.status !== 'ASSIGNED' ? (
-                    <div className="text-3xl font-bold font-mono text-primary">
+                    <motion.div
+                      key={timeRemaining}
+                      initial={{ scale: 1.1, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.2 }}
+                      className="text-3xl font-bold font-mono text-primary"
+                    >
                       {String(timeRemaining).padStart(2, '0')}:{String(timeRemainingSeconds).padStart(2, '0')}
-                    </div>
+                    </motion.div>
                   ) : (
                     <div className="text-3xl font-bold font-mono text-primary">
                       {String(activeRide.etaMinutes).padStart(2, '0')}:00
@@ -1029,13 +957,24 @@ export default function DriverHome() {
           >
             {requestsLoading ? (
               <div className="p-4 text-center bg-background/80 backdrop-blur-md rounded-2xl">
-                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  {lang === 'mg' ? 'Mitady...' : 'Recherche...'}
-                </p>
+                <div className="flex flex-col items-center gap-2">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  >
+                    <Loader2 className="w-6 h-6 text-primary" />
+                  </motion.div>
+                  <p className="text-sm text-muted-foreground">
+                    {lang === 'mg' ? 'Mitady...' : 'Recherche...'}
+                  </p>
+                </div>
               </div>
             ) : requests.length === 0 ? (
-              <div className="p-6 text-center bg-background/80 backdrop-blur-md rounded-2xl">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="p-6 text-center bg-background/80 backdrop-blur-md rounded-2xl"
+              >
                 <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
                   <Navigation className="w-6 h-6 text-primary" />
                 </div>
@@ -1045,81 +984,92 @@ export default function DriverHome() {
                 <p className="text-sm text-muted-foreground">
                   {lang === 'mg' ? 'Miandrasa...' : 'En attente...'}
                 </p>
-              </div>
+              </motion.div>
             ) : (
-              requests.map((req: any) => {
+              requests.map((req: any, index: number) => {
                 const isOfferSent = offerSentFor.has(req.id);
                 
                 return (
-                  <Card key={req.id} className={`p-4 rounded-2xl shadow-float border-0 bg-background/95 backdrop-blur-xl transition-all ${isOfferSent ? 'opacity-75' : ''}`}>
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold flex items-center text-sm">
-                          <MapPin className="w-4 h-4 mr-1 text-green-500 shrink-0"/> 
-                          <span className="truncate">{req.pickupAddress}</span>
-                        </p>
-                        <p className="text-sm text-muted-foreground flex items-center mt-1">
-                          <Navigation className="w-4 h-4 mr-1 shrink-0 text-red-400"/> 
-                          <span className="truncate">{req.dropAddress}</span>
-                        </p>
-                        
-                        {req.passenger?.name && (
-                          <div className="flex items-center gap-2 mt-2">
-                            <div className="flex items-center gap-1">
-                              <User className="w-3 h-3 text-muted-foreground" />
-                              <span className="text-xs font-medium">{req.passenger.name}</span>
+                  <motion.div
+                    key={req.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <Card className={`p-4 rounded-2xl shadow-float border-0 bg-background/95 backdrop-blur-xl transition-all ${isOfferSent ? 'opacity-75' : ''}`}>
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold flex items-center text-sm">
+                            <MapPin className="w-4 h-4 mr-1 text-green-500 shrink-0"/> 
+                            <span className="truncate">{req.pickupAddress}</span>
+                          </p>
+                          <p className="text-sm text-muted-foreground flex items-center mt-1">
+                            <Navigation className="w-4 h-4 mr-1 shrink-0 text-red-400"/> 
+                            <span className="truncate">{req.dropAddress}</span>
+                          </p>
+                          
+                          {req.passenger?.name && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="flex items-center gap-1">
+                                <User className="w-3 h-3 text-muted-foreground" />
+                                <span className="text-xs font-medium">{req.passenger.name}</span>
+                              </div>
+                              {req.passenger?.phone && (
+                                <a href={`tel:${req.passenger.phone}`} className="text-xs text-primary font-semibold flex items-center gap-0.5 hover:underline">
+                                  <Phone className="w-3 h-3" /> 
+                                  {lang === 'mg' ? 'Antsoy' : 'Appeler'}
+                                </a>
+                              )}
                             </div>
-                            {req.passenger?.phone && (
-                              <a href={`tel:${req.passenger.phone}`} className="text-xs text-primary font-semibold flex items-center gap-0.5 hover:underline">
-                                <Phone className="w-3 h-3" /> 
-                                {lang === 'mg' ? 'Antsoy' : 'Appeler'}
-                              </a>
-                            )}
-                          </div>
-                        )}
+                          )}
 
-                        {(req.distanceKm || req.etaMinutes) && (
-                          <div className="flex gap-2 mt-2">
-                            {req.distanceKm && (
-                              <Badge variant="secondary" className="text-[10px] gap-1">
-                                <Route className="w-2.5 h-2.5" /> 
-                                {parseFloat(req.distanceKm as any).toFixed(1)} km
-                              </Badge>
-                            )}
-                            {req.etaMinutes && (
-                              <Badge variant="secondary" className="text-[10px] gap-1">
-                                <Clock className="w-2.5 h-2.5" /> ~{req.etaMinutes} min
-                              </Badge>
-                            )}
-                          </div>
-                        )}
+                          {(req.distanceKm || req.etaMinutes) && (
+                            <div className="flex gap-2 mt-2">
+                              {req.distanceKm && (
+                                <Badge variant="secondary" className="text-[10px] gap-1">
+                                  <Route className="w-2.5 h-2.5" /> 
+                                  {parseFloat(req.distanceKm as any).toFixed(1)} km
+                                </Badge>
+                              )}
+                              {req.etaMinutes && (
+                                <Badge variant="secondary" className="text-[10px] gap-1">
+                                  <Clock className="w-2.5 h-2.5" /> ~{req.etaMinutes} min
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <Badge className="ml-2 shrink-0">
+                          {req.vehicleType === 'TAXI' ? <Car className="w-3 h-3 mr-1" /> : <Bike className="w-3 h-3 mr-1" />}
+                          {req.vehicleType}
+                        </Badge>
                       </div>
 
-                      <Badge className="ml-2 shrink-0">
-                        {req.vehicleType === 'TAXI' ? <Car className="w-3 h-3 mr-1" /> : <Bike className="w-3 h-3 mr-1" />}
-                        {req.vehicleType}
-                      </Badge>
-                    </div>
-
-                    {isOfferSent ? (
-                      <div className="w-full mt-2 h-10 rounded-xl bg-green-500/10 text-green-600 font-bold text-sm flex items-center justify-center gap-2">
-                        <CheckCircle className="w-4 h-4" />
-                        {lang === 'mg' ? 'Tolobidy nalefa' : 'Offre envoyée'}
-                      </div>
-                    ) : (
-                      <Button 
-                        onClick={() => {
-                          setSelectedRequest(req);
-                          setPrice('');
-                          setPriceError(null);
-                        }}
-                        className="w-full mt-2 font-bold rounded-xl"
-                      >
-                        <Send className="w-4 h-4 mr-2" />
-                        {t('send_offer')}
-                      </Button>
-                    )}
-                  </Card>
+                      {isOfferSent ? (
+                        <motion.div
+                          initial={{ scale: 0.9, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          className="w-full mt-2 h-10 rounded-xl bg-green-500/10 text-green-600 font-bold text-sm flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          {lang === 'mg' ? 'Tolobidy nalefa' : 'Offre envoyée'}
+                        </motion.div>
+                      ) : (
+                        <Button 
+                          onClick={() => {
+                            setSelectedRequest(req);
+                            setPrice('');
+                            setPriceError(null);
+                          }}
+                          className="w-full mt-2 font-bold rounded-xl"
+                        >
+                          <Send className="w-4 h-4 mr-2" />
+                          {t('send_offer')}
+                        </Button>
+                      )}
+                    </Card>
+                  </motion.div>
                 );
               })
             )}
