@@ -92,7 +92,7 @@ const allowedOrigins = [
 
 // En développement, accepter toutes les origines
 if (process.env.NODE_ENV !== 'production') {
-  const allowedOrigins = [...];
+  const allowedOrigins = [];
 }
 
 app.use(cors({
