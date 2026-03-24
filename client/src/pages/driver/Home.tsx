@@ -73,36 +73,38 @@ const debugRideStructure = (ride: any) => {
   });
 };
 
-// 🔥 Fonction pour extraire le prix avec priorité
-const extractPrice = (ride: any): number => {
-  if (!ride) return 0;
+  const extractPrice = (ride: any): number => {
+    if (!ride) return 0;
 
-  const possibleFields = [
-    'price',
-    'priceAr',
-    'price_ar',
-    'amount',
-    'total',
-    'fare',
-    'cost',
-    'value',
-    'offerPrice',
-    'driverPrice'
-  ];
+    const possibleFields = [
+      'selectedPriceAr',  // 🔥 AJOUTÉ - c'est le champ qui contient le prix
+      'price',
+      'priceAr',
+      'price_ar',
+      'amount',
+      'total',
+      'fare',
+      'cost',
+      'value',
+      'offerPrice',
+      'driverPrice'
+    ];
 
-  for (const key of possibleFields) {
-    const val = ride[key];
+    for (const key of possibleFields) {
+      const val = ride[key];
 
-    if (val !== undefined && val !== null) {
-      const num = Number(val);
-      if (!isNaN(num) && num > 0) {
-        return num;
+      if (val !== undefined && val !== null) {
+        const num = Number(val);
+        if (!isNaN(num) && num > 0) {
+          console.log(`✅ Prix trouvé dans ${key}: ${num}`); // Pour déboguer
+          return num;
+        }
       }
     }
-  }
 
-  return 0;
-};
+    console.log('❌ Aucun prix trouvé dans:', Object.keys(ride));
+    return 0;
+  };
 
 export default function DriverHome() {
   const { t, lang } = useTranslation();
