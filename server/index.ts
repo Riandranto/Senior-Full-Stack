@@ -92,34 +92,22 @@ const allowedOrigins = [
 
 // En développement, accepter toutes les origines
 if (process.env.NODE_ENV !== 'production') {
-  allowedOrigins.push('*');
+  const allowedOrigins = [...];
 }
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // Accepter les requêtes sans origin (comme les apps mobiles)
-    if (!origin) return callback(null, true);
-    
-    // En développement, tout accepter
-    if (process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.includes(origin) || origin.startsWith('capacitor://')) {
-      callback(null, true);
-    } else {
-      console.log(`❌ CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Requested-With', 'Cookie'],
-  exposedHeaders: ['set-cookie'],
+}));
+
+app.options('*', cors({
+  origin: true,
+  credentials: true,
 }));
 
 // Configuration de la session - CORRIGÉE
 const isProduction = process.env.NODE_ENV === 'production';
+
 const sessionConfig = {
   store: new MemoryStore({
     checkPeriod: 86400000,
@@ -129,10 +117,10 @@ const sessionConfig = {
   saveUninitialized: false,
   name: 'farady.sid',
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-    secure: isProduction,
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    secure: true, // 🔥 FORCER TRUE en prod (Railway = HTTPS)
     httpOnly: true,
-    sameSite: isProduction ? 'none' as const : 'lax' as const,
+    sameSite: 'none', // 🔥 obligatoire cross-origin
     path: '/',
   },
   rolling: true,

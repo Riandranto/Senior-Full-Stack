@@ -39,10 +39,17 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
     },
   };
   
-  const response = await fetch(url, {
-    ...defaultOptions,
-    ...options,
-  });
+  let response;
+
+  try {
+    response = await fetch(url, {
+      ...defaultOptions,
+      ...options,
+    });
+  } catch (err) {
+    console.error("❌ FETCH ERROR:", err);
+    throw err;
+  }
   
   // Log pour debug
   console.log(`📡 Response: ${response.status} ${response.statusText}`);
