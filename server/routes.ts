@@ -10,6 +10,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import express from "express";
 
+
+
 const uploadStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, 'uploads/'),
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`),
@@ -28,6 +30,32 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // Middleware pour vérifier que la session est initialisée
+  app.use((req, res, next) => {
+    // S'assurer que req.session existe
+    if (!req.session) {
+      console.error('❌ Session not initialized for request:', req.path);
+      return res.status(500).json({ message: "Session not initialized" });
+    }
+    next();
+  });
+
+  // Middleware pour vérifier l'authentification
+  const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    next();
+  };
+
+  // Middleware pour vérifier le rôle admin
+  const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session?.userId || req.session?.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Accès refusé" });
+    }
+    next();
+  };
 
   app.use('/uploads', express.static('uploads'));
   const wss = new WebSocketServer({ noServer: true });

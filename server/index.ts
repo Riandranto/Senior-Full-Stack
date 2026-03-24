@@ -15,7 +15,6 @@ let redisAvailable = false;
 
 // Essayer d'importer Redis, mais ignorer si erreur
 try {
-  // Utiliser require dynamique pour éviter les erreurs d'import
   const redisModule = await import("./lib/redis.js");
   initializeRedis = redisModule.initializeRedis || (async () => false);
   redisStore = redisModule.redisStore || null;
@@ -89,6 +88,8 @@ function getLocalIP(): string {
   return '192.168.1.101';
 }
 
+// ========== MIDDLEWARES AVANT TOUT ==========
+
 app.use(
   express.json({
     verify: (req, _res, buf) => {
@@ -99,7 +100,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Configuration CORS
+// Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
 const allowedOrigins = [
   'https://ride-mada-mg.up.railway.app',
   'capacitor://localhost',
@@ -112,15 +113,10 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    // Permettre les requêtes sans origine (comme les apps mobiles)
     if (!origin) return callback(null, true);
-    
-    // En développement, accepter toutes les origines
     if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    
-    // En production, vérifier l'origine
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -131,43 +127,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// Configuration de la session avec fallback Redis
-const isProduction = process.env.NODE_ENV === 'production';
-
-// Fonction pour initialiser le store de session
-async function getSessionStore() {
-  let store;
-  
-  // Essayer Redis d'abord si disponible
-  if (redisStore) {
-    try {
-      console.log('🔄 Tentative de connexion à Redis...');
-      const redisInitialized = await initializeRedis();
-      if (redisInitialized) {
-        store = redisStore;
-        redisAvailable = true;
-        console.log('✅ Redis session store initialized');
-      } else {
-        console.warn('⚠️ Redis initialization failed, falling back to MemoryStore');
-      }
-    } catch (err) {
-      console.error('❌ Redis connection error:', err);
-      console.warn('⚠️ Falling back to MemoryStore');
-    }
-  }
-  
-  // Fallback à MemoryStore
-  if (!store) {
-    console.log('📦 Using MemoryStore for sessions');
-    store = new MemoryStore({
-      checkPeriod: 86400000, // Nettoyer les sessions expirées toutes les 24h
-    });
-  }
-  
-  return store;
-}
-
-// Middleware pour logger les requêtes
+// Middleware de logging des requêtes (AVANT LES ROUTES)
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -175,45 +135,9 @@ export function log(message: string, source = "express") {
     second: "2-digit",
     hour12: true,
   });
-
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-// Configuration de la session
-async function setupSession() {
-  const sessionStore = await getSessionStore();
-  
-  const sessionConfig = {
-    store: sessionStore,
-    secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    name: 'farady.sid',
-    cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-      secure: isProduction ? true : false, // HTTPS en production seulement
-      httpOnly: true,
-      sameSite: isProduction ? 'none' : 'lax',
-      path: '/',
-    },
-    rolling: true,
-    proxy: isProduction,
-  };
-  
-  console.log('📦 Session config:', {
-    store: redisAvailable ? 'Redis' : 'MemoryStore',
-    secure: sessionConfig.cookie.secure,
-    sameSite: sessionConfig.cookie.sameSite,
-    proxy: sessionConfig.proxy,
-    env: process.env.NODE_ENV,
-    resave: sessionConfig.resave,
-    saveUninitialized: sessionConfig.saveUninitialized,
-  });
-  
-  app.use(session(sessionConfig));
-}
-
-// Middleware de logging des requêtes
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -239,23 +163,93 @@ app.use((req, res, next) => {
   next();
 });
 
+// ========== CONFIGURATION DE LA SESSION ==========
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Fonction pour initialiser le store de session
+async function getSessionStore() {
+  let store;
+  
+  if (redisStore) {
+    try {
+      console.log('🔄 Tentative de connexion à Redis...');
+      const redisInitialized = await initializeRedis();
+      if (redisInitialized) {
+        store = redisStore;
+        redisAvailable = true;
+        console.log('✅ Redis session store initialized');
+      } else {
+        console.warn('⚠️ Redis initialization failed, falling back to MemoryStore');
+      }
+    } catch (err) {
+      console.error('❌ Redis connection error:', err);
+      console.warn('⚠️ Falling back to MemoryStore');
+    }
+  }
+  
+  if (!store) {
+    console.log('📦 Using MemoryStore for sessions');
+    store = new MemoryStore({
+      checkPeriod: 86400000,
+    });
+  }
+  
+  return store;
+}
+
+// Configuration de la session - DOIT ÊTRE AVANT LES ROUTES
+let sessionConfigured = false;
+
+async function setupSession() {
+  const sessionStore = await getSessionStore();
+  
+  const sessionConfig = {
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    name: 'farady.sid',
+    cookie: {
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      secure: isProduction ? true : false,
+      httpOnly: true,
+      sameSite: isProduction ? 'none' : 'lax',
+      path: '/',
+    },
+    rolling: true,
+    proxy: isProduction,
+  };
+  
+  console.log('📦 Session config:', {
+    store: redisAvailable ? 'Redis' : 'MemoryStore',
+    secure: sessionConfig.cookie.secure,
+    sameSite: sessionConfig.cookie.sameSite,
+    proxy: sessionConfig.proxy,
+    env: process.env.NODE_ENV,
+  });
+  
+  app.use(session(sessionConfig));
+  sessionConfigured = true;
+  console.log('✅ Session middleware configured');
+}
+
+// ========== ENDPOINTS DE DEBUG (AVANT LES ROUTES API) ==========
+
 // Endpoint de test amélioré
 app.get('/api/test', (req, res) => {
   console.log('🔧 Test endpoint called');
-  console.log('📦 Session ID:', req.session.id);
+  console.log('📦 Session ID:', req.session?.id);
   console.log('📦 Session data:', req.session);
-  console.log('📦 Headers:', req.headers);
-  console.log('📦 Cookies:', req.headers.cookie);
   
   res.json({ 
     message: 'Backend is working!',
     time: new Date().toISOString(),
-    sessionId: req.session.id,
-    userId: req.session.userId,
+    sessionId: req.session?.id,
+    userId: req.session?.userId,
     environment: process.env.NODE_ENV,
-    cors: 'enabled',
-    ip: getLocalIP(),
-    sessionStore: redisAvailable ? 'Redis' : 'MemoryStore'
+    sessionStore: redisAvailable ? 'Redis' : 'MemoryStore',
+    sessionConfigured: sessionConfigured
   });
 });
 
@@ -263,19 +257,20 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok",
     sessionStore: redisAvailable ? 'Redis' : 'MemoryStore',
+    sessionConfigured: sessionConfigured,
     timestamp: new Date().toISOString()
   });
 });
 
-// Middleware de debug des sessions
+// Middleware de debug des sessions (AVANT LES ROUTES)
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {
     console.log('📦 Session Debug:', {
       path: req.path,
       sessionID: req.sessionID,
-      userId: req.session.userId,
-      role: req.session.role,
-      cookie: req.headers.cookie,
+      hasSession: !!req.session,
+      userId: req.session?.userId,
+      role: req.session?.role,
     });
   }
   next();
@@ -285,13 +280,14 @@ app.use((req, res, next) => {
 app.get('/api/debug/session-state', (req, res) => {
   res.json({
     sessionID: req.sessionID,
-    userId: req.session.userId,
-    role: req.session.role,
-    cookie: req.session.cookie,
+    userId: req.session?.userId,
+    role: req.session?.role,
+    cookie: req.session?.cookie,
     cookieHeader: req.headers['cookie'],
-    hasSession: !!req.session.userId,
+    hasSession: !!req.session?.userId,
     environment: process.env.NODE_ENV,
     sessionStore: redisAvailable ? 'Redis' : 'MemoryStore',
+    sessionConfigured: sessionConfigured,
     timestamp: new Date().toISOString()
   });
 });
@@ -325,18 +321,18 @@ app.get('/api/debug/paths', (req, res) => {
   });
 });
 
-// Démarrer le serveur
+// ========== DÉMARRAGE DU SERVEUR ==========
+
 (async () => {
   try {
-    // Configurer les sessions d'abord
+    // 1. Configurer les sessions
     await setupSession();
-    console.log('✅ Session middleware configured');
     
-    // Enregistrer les routes
+    // 2. Enregistrer les routes (qui utilisent maintenant la session)
     await registerRoutes(httpServer, app);
     console.log('✅ Routes registered');
 
-    // Gestion des erreurs
+    // 3. Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
       const status = err.status || err.statusCode || 500;
       const message = err.message || "Internal Server Error";
@@ -350,7 +346,7 @@ app.get('/api/debug/paths', (req, res) => {
       return res.status(status).json({ message });
     });
 
-    // Servir les fichiers statiques en production
+    // 4. Servir les fichiers statiques en production
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
       console.log('✅ Static files configured');
@@ -376,18 +372,18 @@ app.get('/api/debug/paths', (req, res) => {
       
       console.log('📝 Test avec:');
       console.log(`   curl http://localhost:${port}/api/test`);
-      console.log(`   curl http://${localIP}:${port}/api/test`);
-      console.log(`   curl http://localhost:${port}/api/health\n`);
+      console.log(`   curl http://localhost:${port}/api/health`);
+      console.log(`   curl http://localhost:${port}/api/debug/session-state\n`);
     });
 
     httpServer.on('error', (error: any) => {
       if (error.code === 'EADDRINUSE') {
         console.error(`❌ Port ${port} is already in use!`);
-        console.error(`💡 Solution: Change the port in .env file or kill the process using port ${port}`);
+        process.exit(1);
       } else {
         console.error('❌ Server error:', error);
+        process.exit(1);
       }
-      process.exit(1);
     });
 
   } catch (error) {
