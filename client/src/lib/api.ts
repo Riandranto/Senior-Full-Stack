@@ -2,15 +2,12 @@
 import { api } from '@shared/routes';
 
 const getBaseUrl = () => {
-  // En production (Railway)
-  if (import.meta.env.PROD) {
-    console.log('🚀 Running in PRODUCTION mode');
-    // Utiliser l'URL complète du backend
+  console.log('MODE:', import.meta.env.MODE);
+
+  if (import.meta.env.MODE === 'production') {
     return 'https://ride-mada-mg.up.railway.app';
   }
-  
-  // En développement
-  console.log('💻 Running in DEVELOPMENT mode');
+
   return 'http://localhost:5000';
 };
 
