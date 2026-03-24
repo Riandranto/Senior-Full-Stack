@@ -12,11 +12,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { GEOCENTER } from '@shared/schema';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Car, MapPin, TrendingUp, Activity, Shield, Settings, Star,
   CheckCircle, XCircle, Ban, Eye, Phone, Navigation, Clock, Route,
   Search, LogOut, ChevronLeft, ChevronRight, DollarSign, AlertTriangle,
-  FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File
+  FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File,
+  RefreshCw
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -51,10 +53,56 @@ const driverStatusColors: Record<string, string> = {
 
 const PAGE_SIZE = 20;
 
+// Animation de chargement
+const LoadingSpinner = () => (
+  <motion.div
+    initial={{ opacity: 0, scale: 0.8 }}
+    animate={{ opacity: 1, scale: 1 }}
+    exit={{ opacity: 0, scale: 0.8 }}
+    className="flex flex-col items-center justify-center p-8"
+  >
+    <motion.div
+      animate={{ rotate: 360 }}
+      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+    >
+      <Loader2 className="w-8 h-8 text-primary" />
+    </motion.div>
+    <p className="text-sm text-muted-foreground mt-2">Chargement...</p>
+  </motion.div>
+);
+
+// Indicateur de rafraîchissement
+const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
+  <AnimatePresence>
+    {isRefreshing && (
+      <motion.div
+        initial={{ opacity: 0, y: -50 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -50 }}
+        className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50"
+      >
+        <div className="bg-primary/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          >
+            <RefreshCw className="w-4 h-4 text-white" />
+          </motion.div>
+          <span className="text-white text-xs font-medium">Mise à jour...</span>
+        </div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+);
+
 function Pagination({ current, total, onChange, count }: { current: number; total: number; onChange: (p: number) => void; count: number }) {
   if (total <= 1) return null;
   return (
-    <div className="flex items-center justify-between p-3 border-t border-border/30 bg-muted/10">
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex items-center justify-between p-3 border-t border-border/30 bg-muted/10"
+    >
       <span className="text-xs text-muted-foreground">{count} résultat{count > 1 ? 's' : ''}</span>
       <div className="flex items-center gap-1">
         <Button size="icon" variant="ghost" className="h-7 w-7" disabled={current <= 1} onClick={() => onChange(current - 1)} data-testid="button-prev-page">
@@ -65,7 +113,7 @@ function Pagination({ current, total, onChange, count }: { current: number; tota
           <ChevronRight className="w-4 h-4" />
         </Button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -123,58 +171,120 @@ function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driver
     });
   }, [activeRides, driverLocations]);
 
-  return <div ref={mapRef} className="h-[350px] w-full" data-testid="admin-map" />;
-}
-
-function StatCard({ icon, label, value, color, bg, sub }: { icon: any; label: string; value: any; color: string; bg: string; sub?: string }) {
   return (
-    <Card className="p-4 md:p-5 rounded-2xl border-0 shadow-sm">
-      <div className={`w-10 h-10 ${bg} rounded-xl flex items-center justify-center ${color} mb-3`}>{icon}</div>
-      <div className="text-2xl md:text-3xl font-bold font-display" data-testid={`stat-${label.toLowerCase().replace(/ /g, '-')}`}>{value}</div>
-      <div className="text-xs text-muted-foreground font-medium mt-0.5">{label}</div>
-      {sub && <div className="text-[10px] text-muted-foreground mt-1">{sub}</div>}
-    </Card>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.5 }}
+      ref={mapRef} 
+      className="h-[350px] w-full" 
+      data-testid="admin-map" 
+    />
   );
 }
 
-function MiniStat({ label, value, icon }: { label: string; value: number; icon: any }) {
+function StatCard({ icon, label, value, color, bg, sub, delay = 0 }: { icon: any; label: string; value: any; color: string; bg: string; sub?: string; delay?: number }) {
   return (
-    <Card className="p-3 rounded-xl border-0 shadow-sm flex items-center gap-3">
-      {icon}
-      <div>
-        <div className="font-bold text-sm">{value}</div>
-        <div className="text-[10px] text-muted-foreground">{label}</div>
-      </div>
-    </Card>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay }}
+    >
+      <Card className="p-4 md:p-5 rounded-2xl border-0 shadow-sm hover:shadow-md transition-shadow">
+        <div className={`w-10 h-10 ${bg} rounded-xl flex items-center justify-center ${color} mb-3`}>{icon}</div>
+        <motion.div 
+          initial={{ scale: 0.9 }}
+          animate={{ scale: 1 }}
+          transition={{ type: "spring", stiffness: 300, delay: delay + 0.2 }}
+          className="text-2xl md:text-3xl font-bold font-display" 
+          data-testid={`stat-${label.toLowerCase().replace(/ /g, '-')}`}
+        >
+          {value}
+        </motion.div>
+        <div className="text-xs text-muted-foreground font-medium mt-0.5">{label}</div>
+        {sub && <div className="text-[10px] text-muted-foreground mt-1">{sub}</div>}
+      </Card>
+    </motion.div>
+  );
+}
+
+function MiniStat({ label, value, icon, delay = 0 }: { label: string; value: number; icon: any; delay?: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.3, delay }}
+    >
+      <Card className="p-3 rounded-xl border-0 shadow-sm flex items-center gap-3 hover:shadow-md transition-shadow">
+        {icon}
+        <div>
+          <motion.div 
+            initial={{ scale: 0.8 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 400, delay: delay + 0.1 }}
+            className="font-bold text-sm"
+          >
+            {value}
+          </motion.div>
+          <div className="text-[10px] text-muted-foreground">{label}</div>
+        </div>
+      </Card>
+    </motion.div>
   );
 }
 
 function RideDetailView({ ride }: { ride: any }) {
   return (
-    <div className="space-y-4">
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-4"
+    >
       <div className="flex items-center gap-2">
-        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[ride.status] || ''}`}>{ride.status.replace(/_/g, ' ')}</span>
+        <motion.span 
+          initial={{ scale: 0.8 }}
+          animate={{ scale: 1 }}
+          className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[ride.status] || ''}`}
+        >
+          {ride.status.replace(/_/g, ' ')}
+        </motion.span>
         {ride.vehicleType && <Badge variant="outline" className="text-xs">{ride.vehicleType}</Badge>}
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/20 rounded-xl">
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/20 rounded-xl"
+        >
           <MapPin className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
           <div>
             <div className="text-xs text-muted-foreground">Départ</div>
             <div className="text-sm font-medium">{ride.pickupAddress}</div>
           </div>
-        </div>
-        <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/20 rounded-xl">
+        </motion.div>
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/20 rounded-xl"
+        >
           <Navigation className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
           <div>
             <div className="text-xs text-muted-foreground">Arrivée</div>
             <div className="text-sm font-medium">{ride.dropAddress}</div>
           </div>
-        </div>
+        </motion.div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="grid grid-cols-3 gap-2"
+      >
         <div className="bg-muted/30 rounded-lg p-2.5 text-center">
           <div className="text-[10px] text-muted-foreground">Distance</div>
           <div className="font-bold text-sm">{ride.distanceKm ? `${parseFloat(ride.distanceKm).toFixed(1)} km` : '—'}</div>
@@ -187,47 +297,72 @@ function RideDetailView({ ride }: { ride: any }) {
           <div className="text-[10px] text-muted-foreground">Prix</div>
           <div className="font-bold text-sm text-primary">{ride.selectedPriceAr ? formatAr(ride.selectedPriceAr) : '—'}</div>
         </div>
-      </div>
+      </motion.div>
 
       <div className="grid grid-cols-2 gap-3">
-        <div className="p-3 bg-muted/20 rounded-xl">
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="p-3 bg-muted/20 rounded-xl"
+        >
           <div className="text-[10px] text-muted-foreground mb-1">Passager</div>
           <div className="font-medium text-sm">{ride.passenger?.name || '—'}</div>
           <div className="text-xs text-muted-foreground">{ride.passenger?.phone}</div>
-        </div>
-        <div className="p-3 bg-muted/20 rounded-xl">
+        </motion.div>
+        <motion.div 
+          initial={{ x: 20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="p-3 bg-muted/20 rounded-xl"
+        >
           <div className="text-[10px] text-muted-foreground mb-1">Chauffeur</div>
           <div className="font-medium text-sm">{ride.driver?.name || '—'}</div>
           <div className="text-xs text-muted-foreground">{ride.driver?.phone || ''}</div>
-        </div>
+        </motion.div>
       </div>
 
       {ride.offers && ride.offers.length > 0 && (
-        <div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+        >
           <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({ride.offers.length})</div>
           <div className="space-y-1">
-            {ride.offers.map((o: any) => (
-              <div key={o.id} className="flex justify-between items-center p-2 bg-muted/20 rounded-lg text-xs">
+            {ride.offers.map((o: any, idx: number) => (
+              <motion.div 
+                key={o.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.7 + idx * 0.05 }}
+                className="flex justify-between items-center p-2 bg-muted/20 rounded-lg text-xs"
+              >
                 <span>Offre #{o.id}</span>
                 <span className="font-bold">{formatAr(o.priceAr)}</span>
                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${o.status === 'ACCEPTED' ? 'bg-green-100 text-green-700' : o.status === 'EXPIRED' ? 'bg-gray-100 text-gray-600' : 'bg-blue-100 text-blue-700'}`}>{o.status}</span>
-              </div>
+              </motion.div>
             ))}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {ride.cancelReason && (
-        <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-xl">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.8 }}
+          className="p-3 bg-red-50 dark:bg-red-950/20 rounded-xl"
+        >
           <div className="text-xs text-red-600 font-bold mb-1">Annulation</div>
           <div className="text-sm">{ride.cancelReason} <span className="text-xs text-muted-foreground">({ride.cancelBy})</span></div>
-        </div>
+        </motion.div>
       )}
 
       <div className="text-xs text-muted-foreground">
         Créée le {formatDate(ride.createdAt)} — MAJ {formatDate(ride.updatedAt)}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -239,11 +374,21 @@ function DriverDetailView({ driver }: { driver: any }) {
   const docTypes: Record<string, string> = { CIN: 'CIN (Carte d\'identité)', PERMIS: 'Permis de conduire', VEHICLE: 'Carte grise', PHOTO: 'Photo de profil' };
 
   return (
-    <div className="space-y-4">
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-4"
+    >
       <div className="flex items-center gap-4">
-        <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center">
+        <motion.div 
+          initial={{ scale: 0.8, rotate: -10 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 300 }}
+          className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center"
+        >
           <Users className="w-8 h-8 text-muted-foreground" />
-        </div>
+        </motion.div>
         <div>
           <h3 className="font-bold text-lg">{driver.name}</h3>
           <p className="text-sm text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {driver.phone}</p>
@@ -272,102 +417,124 @@ function DriverDetailView({ driver }: { driver: any }) {
         </button>
       </div>
 
-      {docTab === 'info' && (
-        <>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 bg-muted/20 rounded-xl text-center">
-              <div className="text-xs text-muted-foreground">Véhicule</div>
-              <div className="font-bold text-sm flex items-center justify-center gap-1 mt-1">
-                {driver.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-4 h-4" /> : <Car className="w-4 h-4" />}
-                {driver.profile?.vehicleType}
-              </div>
-              {driver.profile?.vehicleNumber && <div className="text-xs text-muted-foreground mt-0.5">{driver.profile.vehicleNumber}</div>}
-            </div>
-            <div className="p-3 bg-muted/20 rounded-xl text-center">
-              <div className="text-xs text-muted-foreground">Permis</div>
-              <div className="font-bold text-sm mt-1">{driver.profile?.licenseNumber || '—'}</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-4 gap-2">
-            <div className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-2.5 text-center">
-              <Star className="w-4 h-4 text-amber-400 mx-auto" />
-              <div className="font-bold text-sm mt-1">{driver.profile?.ratingAvg || '0'}</div>
-              <div className="text-[10px] text-muted-foreground">Note</div>
-            </div>
-            <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-              <div className="font-bold text-sm">{driver.profile?.ratingCount || 0}</div>
-              <div className="text-[10px] text-muted-foreground">Avis</div>
-            </div>
-            <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-              <div className="font-bold text-sm">{driver.completedRides || 0}</div>
-              <div className="text-[10px] text-muted-foreground">Courses</div>
-            </div>
-            <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-              <div className="font-bold text-sm text-primary">{formatAr(driver.totalEarnings || 0)}</div>
-              <div className="text-[10px] text-muted-foreground">Gains</div>
-            </div>
-          </div>
-
-          {driver.profile?.zone && (
-            <div className="text-xs text-muted-foreground">Zone: {driver.profile.zone}</div>
-          )}
-        </>
-      )}
-
-      {docTab === 'docs' && (
-        <div className="space-y-3">
-          {docs.length === 0 ? (
-            <div className="p-6 text-center text-muted-foreground text-sm bg-muted/10 rounded-xl">
-              <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              Aucun document soumis
-            </div>
-          ) : (
-            docs.map((doc: any) => (
-              <div key={doc.id} className="flex items-center justify-between p-3 bg-muted/20 rounded-xl" data-testid={`doc-${doc.id}`}>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                    {doc.url && (doc.url.endsWith('.jpg') || doc.url.endsWith('.jpeg') || doc.url.endsWith('.png') || doc.url.endsWith('.webp'))
-                      ? <Image className="w-5 h-5 text-primary" />
-                      : <File className="w-5 h-5 text-primary" />}
-                  </div>
-                  <div>
-                    <div className="font-medium text-sm">{docTypes[doc.type] || doc.type}</div>
-                    <div className="text-[10px] text-muted-foreground">{formatDate(doc.uploadedAt)}</div>
-                  </div>
+      <AnimatePresence mode="wait">
+        {docTab === 'info' && (
+          <motion.div
+            key="info"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-muted/20 rounded-xl text-center">
+                <div className="text-xs text-muted-foreground">Véhicule</div>
+                <div className="font-bold text-sm flex items-center justify-center gap-1 mt-1">
+                  {driver.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-4 h-4" /> : <Car className="w-4 h-4" />}
+                  {driver.profile?.vehicleType}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs rounded-lg"
-                  onClick={() => setPreviewDoc(doc)}
-                  data-testid={`button-view-doc-${doc.id}`}
+                {driver.profile?.vehicleNumber && <div className="text-xs text-muted-foreground mt-0.5">{driver.profile.vehicleNumber}</div>}
+              </div>
+              <div className="p-3 bg-muted/20 rounded-xl text-center">
+                <div className="text-xs text-muted-foreground">Permis</div>
+                <div className="font-bold text-sm mt-1">{driver.profile?.licenseNumber || '—'}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-2.5 text-center">
+                <Star className="w-4 h-4 text-amber-400 mx-auto" />
+                <div className="font-bold text-sm mt-1">{driver.profile?.ratingAvg || '0'}</div>
+                <div className="text-[10px] text-muted-foreground">Note</div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
+                <div className="font-bold text-sm">{driver.profile?.ratingCount || 0}</div>
+                <div className="text-[10px] text-muted-foreground">Avis</div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
+                <div className="font-bold text-sm">{driver.completedRides || 0}</div>
+                <div className="text-[10px] text-muted-foreground">Courses</div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
+                <div className="font-bold text-sm text-primary">{formatAr(driver.totalEarnings || 0)}</div>
+                <div className="text-[10px] text-muted-foreground">Gains</div>
+              </div>
+            </div>
+
+            {driver.profile?.zone && (
+              <div className="text-xs text-muted-foreground">Zone: {driver.profile.zone}</div>
+            )}
+          </motion.div>
+        )}
+
+        {docTab === 'docs' && (
+          <motion.div
+            key="docs"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ duration: 0.3 }}
+            className="space-y-3"
+          >
+            {docs.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground text-sm bg-muted/10 rounded-xl">
+                <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                Aucun document soumis
+              </div>
+            ) : (
+              docs.map((doc: any, idx: number) => (
+                <motion.div 
+                  key={doc.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  className="flex items-center justify-between p-3 bg-muted/20 rounded-xl"
+                  data-testid={`doc-${doc.id}`}
                 >
-                  <Eye className="w-3 h-3 mr-1" /> Voir
-                </Button>
-              </div>
-            ))
-          )}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                      {doc.url && (doc.url.endsWith('.jpg') || doc.url.endsWith('.jpeg') || doc.url.endsWith('.png') || doc.url.endsWith('.webp'))
+                        ? <Image className="w-5 h-5 text-primary" />
+                        : <File className="w-5 h-5 text-primary" />}
+                    </div>
+                    <div>
+                      <div className="font-medium text-sm">{docTypes[doc.type] || doc.type}</div>
+                      <div className="text-[10px] text-muted-foreground">{formatDate(doc.uploadedAt)}</div>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs rounded-lg"
+                    onClick={() => setPreviewDoc(doc)}
+                    data-testid={`button-view-doc-${doc.id}`}
+                  >
+                    <Eye className="w-3 h-3 mr-1" /> Voir
+                  </Button>
+                </motion.div>
+              ))
+            )}
 
-          {previewDoc && (
-            <Dialog open={!!previewDoc} onOpenChange={() => setPreviewDoc(null)}>
-              <DialogContent className="max-w-2xl rounded-2xl">
-                <DialogHeader>
-                  <DialogTitle>{docTypes[previewDoc.type] || previewDoc.type}</DialogTitle>
-                </DialogHeader>
-                <div className="flex items-center justify-center min-h-[300px] bg-muted/20 rounded-xl overflow-hidden">
-                  {previewDoc.url ? (
-                    <DocImage url={previewDoc.url} type={previewDoc.type} />
-                  ) : (
-                    <div className="p-8 text-center text-muted-foreground text-sm">Aucun fichier disponible</div>
-                  )}
-                </div>
-              </DialogContent>
-            </Dialog>
-          )}
-        </div>
-      )}
-    </div>
+            {previewDoc && (
+              <Dialog open={!!previewDoc} onOpenChange={() => setPreviewDoc(null)}>
+                <DialogContent className="max-w-2xl rounded-2xl">
+                  <DialogHeader>
+                    <DialogTitle>{docTypes[previewDoc.type] || previewDoc.type}</DialogTitle>
+                  </DialogHeader>
+                  <div className="flex items-center justify-center min-h-[300px] bg-muted/20 rounded-xl overflow-hidden">
+                    {previewDoc.url ? (
+                      <DocImage url={previewDoc.url} type={previewDoc.type} />
+                    ) : (
+                      <div className="p-8 text-center text-muted-foreground text-sm">Aucun fichier disponible</div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -382,7 +549,9 @@ function DocImage({ url, type }: { url: string; type: string }) {
     );
   }
   return (
-    <img
+    <motion.img
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
       src={url}
       alt={type}
       className="max-w-full max-h-[500px] object-contain rounded-lg"
@@ -399,34 +568,57 @@ function ConfigForm({ config, onSave, isPending }: { config: any; onSave: (data:
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
-        <h3 className="font-bold text-sm flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> Zone de recherche</h3>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Rayon de recherche (km)</label>
-          <Input type="number" value={radius} onChange={e => setRadius(e.target.value)} className="rounded-xl" data-testid="input-radius" />
-          <p className="text-[10px] text-muted-foreground mt-1">Distance max pour trouver des chauffeurs autour du passager</p>
-        </div>
-      </Card>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+      >
+        <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> Zone de recherche</h3>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Rayon de recherche (km)</label>
+            <Input type="number" value={radius} onChange={e => setRadius(e.target.value)} className="rounded-xl" data-testid="input-radius" />
+            <p className="text-[10px] text-muted-foreground mt-1">Distance max pour trouver des chauffeurs autour du passager</p>
+          </div>
+        </Card>
+      </motion.div>
 
-      <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
-        <h3 className="font-bold text-sm flex items-center gap-2"><Clock className="w-4 h-4 text-amber-500" /> Offres</h3>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Expiration des offres (secondes)</label>
-          <Input type="number" value={expiry} onChange={e => setExpiry(parseInt(e.target.value))} className="rounded-xl" data-testid="input-expiry" />
-          <p className="text-[10px] text-muted-foreground mt-1">Temps avant qu'une offre de chauffeur expire automatiquement</p>
-        </div>
-      </Card>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
+        <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm flex items-center gap-2"><Clock className="w-4 h-4 text-amber-500" /> Offres</h3>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Expiration des offres (secondes)</label>
+            <Input type="number" value={expiry} onChange={e => setExpiry(parseInt(e.target.value))} className="rounded-xl" data-testid="input-expiry" />
+            <p className="text-[10px] text-muted-foreground mt-1">Temps avant qu'une offre de chauffeur expire automatiquement</p>
+          </div>
+        </Card>
+      </motion.div>
 
-      <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
-        <h3 className="font-bold text-sm flex items-center gap-2"><DollarSign className="w-4 h-4 text-emerald-500" /> Commission</h3>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Commission plateforme (%)</label>
-          <Input type="number" value={commission} onChange={e => setCommission(e.target.value)} className="rounded-xl" data-testid="input-commission" />
-          <p className="text-[10px] text-muted-foreground mt-1">Pourcentage prélevé sur chaque course terminée</p>
-        </div>
-      </Card>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <Card className="p-6 rounded-2xl border-0 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm flex items-center gap-2"><DollarSign className="w-4 h-4 text-emerald-500" /> Commission</h3>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Commission plateforme (%)</label>
+            <Input type="number" value={commission} onChange={e => setCommission(e.target.value)} className="rounded-xl" data-testid="input-commission" />
+            <p className="text-[10px] text-muted-foreground mt-1">Pourcentage prélevé sur chaque course terminée</p>
+          </div>
+        </Card>
+      </motion.div>
 
-      <div className="flex items-end">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="flex items-end"
+      >
         <Button
           className="w-full md:w-auto rounded-xl font-bold h-11 px-8"
           disabled={isPending}
@@ -436,7 +628,7 @@ function ConfigForm({ config, onSave, isPending }: { config: any; onSave: (data:
           {isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
           Enregistrer les paramètres
         </Button>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -498,13 +690,18 @@ function LocationsManager() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button
-          onClick={() => { setShowAdd(true); setForm({ name: '', nameFr: '', lat: '', lng: '' }); }}
-          className="rounded-xl"
-          data-testid="button-add-place"
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
         >
-          <MapPin className="w-4 h-4 mr-2" /> Ajouter un lieu
-        </Button>
+          <Button
+            onClick={() => { setShowAdd(true); setForm({ name: '', nameFr: '', lat: '', lng: '' }); }}
+            className="rounded-xl"
+            data-testid="button-add-place"
+          >
+            <MapPin className="w-4 h-4 mr-2" /> Ajouter un lieu
+          </Button>
+        </motion.div>
       </div>
 
       <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
@@ -523,8 +720,15 @@ function LocationsManager() {
               {places.length === 0 ? (
                 <tr><td colSpan={5} className="p-8 text-center text-muted-foreground text-sm">Aucun lieu personnalisé</td></tr>
               ) : (
-                places.map((p: any) => (
-                  <tr key={p.id} className="hover:bg-muted/20" data-testid={`place-row-${p.id}`}>
+                places.map((p: any, idx: number) => (
+                  <motion.tr 
+                    key={p.id} 
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="hover:bg-muted/20" 
+                    data-testid={`place-row-${p.id}`}
+                  >
                     <td className="p-3 font-medium">{p.name}</td>
                     <td className="p-3">{p.nameFr}</td>
                     <td className="p-3 hidden md:table-cell text-muted-foreground">{parseFloat(p.lat).toFixed(4)}</td>
@@ -552,7 +756,7 @@ function LocationsManager() {
                         <XCircle className="w-3 h-3 mr-1" /> Suppr.
                       </Button>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))
               )}
             </tbody>
@@ -627,24 +831,25 @@ export default function AdminDashboard() {
   const [ridesPage, setRidesPage] = useState(1);
   const [driversPage, setDriversPage] = useState(1);
   const [usersPage, setUsersPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const { data: stats } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['/api/admin/stats'],
     queryFn: async () => (await fetch('/api/admin/stats', { credentials: 'include' })).json(),
     refetchInterval: 10000,
   });
 
-  const { data: users = [] } = useQuery({
+  const { data: users = [], isLoading: usersLoading } = useQuery({
     queryKey: [api.admin.getUsers.path],
     queryFn: async () => (await fetch(api.admin.getUsers.path, { credentials: 'include' })).json(),
   });
 
-  const { data: drivers = [] } = useQuery({
+  const { data: drivers = [], isLoading: driversLoading } = useQuery({
     queryKey: [api.admin.getDrivers.path],
     queryFn: async () => (await fetch(api.admin.getDrivers.path, { credentials: 'include' })).json(),
   });
 
-  const { data: rides = [] } = useQuery({
+  const { data: rides = [], isLoading: ridesLoading } = useQuery({
     queryKey: [api.admin.getRides.path],
     queryFn: async () => (await fetch(api.admin.getRides.path, { credentials: 'include' })).json(),
     refetchInterval: 5000,
@@ -672,6 +877,8 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: [api.admin.getDrivers.path] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/stats'] });
       toast({ title: 'Statut mis à jour' });
+      setIsRefreshing(true);
+      setTimeout(() => setIsRefreshing(false), 500);
     },
     onError: () => toast({ title: 'Erreur', description: 'Impossible de mettre à jour le statut', variant: 'destructive' }),
   });
@@ -685,6 +892,8 @@ export default function AdminDashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
       toast({ title: 'Utilisateur mis à jour' });
+      setIsRefreshing(true);
+      setTimeout(() => setIsRefreshing(false), 500);
     },
     onError: () => toast({ title: 'Erreur', description: 'Impossible de modifier l\'utilisateur', variant: 'destructive' }),
   });
@@ -701,6 +910,8 @@ export default function AdminDashboard() {
       setShowCancelDialog(false);
       setCancelReason('');
       toast({ title: 'Course annulée' });
+      setIsRefreshing(true);
+      setTimeout(() => setIsRefreshing(false), 500);
     },
     onError: () => toast({ title: 'Erreur', description: 'Impossible d\'annuler la course', variant: 'destructive' }),
   });
@@ -775,11 +986,19 @@ export default function AdminDashboard() {
 
   const activeRides = rides.filter((r: any) => ['REQUESTED', 'BIDDING', 'ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status));
 
+  const isLoading = statsLoading || usersLoading || driversLoading || ridesLoading;
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      <RefreshIndicator isRefreshing={isRefreshing} />
+      
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-border/50 px-4 md:px-8 py-3">
         <div className="max-w-[1400px] mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3">
+          <motion.div 
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex items-center gap-3"
+          >
             <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
               <Shield className="w-5 h-5 text-primary-foreground" />
             </div>
@@ -787,57 +1006,74 @@ export default function AdminDashboard() {
               <h1 className="text-lg font-bold font-display" data-testid="text-admin-title">Farady Admin</h1>
               <p className="text-xs text-muted-foreground">Panneau d'administration</p>
             </div>
-          </div>
+          </motion.div>
           <div className="flex items-center gap-2">
             {stats?.activeRides > 0 && (
-              <Badge className="bg-green-500/10 text-green-600 border-green-200 animate-pulse" data-testid="badge-active-rides">
-                <Activity className="w-3 h-3 mr-1" /> {stats.activeRides} en cours
-              </Badge>
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 400 }}
+              >
+                <Badge className="bg-green-500/10 text-green-600 border-green-200 animate-pulse" data-testid="badge-active-rides">
+                  <Activity className="w-3 h-3 mr-1" /> {stats.activeRides} en cours
+                </Badge>
+              </motion.div>
             )}
-            <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
-              <LogOut className="w-4 h-4" />
-            </Button>
+            <motion.div
+              whileHover={{ rotate: 90 }}
+              transition={{ duration: 0.2 }}
+            >
+              <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </motion.div>
           </div>
         </div>
       </header>
 
       <div className="max-w-[1400px] mx-auto p-4 md:p-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="bg-white dark:bg-zinc-900 border border-border/50 rounded-xl p-1 w-full md:w-auto flex flex-wrap gap-0" data-testid="admin-tabs">
-            <TabsTrigger value="overview" className="rounded-lg text-xs md:text-sm" data-testid="tab-overview">
-              <TrendingUp className="w-4 h-4 mr-1.5" /> Vue d'ensemble
-            </TabsTrigger>
-            <TabsTrigger value="rides" className="rounded-lg text-xs md:text-sm" data-testid="tab-rides">
-              <Route className="w-4 h-4 mr-1.5" /> Courses
-            </TabsTrigger>
-            <TabsTrigger value="drivers" className="rounded-lg text-xs md:text-sm" data-testid="tab-drivers">
-              <Car className="w-4 h-4 mr-1.5" /> Chauffeurs
-            </TabsTrigger>
-            <TabsTrigger value="users" className="rounded-lg text-xs md:text-sm" data-testid="tab-users">
-              <Users className="w-4 h-4 mr-1.5" /> Utilisateurs
-            </TabsTrigger>
-            <TabsTrigger value="locations" className="rounded-lg text-xs md:text-sm" data-testid="tab-locations">
-              <MapPin className="w-4 h-4 mr-1.5" /> Lieux
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
-              <Settings className="w-4 h-4 mr-1.5" /> Paramètres
-            </TabsTrigger>
-          </TabsList>
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <TabsList className="bg-white dark:bg-zinc-900 border border-border/50 rounded-xl p-1 w-full md:w-auto flex flex-wrap gap-0" data-testid="admin-tabs">
+              <TabsTrigger value="overview" className="rounded-lg text-xs md:text-sm" data-testid="tab-overview">
+                <TrendingUp className="w-4 h-4 mr-1.5" /> Vue d'ensemble
+              </TabsTrigger>
+              <TabsTrigger value="rides" className="rounded-lg text-xs md:text-sm" data-testid="tab-rides">
+                <Route className="w-4 h-4 mr-1.5" /> Courses
+              </TabsTrigger>
+              <TabsTrigger value="drivers" className="rounded-lg text-xs md:text-sm" data-testid="tab-drivers">
+                <Car className="w-4 h-4 mr-1.5" /> Chauffeurs
+              </TabsTrigger>
+              <TabsTrigger value="users" className="rounded-lg text-xs md:text-sm" data-testid="tab-users">
+                <Users className="w-4 h-4 mr-1.5" /> Utilisateurs
+              </TabsTrigger>
+              <TabsTrigger value="locations" className="rounded-lg text-xs md:text-sm" data-testid="tab-locations">
+                <MapPin className="w-4 h-4 mr-1.5" /> Lieux
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
+                <Settings className="w-4 h-4 mr-1.5" /> Paramètres
+              </TabsTrigger>
+            </TabsList>
+          </motion.div>
 
           {/* ===== OVERVIEW TAB ===== */}
           <TabsContent value="overview" className="space-y-6 mt-0">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-              <StatCard icon={<Users className="w-5 h-5" />} label="Utilisateurs" value={stats?.totalUsers || 0} color="text-blue-500" bg="bg-blue-50 dark:bg-blue-950/30" />
-              <StatCard icon={<Car className="w-5 h-5" />} label="Chauffeurs" value={stats?.totalDrivers || 0} color="text-purple-500" bg="bg-purple-50 dark:bg-purple-950/30" sub={`${stats?.onlineDrivers || 0} en ligne`} />
-              <StatCard icon={<Route className="w-5 h-5" />} label="Total courses" value={stats?.totalRides || 0} color="text-emerald-500" bg="bg-emerald-50 dark:bg-emerald-950/30" sub={`${stats?.completedRides || 0} terminées`} />
-              <StatCard icon={<DollarSign className="w-5 h-5" />} label="Revenu total" value={formatAr(stats?.totalRevenue || 0)} color="text-amber-500" bg="bg-amber-50 dark:bg-amber-950/30" />
+              <StatCard icon={<Users className="w-5 h-5" />} label="Utilisateurs" value={stats?.totalUsers || 0} color="text-blue-500" bg="bg-blue-50 dark:bg-blue-950/30" delay={0} />
+              <StatCard icon={<Car className="w-5 h-5" />} label="Chauffeurs" value={stats?.totalDrivers || 0} color="text-purple-500" bg="bg-purple-50 dark:bg-purple-950/30" sub={`${stats?.onlineDrivers || 0} en ligne`} delay={0.1} />
+              <StatCard icon={<Route className="w-5 h-5" />} label="Total courses" value={stats?.totalRides || 0} color="text-emerald-500" bg="bg-emerald-50 dark:bg-emerald-950/30" sub={`${stats?.completedRides || 0} terminées`} delay={0.2} />
+              <StatCard icon={<DollarSign className="w-5 h-5" />} label="Revenu total" value={formatAr(stats?.totalRevenue || 0)} color="text-amber-500" bg="bg-amber-50 dark:bg-amber-950/30" delay={0.3} />
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-              <MiniStat label="Courses actives" value={stats?.activeRides || 0} icon={<Activity className="w-4 h-4 text-green-500" />} />
-              <MiniStat label="Annulées" value={stats?.canceledRides || 0} icon={<XCircle className="w-4 h-4 text-red-500" />} />
-              <MiniStat label="En attente" value={stats?.pendingDrivers || 0} icon={<Clock className="w-4 h-4 text-amber-500" />} />
-              <MiniStat label="En ligne" value={stats?.onlineDrivers || 0} icon={<CircleDot className="w-4 h-4 text-green-500" />} />
+              <MiniStat label="Courses actives" value={stats?.activeRides || 0} icon={<Activity className="w-4 h-4 text-green-500" />} delay={0.4} />
+              <MiniStat label="Annulées" value={stats?.canceledRides || 0} icon={<XCircle className="w-4 h-4 text-red-500" />} delay={0.5} />
+              <MiniStat label="En attente" value={stats?.pendingDrivers || 0} icon={<Clock className="w-4 h-4 text-amber-500" />} delay={0.6} />
+              <MiniStat label="En ligne" value={stats?.onlineDrivers || 0} icon={<CircleDot className="w-4 h-4 text-green-500" />} delay={0.7} />
             </div>
 
             {/* Real-time map */}
@@ -862,8 +1098,16 @@ export default function AdminDashboard() {
                   {activeRides.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground text-sm">Aucune course active</div>
                   ) : (
-                    activeRides.slice(0, 10).map((r: any) => (
-                      <div key={r.id} className="p-3 hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => setSelectedRide(r)} data-testid={`ride-active-${r.id}`}>
+                    activeRides.slice(0, 10).map((r: any, idx: number) => (
+                      <motion.div
+                        key={r.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.03 }}
+                        className="p-3 hover:bg-muted/30 transition-colors cursor-pointer"
+                        onClick={() => setSelectedRide(r)}
+                        data-testid={`ride-active-${r.id}`}
+                      >
                         <div className="flex justify-between items-start mb-1">
                           <span className="font-medium text-sm">#{r.id} — {r.passenger?.name || 'Passager'}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusColors[r.status] || ''}`}>{r.status.replace(/_/g, ' ')}</span>
@@ -875,7 +1119,7 @@ export default function AdminDashboard() {
                           <Navigation className="w-3 h-3 text-red-400" /> {r.dropAddress?.slice(0, 30)}...
                         </div>
                         {r.selectedPriceAr && <div className="text-xs font-bold text-primary mt-1">{formatAr(r.selectedPriceAr)}</div>}
-                      </div>
+                      </motion.div>
                     ))
                   )}
                 </div>
@@ -890,8 +1134,16 @@ export default function AdminDashboard() {
                   {drivers.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground text-sm">Aucun chauffeur</div>
                   ) : (
-                    drivers.slice(0, 10).map((d: any) => (
-                      <div key={d.id} className="p-3 hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => setSelectedDriver(d)} data-testid={`driver-row-${d.id}`}>
+                    drivers.slice(0, 10).map((d: any, idx: number) => (
+                      <motion.div
+                        key={d.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.03 }}
+                        className="p-3 hover:bg-muted/30 transition-colors cursor-pointer"
+                        onClick={() => setSelectedDriver(d)}
+                        data-testid={`driver-row-${d.id}`}
+                      >
                         <div className="flex justify-between items-center">
                           <div>
                             <span className="font-medium text-sm">{d.name}</span>
@@ -910,7 +1162,7 @@ export default function AdminDashboard() {
                           <span className="flex items-center gap-1"><Star className="w-3 h-3 text-amber-400" /> {d.profile?.ratingAvg || '—'}</span>
                           <span>{d.completedRides || 0} courses</span>
                         </div>
-                      </div>
+                      </motion.div>
                     ))
                   )}
                 </div>
@@ -963,8 +1215,15 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {pagedRides.map((r: any) => (
-                      <tr key={r.id} className="hover:bg-muted/20 transition-colors" data-testid={`ride-row-${r.id}`}>
+                    {pagedRides.map((r: any, idx: number) => (
+                      <motion.tr 
+                        key={r.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.02 }}
+                        className="hover:bg-muted/20 transition-colors" 
+                        data-testid={`ride-row-${r.id}`}
+                      >
                         <td className="p-3 font-mono text-xs font-bold">{r.id}</td>
                         <td className="p-3">
                           <div className="font-medium text-sm">{r.passenger?.name || '—'}</div>
@@ -998,7 +1257,7 @@ export default function AdminDashboard() {
                             )}
                           </div>
                         </td>
-                      </tr>
+                      </motion.tr>
                     ))}
                   </tbody>
                 </table>
@@ -1033,82 +1292,93 @@ export default function AdminDashboard() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pagedDrivers.map((d: any) => (
-                <Card key={d.id} className="rounded-2xl border-0 shadow-sm overflow-hidden hover:shadow-md transition-shadow" data-testid={`card-driver-${d.id}`}>
-                  <div className="p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center">
-                          <Users className="w-6 h-6 text-muted-foreground" />
+              {pagedDrivers.map((d: any, idx: number) => (
+                <motion.div
+                  key={d.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: idx * 0.05 }}
+                  whileHover={{ y: -4, transition: { duration: 0.2 } }}
+                >
+                  <Card className="rounded-2xl border-0 shadow-sm overflow-hidden hover:shadow-md transition-all" data-testid={`card-driver-${d.id}`}>
+                    <div className="p-4">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-3">
+                          <motion.div 
+                            whileHover={{ scale: 1.05 }}
+                            className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center"
+                          >
+                            <Users className="w-6 h-6 text-muted-foreground" />
+                          </motion.div>
+                          <div>
+                            <h4 className="font-bold text-sm">{d.name}</h4>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {d.phone}</p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="font-bold text-sm">{d.name}</h4>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {d.phone}</p>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${driverStatusColors[d.profile?.status] || ''}`}>{d.profile?.status}</span>
+                          {d.profile?.online && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium flex items-center gap-1"><CircleDot className="w-2 h-2" /> En ligne</span>}
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${driverStatusColors[d.profile?.status] || ''}`}>{d.profile?.status}</span>
-                        {d.profile?.online && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium flex items-center gap-1"><CircleDot className="w-2 h-2" /> En ligne</span>}
-                      </div>
-                    </div>
 
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      <div className="bg-muted/30 rounded-lg p-2 text-center">
-                        <div className="text-xs text-muted-foreground">Véhicule</div>
-                        <div className="font-bold text-xs flex items-center justify-center gap-1">
-                          {d.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-3 h-3" /> : <Car className="w-3 h-3" />}
-                          {d.profile?.vehicleType}
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="bg-muted/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-muted-foreground">Véhicule</div>
+                          <div className="font-bold text-xs flex items-center justify-center gap-1">
+                            {d.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-3 h-3" /> : <Car className="w-3 h-3" />}
+                            {d.profile?.vehicleType}
+                          </div>
+                        </div>
+                        <div className="bg-muted/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-muted-foreground">Note</div>
+                          <div className="font-bold text-xs flex items-center justify-center gap-1">
+                            <Star className="w-3 h-3 text-amber-400" /> {d.profile?.ratingAvg || '0.00'}
+                          </div>
+                        </div>
+                        <div className="bg-muted/30 rounded-lg p-2 text-center">
+                          <div className="text-xs text-muted-foreground">Courses</div>
+                          <div className="font-bold text-xs">{d.completedRides || 0}</div>
                         </div>
                       </div>
-                      <div className="bg-muted/30 rounded-lg p-2 text-center">
-                        <div className="text-xs text-muted-foreground">Note</div>
-                        <div className="font-bold text-xs flex items-center justify-center gap-1">
-                          <Star className="w-3 h-3 text-amber-400" /> {d.profile?.ratingAvg || '0.00'}
-                        </div>
-                      </div>
-                      <div className="bg-muted/30 rounded-lg p-2 text-center">
-                        <div className="text-xs text-muted-foreground">Courses</div>
-                        <div className="font-bold text-xs">{d.completedRides || 0}</div>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
-                      <span>Gains: <span className="font-bold text-foreground">{formatAr(d.totalEarnings || 0)}</span></span>
-                      <span>{d.profile?.ratingCount || 0} avis</span>
-                    </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
+                        <span>Gains: <span className="font-bold text-foreground">{formatAr(d.totalEarnings || 0)}</span></span>
+                        <span>{d.profile?.ratingCount || 0} avis</span>
+                      </div>
 
-                    <div className="flex gap-2">
-                      {d.profile?.status === 'PENDING' && (
-                        <>
-                          <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-${d.id}`}>
+                      <div className="flex gap-2">
+                        {d.profile?.status === 'PENDING' && (
+                          <>
+                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-${d.id}`}>
+                              <CheckCircle className="w-3 h-3 mr-1" /> Approuver
+                            </Button>
+                            <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })} data-testid={`button-reject-${d.id}`}>
+                              <XCircle className="w-3 h-3 mr-1" /> Rejeter
+                            </Button>
+                          </>
+                        )}
+                        {d.profile?.status === 'APPROVED' && (
+                          <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })} data-testid={`button-suspend-${d.id}`}>
+                            <Ban className="w-3 h-3 mr-1" /> Suspendre
+                          </Button>
+                        )}
+                        {d.profile?.status === 'SUSPENDED' && (
+                          <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-reactivate-${d.id}`}>
+                            <CheckCircle className="w-3 h-3 mr-1" /> Réactiver
+                          </Button>
+                        )}
+                        {d.profile?.status === 'REJECTED' && (
+                          <Button size="sm" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-rejected-${d.id}`}>
                             <CheckCircle className="w-3 h-3 mr-1" /> Approuver
                           </Button>
-                          <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })} data-testid={`button-reject-${d.id}`}>
-                            <XCircle className="w-3 h-3 mr-1" /> Rejeter
-                          </Button>
-                        </>
-                      )}
-                      {d.profile?.status === 'APPROVED' && (
-                        <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })} data-testid={`button-suspend-${d.id}`}>
-                          <Ban className="w-3 h-3 mr-1" /> Suspendre
+                        )}
+                        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)} data-testid={`button-details-driver-${d.id}`}>
+                          <Eye className="w-3 h-3" />
                         </Button>
-                      )}
-                      {d.profile?.status === 'SUSPENDED' && (
-                        <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-reactivate-${d.id}`}>
-                          <CheckCircle className="w-3 h-3 mr-1" /> Réactiver
-                        </Button>
-                      )}
-                      {d.profile?.status === 'REJECTED' && (
-                        <Button size="sm" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-rejected-${d.id}`}>
-                          <CheckCircle className="w-3 h-3 mr-1" /> Approuver
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)} data-testid={`button-details-driver-${d.id}`}>
-                        <Eye className="w-3 h-3" />
-                      </Button>
+                      </div>
                     </div>
-                  </div>
-                </Card>
+                  </Card>
+                </motion.div>
               ))}
               {filteredDrivers.length === 0 && (
                 <div className="col-span-full p-8 text-center text-muted-foreground text-sm">Aucun chauffeur trouvé</div>
@@ -1156,8 +1426,15 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {pagedUsers.map((u: any) => (
-                      <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`user-row-${u.id}`}>
+                    {pagedUsers.map((u: any, idx: number) => (
+                      <motion.tr 
+                        key={u.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.02 }}
+                        className="hover:bg-muted/20 transition-colors" 
+                        data-testid={`user-row-${u.id}`}
+                      >
                         <td className="p-3 font-mono text-xs font-bold">{u.id}</td>
                         <td className="p-3 font-medium">{u.name}</td>
                         <td className="p-3 text-muted-foreground">{u.phone}</td>
@@ -1179,18 +1456,23 @@ export default function AdminDashboard() {
                         <td className="p-3 text-right">
                           <div className="flex justify-end gap-1">
                             {u.role !== 'ADMIN' && (
-                              <Button
-                                size="icon" variant="ghost"
-                                className={`h-7 w-7 ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`}
-                                onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}
-                                data-testid={`button-toggle-block-${u.id}`}
+                              <motion.div
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.9 }}
                               >
-                                {u.isBlocked ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
-                              </Button>
+                                <Button
+                                  size="icon" variant="ghost"
+                                  className={`h-7 w-7 ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`}
+                                  onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}
+                                  data-testid={`button-toggle-block-${u.id}`}
+                                >
+                                  {u.isBlocked ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
+                                </Button>
+                              </motion.div>
                             )}
                           </div>
                         </td>
-                      </tr>
+                      </motion.tr>
                     ))}
                   </tbody>
                 </table>
@@ -1216,6 +1498,7 @@ export default function AdminDashboard() {
         </Tabs>
       </div>
 
+      {/* Dialogs */}
       <Dialog open={!!selectedRide} onOpenChange={() => setSelectedRide(null)}>
         <DialogContent className="max-w-lg rounded-2xl">
           <DialogHeader>

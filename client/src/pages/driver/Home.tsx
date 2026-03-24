@@ -32,6 +32,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { useWebSocket } from '@/hooks/use-websocket';
 
 import { GEOCENTER } from '@shared/schema';
 
