@@ -9,13 +9,12 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/lib/i18n';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Edit, Trash2, Eye, Image, ExternalLink, Calendar,
-  TrendingUp, MousePointer, Eye as EyeIcon, X, CheckCircle, Clock
+  TrendingUp, MousePointer, Eye as EyeIcon, X, CheckCircle, Clock, Loader2
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -91,11 +90,41 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
   });
   const [imagePreview, setImagePreview] = useState<string>(ad?.imageUrl || '');
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+    
+    if (!formData.title.trim()) {
+      newErrors.title = 'Titre requis';
+    }
+    if (!formData.titleFr.trim()) {
+      newErrors.titleFr = 'Titre requis';
+    }
+    if (!imagePreview && !imageFile && !ad?.imageUrl) {
+      newErrors.image = 'Image requise';
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Vérifier le type de fichier
+      if (!file.type.startsWith('image/')) {
+        setErrors({ ...errors, image: 'Seules les images sont acceptées' });
+        return;
+      }
+      // Vérifier la taille (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setErrors({ ...errors, image: 'Image trop grande (max 5MB)' });
+        return;
+      }
+      
       setImageFile(file);
+      setErrors({ ...errors, image: '' });
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result as string);
@@ -106,9 +135,14 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+    
     const submitData = { ...formData };
     if (imageFile) {
-      (submitData as any).image = imageFile;
+      submitData.image = imageFile;
     }
     onSubmit(submitData);
   };
@@ -117,22 +151,24 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
     <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto px-1">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-semibold mb-1 block">Titre (Malagasy)</label>
+          <label className="text-xs font-semibold mb-1 block">Titre (Malagasy) *</label>
           <Input 
             value={formData.title}
             onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             required
-            className="rounded-xl h-9 text-sm"
+            className={`rounded-xl h-9 text-sm ${errors.title ? 'border-destructive' : ''}`}
           />
+          {errors.title && <p className="text-xs text-destructive mt-1">{errors.title}</p>}
         </div>
         <div>
-          <label className="text-xs font-semibold mb-1 block">Titre (Français)</label>
+          <label className="text-xs font-semibold mb-1 block">Titre (Français) *</label>
           <Input 
             value={formData.titleFr}
             onChange={(e) => setFormData({ ...formData, titleFr: e.target.value })}
             required
-            className="rounded-xl h-9 text-sm"
+            className={`rounded-xl h-9 text-sm ${errors.titleFr ? 'border-destructive' : ''}`}
           />
+          {errors.titleFr && <p className="text-xs text-destructive mt-1">{errors.titleFr}</p>}
         </div>
       </div>
 
@@ -158,7 +194,7 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
       </div>
 
       <div>
-        <label className="text-xs font-semibold mb-1 block">Image</label>
+        <label className="text-xs font-semibold mb-1 block">Image *</label>
         <div className="flex gap-3 items-start">
           {imagePreview && (
             <div className="relative w-20 h-20 rounded-xl overflow-hidden border">
@@ -176,12 +212,21 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
             <div className="border-2 border-dashed rounded-xl p-3 text-center hover:bg-muted/50 transition-colors">
               <Image className="w-6 h-6 mx-auto mb-1 text-muted-foreground" />
               <p className="text-xs text-muted-foreground">
-                {imagePreview ? 'Changer l\'image' : 'Cliquez pour sélectionner'}
+                {imagePreview ? 'Changer l\'image' : 'Cliquez pour sélectionner une image'}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                JPG, PNG, GIF (max 5MB)
               </p>
             </div>
-            <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+            <input 
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              onChange={handleImageChange}
+            />
           </label>
         </div>
+        {errors.image && <p className="text-xs text-destructive mt-1">{errors.image}</p>}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -250,19 +295,6 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
           </Select>
         </div>
         <div>
-          <label className="text-xs font-semibold mb-1 block">Priorité</label>
-          <Input 
-            type="number"
-            value={formData.priority}
-            onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
-            placeholder="0-100"
-            className="rounded-xl h-9 text-sm"
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
           <label className="text-xs font-semibold mb-1 block">Date de début</label>
           <Input 
             type="datetime-local"
@@ -271,6 +303,9 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
             className="rounded-xl h-9 text-sm"
           />
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-semibold mb-1 block">Date de fin</label>
           <Input 
@@ -287,7 +322,14 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
           Annuler
         </Button>
         <Button type="submit" disabled={isSubmitting} className="rounded-xl">
-          {isSubmitting ? 'Enregistrement...' : (ad ? 'Mettre à jour' : 'Créer')}
+          {isSubmitting ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Enregistrement...
+            </>
+          ) : (
+            ad ? 'Mettre à jour' : 'Créer'
+          )}
         </Button>
       </DialogFooter>
     </form>
@@ -356,9 +398,9 @@ export default function AdminAds() {
       const data = new FormData();
       data.append('title', formData.title);
       data.append('titleFr', formData.titleFr);
-      data.append('description', formData.description);
-      data.append('descriptionFr', formData.descriptionFr);
-      data.append('linkUrl', formData.linkUrl);
+      if (formData.description) data.append('description', formData.description);
+      if (formData.descriptionFr) data.append('descriptionFr', formData.descriptionFr);
+      if (formData.linkUrl) data.append('linkUrl', formData.linkUrl);
       data.append('type', formData.type);
       data.append('position', formData.position);
       data.append('priority', formData.priority);
@@ -372,7 +414,11 @@ export default function AdminAds() {
         body: data,
         credentials: 'include',
       });
-      if (!res.ok) throw new Error('Failed to create ad');
+      
+      if (!res.ok) {
+        const error = await res.text();
+        throw new Error(error || 'Failed to create ad');
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -381,8 +427,13 @@ export default function AdminAds() {
       setEditingAd(null);
       toast({ title: 'Publicité créée avec succès' });
     },
-    onError: () => {
-      toast({ title: 'Erreur lors de la création', variant: 'destructive' });
+    onError: (error: Error) => {
+      console.error('Error creating ad:', error);
+      toast({ 
+        title: 'Erreur lors de la création', 
+        description: error.message,
+        variant: 'destructive' 
+      });
     },
   });
 
@@ -391,14 +442,13 @@ export default function AdminAds() {
       const formData = new FormData();
       formData.append('title', data.title);
       formData.append('titleFr', data.titleFr);
-      formData.append('description', data.description);
-      formData.append('descriptionFr', data.descriptionFr);
-      formData.append('linkUrl', data.linkUrl);
+      if (data.description) formData.append('description', data.description);
+      if (data.descriptionFr) formData.append('descriptionFr', data.descriptionFr);
+      if (data.linkUrl) formData.append('linkUrl', data.linkUrl);
       formData.append('type', data.type);
       formData.append('position', data.position);
       formData.append('priority', data.priority);
       formData.append('targetAudience', data.targetAudience);
-      formData.append('isActive', data.isActive?.toString() || 'true');
       if (data.startDate) formData.append('startDate', data.startDate);
       if (data.endDate) formData.append('endDate', data.endDate);
       if (data.image) formData.append('image', data.image);
@@ -408,7 +458,11 @@ export default function AdminAds() {
         body: formData,
         credentials: 'include',
       });
-      if (!res.ok) throw new Error('Failed to update ad');
+      
+      if (!res.ok) {
+        const error = await res.text();
+        throw new Error(error || 'Failed to update ad');
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -417,8 +471,12 @@ export default function AdminAds() {
       setEditingAd(null);
       toast({ title: 'Publicité mise à jour' });
     },
-    onError: () => {
-      toast({ title: 'Erreur lors de la mise à jour', variant: 'destructive' });
+    onError: (error: Error) => {
+      toast({ 
+        title: 'Erreur lors de la mise à jour', 
+        description: error.message,
+        variant: 'destructive' 
+      });
     },
   });
 
@@ -444,9 +502,9 @@ export default function AdminAds() {
       const formData = new FormData();
       formData.append('title', ad.title);
       formData.append('titleFr', ad.titleFr);
-      formData.append('description', ad.description || '');
-      formData.append('descriptionFr', ad.descriptionFr || '');
-      formData.append('linkUrl', ad.linkUrl || '');
+      if (ad.description) formData.append('description', ad.description);
+      if (ad.descriptionFr) formData.append('descriptionFr', ad.descriptionFr);
+      if (ad.linkUrl) formData.append('linkUrl', ad.linkUrl);
       formData.append('type', ad.type);
       formData.append('position', ad.position);
       formData.append('priority', String(ad.priority));
@@ -531,6 +589,9 @@ export default function AdminAds() {
                       src={ad.imageUrl} 
                       alt={ad.title}
                       className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://placehold.co/400x200?text=Image+non+disponible';
+                      }}
                     />
                     <div className="absolute top-2 right-2 flex gap-1">
                       <Badge variant={ad.isActive ? 'default' : 'secondary'} className="text-[10px]">
@@ -611,11 +672,14 @@ export default function AdminAds() {
 
         {/* Dialog de création/édition */}
         <Dialog open={showDialog} onOpenChange={setShowDialog}>
-          <DialogContent className="max-w-2xl rounded-2xl">
+          <DialogContent className="max-w-2xl rounded-2xl" aria-describedby="ad-form-description">
             <DialogHeader>
               <DialogTitle className="font-display">
                 {editingAd ? 'Modifier la publicité' : 'Nouvelle publicité'}
               </DialogTitle>
+              <p id="ad-form-description" className="text-sm text-muted-foreground">
+                {editingAd ? 'Modifiez les informations de votre publicité' : 'Créez une nouvelle campagne publicitaire'}
+              </p>
             </DialogHeader>
             <AdForm
               ad={editingAd || undefined}
@@ -628,9 +692,12 @@ export default function AdminAds() {
 
         {/* Dialog de visualisation */}
         <Dialog open={!!selectedAd} onOpenChange={() => setSelectedAd(null)}>
-          <DialogContent className="max-w-md rounded-2xl">
+          <DialogContent className="max-w-md rounded-2xl" aria-describedby="ad-preview-description">
             <DialogHeader>
               <DialogTitle className="font-display">Aperçu</DialogTitle>
+              <p id="ad-preview-description" className="text-sm text-muted-foreground">
+                Aperçu de votre publicité
+              </p>
             </DialogHeader>
             {selectedAd && (
               <div className="space-y-4">
@@ -638,6 +705,9 @@ export default function AdminAds() {
                   src={selectedAd.imageUrl} 
                   alt={selectedAd.title}
                   className="w-full rounded-xl"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://placehold.co/400x200?text=Image+non+disponible';
+                  }}
                 />
                 <div>
                   <h3 className="font-bold text-lg">{selectedAd.title}</h3>

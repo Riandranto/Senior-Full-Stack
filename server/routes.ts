@@ -18,6 +18,18 @@ const uploadStorage = multer.diskStorage({
 });
 const upload = multer({ storage: uploadStorage, limits: { fileSize: 10 * 1024 * 1024 } });
 
+const adUpload = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Seules les images sont acceptées'));
+    }
+  }
+});
+
 // Extend session to store userId
 declare module "express-session" {
   interface SessionData {
@@ -1004,15 +1016,27 @@ export async function registerRoutes(
   });
 
   // POST - Créer une publicité (admin)
-  app.post('/api/admin/ads', upload.single('image'), async (req, res) => {
+  app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
+      console.log('📢 Creating ad with body:', req.body);
+      console.log('📢 File:', req.file);
+      
       const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
       
-      const imageUrl = req.file ? `/uploads/${req.file.filename}` : '';
+      // Validation
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "L'image est requise" });
+      }
+      
+      const imageUrl = `/uploads/${req.file.filename}`;
       
       const [newAd] = await db.insert(advertisements).values({
         title,
@@ -1030,10 +1054,11 @@ export async function registerRoutes(
         targetAudience: targetAudience || 'ALL',
       }).returning();
       
+      console.log('✅ Ad created:', newAd);
       res.status(201).json(newAd);
     } catch (error) {
       console.error('❌ Error creating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la création" });
+      res.status(500).json({ message: "Erreur lors de la création: " + (error as Error).message });
     }
   });
 
