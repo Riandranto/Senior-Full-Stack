@@ -1,31 +1,39 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { api } from "@shared/routes";
-import { users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, isWithinRange, calculateDistance, WS_EVENTS } from "@shared/schema";
+import { 
+  users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
+  advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS 
+} from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import express from "express";
 
-
-
+// Configuration multer pour l'upload des fichiers
 const uploadStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, 'uploads/'),
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`),
 });
-const upload = multer({ storage: uploadStorage, limits: { fileSize: 10 * 1024 * 1024 } });
 
+const upload = multer({ 
+  storage: uploadStorage, 
+  limits: { fileSize: 10 * 1024 * 1024 } 
+});
+
+// Configuration spécifique pour les publicités (5MB max, seulement images)
 const adUpload = multer({
   storage: uploadStorage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Seules les images sont acceptées'));
+      cb(new Error('Seules les images sont acceptées (JPEG, PNG, GIF, WEBP)'));
     }
   }
 });
@@ -45,7 +53,6 @@ export async function registerRoutes(
 
   // Middleware pour vérifier que la session est initialisée
   app.use((req, res, next) => {
-    // S'assurer que req.session existe
     if (!req.session) {
       console.error('❌ Session not initialized for request:', req.path);
       return res.status(500).json({ message: "Session not initialized" });
@@ -128,13 +135,10 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
-  // Route OTP
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
       console.log('📞 Backend - requestOtp called');
       console.log('📦 Body:', req.body);
-      console.log('📦 Headers:', req.headers);
-      console.log('📦 Session ID:', req.session.id);
       
       const input = api.auth.requestOtp.input.parse(req.body);
       console.log(`✅ OTP for ${input.phone} is 123456`);
@@ -149,14 +153,10 @@ export async function registerRoutes(
     }
   });
 
-  // Route verify OTP
-  // Dans routes.ts, assurez-vous que la route verifyOtp a ces en-têtes
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
       console.log('🔐 Backend - verifyOtp called');
       console.log('📦 Body:', req.body);
-      console.log('📦 Session ID avant:', req.session.id);
-      console.log('📦 Cookie reçu:', req.headers.cookie);
       
       const input = api.auth.verifyOtp.input.parse(req.body);
       
@@ -174,17 +174,9 @@ export async function registerRoutes(
         });
       }
   
-      // Sauvegarder l'utilisateur dans la session
       req.session.userId = user.id;
       req.session.role = user.role;
       
-      console.log('✅ Session avant sauvegarde:', { 
-        userId: req.session.userId, 
-        role: req.session.role,
-        sessionID: req.session.id 
-      });
-      
-      // Sauvegarder la session avec Promise
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
           if (err) {
@@ -192,11 +184,6 @@ export async function registerRoutes(
             reject(err);
           } else {
             console.log('✅ Session saved successfully');
-            console.log('📦 Session après sauvegarde:', {
-              id: req.session.id,
-              userId: req.session.userId,
-              role: req.session.role
-            });
             resolve();
           }
         });
@@ -204,12 +191,6 @@ export async function registerRoutes(
   
       console.log('✅ User authenticated:', user.id, user.role);
       
-      // Forcer l'envoi du cookie dans la réponse
-     // res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-     // res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With');
-      //res.setHeader('Access-Control-Allow-Credentials', 'true');
-      
-      // Répondre avec l'utilisateur
       res.json({ user, success: true });
       
     } catch (e) {
@@ -221,12 +202,8 @@ export async function registerRoutes(
     }
   });
 
-  // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 Backend - getMe called');
-    console.log('📦 Session ID:', req.session.id);
-    console.log('📦 Session userId:', req.session.userId);
-    console.log('📦 Cookie reçu:', req.headers.cookie);
     
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
@@ -240,7 +217,6 @@ export async function registerRoutes(
     res.json(user);
   });
 
-  // Route logout
   app.post(api.auth.logout.path, (req, res) => {
     console.log('🚪 Backend - logout called');
     
@@ -253,19 +229,71 @@ export async function registerRoutes(
     });
   });
 
-  // ==================== DEBUG ROUTE ====================
+  // ==================== DEBUG ROUTES ====================
+  
   app.get('/api/debug/session', (req, res) => {
-    console.log('🔍 Debug session:');
-    console.log('Session ID:', req.session.id);
-    console.log('Session data:', req.session);
-    console.log('User ID:', req.session.userId);
-    console.log('Role:', req.session.role);
-    
     res.json({
       sessionId: req.session.id,
       userId: req.session.userId,
       role: req.session.role,
       cookie: req.session.cookie
+    });
+  });
+
+  app.get('/api/debug/session-state', (req, res) => {
+    res.json({
+      sessionID: req.sessionID,
+      userId: req.session.userId,
+      role: req.session.role,
+      cookie: req.session.cookie,
+      cookieHeader: req.headers['cookie'],
+      hasSession: !!req.session.userId,
+      environment: process.env.NODE_ENV,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.get('/api/debug/paths', (req, res) => {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const currentDir = process.cwd();
+    const distPublic = path.join(currentDir, 'dist', 'public');
+    
+    let files = {};
+    if (fs.existsSync(distPublic)) {
+      files = fs.readdirSync(distPublic).reduce((acc, file) => {
+        if (file === 'assets') {
+          acc[file] = fs.readdirSync(path.join(distPublic, file));
+        } else {
+          acc[file] = true;
+        }
+        return acc;
+      }, {});
+    }
+    
+    res.json({
+      currentDirectory: currentDir,
+      distPublicExists: fs.existsSync(distPublic),
+      distPublicContent: files,
+      env: process.env.NODE_ENV,
+    });
+  });
+
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok",
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.get('/api/test', (req, res) => {
+    res.json({ 
+      message: 'Backend is working!',
+      time: new Date().toISOString(),
+      sessionId: req.session?.id,
+      userId: req.session?.userId,
+      environment: process.env.NODE_ENV,
     });
   });
 
@@ -311,47 +339,6 @@ export async function registerRoutes(
       console.error('❌ Create ride error:', e);
       res.status(500).json({ message: "Internal error" });
     }
-  });
-
-  app.get('/api/debug/session-state', (req, res) => {
-    res.json({
-      sessionID: req.sessionID,
-      userId: req.session.userId,
-      role: req.session.role,
-      cookie: req.session.cookie,
-      cookieHeader: req.headers['cookie'],
-      hasSession: !!req.session.userId,
-      environment: process.env.NODE_ENV,
-      timestamp: new Date().toISOString()
-    });
-  });
-
-  // Dans server/routes.ts, ajoutez
-  app.get('/api/debug/paths', (req, res) => {
-    const fs = require('fs');
-    const path = require('path');
-    
-    const currentDir = process.cwd();
-    const distPublic = path.join(currentDir, 'dist', 'public');
-    
-    let files = {};
-    if (fs.existsSync(distPublic)) {
-      files = fs.readdirSync(distPublic).reduce((acc, file) => {
-        if (file === 'assets') {
-          acc[file] = fs.readdirSync(path.join(distPublic, file));
-        } else {
-          acc[file] = true;
-        }
-        return acc;
-      }, {});
-    }
-    
-    res.json({
-      currentDirectory: currentDir,
-      distPublicExists: fs.existsSync(distPublic),
-      distPublicContent: files,
-      env: process.env.NODE_ENV,
-    });
   });
 
   app.get(api.passenger.getRide.path, async (req, res) => {
@@ -454,6 +441,33 @@ export async function registerRoutes(
     }
   });
 
+  app.post(api.passenger.rateRide.path, async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    try {
+      const input = api.passenger.rateRide.input.parse(req.body);
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.passengerId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
+      if (ride.status !== "COMPLETED") return res.status(400).json({ message: "Ride not completed" });
+      if (!ride.driverId) return res.status(400).json({ message: "No driver assigned" });
+
+      await storage.rateDriver(ride.driverId, input.rating);
+
+      await storage.createNotification({
+        userId: ride.driverId,
+        title: "Nahazo note vaovao",
+        message: `Nahazo note ${input.rating}/5 ianao`,
+        type: "RATING",
+        rideId: id,
+      });
+
+      res.json({ message: "Rating submitted" });
+    } catch (e) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
   // ==================== DRIVER ROUTES ====================
 
   app.post(api.driver.setOnline.path, async (req, res) => {
@@ -495,7 +509,7 @@ export async function registerRoutes(
       const offer = await storage.createOffer({
         ...input,
         driverId: req.session.userId,
-        expiresAt: new Date(Date.now() + 90000), // 90s
+        expiresAt: new Date(Date.now() + 90000),
       });
 
       const ride = await storage.getRide(input.rideId);
@@ -633,27 +647,47 @@ export async function registerRoutes(
     }
   });
 
+  app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const docType = req.body.type || 'PHOTO';
+
+    let profile = await storage.getDriverProfile(req.session.userId);
+    if (!profile) {
+      await storage.updateUserRole(req.session.userId, "DRIVER");
+      profile = await storage.createDriverProfile({
+        userId: req.session.userId,
+        vehicleType: req.body.vehicleType || "TAXI",
+        status: "PENDING",
+        vehicleNumber: req.body.vehicleNumber || "",
+        licenseNumber: req.body.licenseNumber || ""
+      });
+    }
+
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
+    const doc = await storage.createDriverDocument({
+      driverId: profile.id,
+      type: docType,
+      url: fileUrl,
+    });
+
+    res.status(201).json(doc);
+  });
+
   // ==================== ADMIN ROUTES ====================
 
   app.get('/api/admin/stats', async (req, res) => {
     console.log('📊 Admin stats called');
-    console.log('Session:', req.session);
-    console.log('User ID:', req.session.userId);
-    console.log('Role:', req.session.role);
     
     if (!req.session.userId) {
-      console.log('❌ No userId in session');
       return res.status(401).json({ message: "Non authentifié" });
     }
     
     if (req.session.role !== 'ADMIN') {
-      console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
       return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
     }
     
     try {
       const stats = await storage.getAdminStats();
-      console.log('✅ Stats retrieved successfully');
       res.json(stats);
     } catch (error) {
       console.error('❌ Error getting stats:', error);
@@ -662,17 +696,12 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getDrivers.path, async (req, res) => {
-    console.log('👥 Admin getDrivers called');
-    console.log('Session:', req.session);
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
-      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const drivers = await storage.getDriversWithDetails();
-      console.log(`✅ ${drivers.length} drivers retrieved`);
       res.json(drivers);
     } catch (error) {
       console.error('❌ Error getting drivers:', error);
@@ -694,16 +723,12 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getUsers.path, async (req, res) => {
-    console.log('👥 Admin getUsers called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
-      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const allUsers = await storage.getAllUsers();
-      console.log(`✅ ${allUsers.length} users retrieved`);
       res.json(allUsers);
     } catch (error) {
       console.error('❌ Error getting users:', error);
@@ -712,16 +737,12 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getRides.path, async (req, res) => {
-    console.log('🚗 Admin getRides called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
-      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const ridesData = await storage.getRidesWithDetails();
-      console.log(`✅ ${ridesData.length} rides retrieved`);
       res.json(ridesData);
     } catch (error) {
       console.error('❌ Error getting rides:', error);
@@ -761,16 +782,12 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getConfig.path, async (req, res) => {
-    console.log('⚙️ Admin getConfig called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
-      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const config = await storage.getConfig();
-      console.log('✅ Config retrieved');
       res.json(config);
     } catch (error) {
       console.error('❌ Error getting config:', error);
@@ -787,135 +804,6 @@ export async function registerRoutes(
     } catch (e) {
       res.status(400).json({ message: "Invalid input" });
     }
-  });
-
-  // ==================== DOCUMENT ROUTES ====================
-
-  app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const docType = req.body.type || 'PHOTO';
-
-    let profile = await storage.getDriverProfile(req.session.userId);
-    if (!profile) {
-      await storage.updateUserRole(req.session.userId, "DRIVER");
-      profile = await storage.createDriverProfile({
-        userId: req.session.userId,
-        vehicleType: req.body.vehicleType || "TAXI",
-        status: "PENDING",
-        vehicleNumber: req.body.vehicleNumber || "",
-        licenseNumber: req.body.licenseNumber || ""
-      });
-    }
-
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
-    const doc = await storage.createDriverDocument({
-      driverId: profile.id,
-      type: docType,
-      url: fileUrl,
-    });
-
-    res.status(201).json(doc);
-  });
-
-  // ==================== USER ROUTES ====================
-
-  app.post('/api/user/update', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const { name } = req.body;
-    const user = await storage.updateUser(req.session.userId, { name });
-    res.json(user);
-  });
-
-  // ==================== RATING ROUTES ====================
-
-  app.post(api.passenger.rateRide.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const id = parseInt(req.params.id);
-    try {
-      const input = api.passenger.rateRide.input.parse(req.body);
-      const ride = await storage.getRide(id);
-      if (!ride) return res.status(404).json({ message: "Ride not found" });
-      if (ride.passengerId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
-      if (ride.status !== "COMPLETED") return res.status(400).json({ message: "Ride not completed" });
-      if (!ride.driverId) return res.status(400).json({ message: "No driver assigned" });
-
-      await storage.rateDriver(ride.driverId, input.rating);
-
-      await storage.createNotification({
-        userId: ride.driverId,
-        title: "Nahazo note vaovao",
-        message: `Nahazo note ${input.rating}/5 ianao`,
-        type: "RATING",
-        rideId: id,
-      });
-
-      res.json({ message: "Rating submitted" });
-    } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
-    }
-  });
-
-  // ==================== NOTIFICATION ROUTES ====================
-
-  app.get('/api/notifications', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const notifs = await storage.getNotifications(req.session.userId);
-    res.json(notifs);
-  });
-
-  app.get('/api/notifications/unread-count', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const count = await storage.getUnreadCount(req.session.userId);
-    res.json({ count });
-  });
-
-  app.post('/api/notifications/:id/read', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    await storage.markAsRead(parseInt(req.params.id), req.session.userId);
-    res.json({ message: "ok" });
-  });
-
-  app.post('/api/notifications/read-all', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    await storage.markAllAsRead(req.session.userId);
-    res.json({ message: "ok" });
-  });
-
-  // ==================== PLACES ROUTES ====================
-
-  app.get('/api/places', async (_req, res) => {
-    const places = await storage.getCustomPlaces();
-    res.json(places);
-  });
-
-  app.get('/api/admin/places', async (req, res) => {
-    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const places = await storage.getCustomPlaces();
-    res.json(places);
-  });
-
-  app.post('/api/admin/places', async (req, res) => {
-    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const { name, nameFr, lat, lng } = req.body;
-    if (!name || !nameFr || !lat || !lng) return res.status(400).json({ message: "Missing fields" });
-    const place = await storage.createCustomPlace({ name, nameFr, lat: String(lat), lng: String(lng) });
-    res.status(201).json(place);
-  });
-
-  app.put('/api/admin/places/:id', async (req, res) => {
-    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const id = parseInt(req.params.id);
-    const { name, nameFr, lat, lng } = req.body;
-    if (!name || !nameFr || !lat || !lng) return res.status(400).json({ message: "Missing fields" });
-    const place = await storage.updateCustomPlace(id, { name, nameFr, lat: String(lat), lng: String(lng) });
-    res.json(place);
-  });
-
-  app.delete('/api/admin/places/:id', async (req, res) => {
-    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
-    const id = parseInt(req.params.id);
-    await storage.deleteCustomPlace(id);
-    res.json({ message: "Deleted" });
   });
 
   // ==================== ADVERTISEMENT ROUTES ====================
@@ -1017,14 +905,14 @@ export async function registerRoutes(
 
   // POST - Créer une publicité (admin)
   app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Creating ad - body:', req.body);
+    console.log('📢 Creating ad - file:', req.file);
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
-      console.log('📢 Creating ad with body:', req.body);
-      console.log('📢 File:', req.file);
-      
       const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
       
       // Validation
@@ -1063,7 +951,10 @@ export async function registerRoutes(
   });
 
   // PUT - Mettre à jour une publicité (admin)
-  app.put('/api/admin/ads/:id', upload.single('image'), async (req, res) => {
+  app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Updating ad - body:', req.body);
+    console.log('📢 Updating ad - file:', req.file);
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
@@ -1072,6 +963,11 @@ export async function registerRoutes(
     
     try {
       const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
+      
+      // Validation
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
       
       const updateData: any = {
         title,
@@ -1098,10 +994,11 @@ export async function registerRoutes(
         .where(eq(advertisements.id, id))
         .returning();
       
+      console.log('✅ Ad updated:', updatedAd);
       res.json(updatedAd);
     } catch (error) {
       console.error('❌ Error updating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la mise à jour" });
+      res.status(500).json({ message: "Erreur lors de la mise à jour: " + (error as Error).message });
     }
   });
 
@@ -1198,12 +1095,82 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== NOTIFICATION ROUTES ====================
+
+  app.get('/api/notifications', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const notifs = await storage.getNotifications(req.session.userId);
+    res.json(notifs);
+  });
+
+  app.get('/api/notifications/unread-count', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const count = await storage.getUnreadCount(req.session.userId);
+    res.json({ count });
+  });
+
+  app.post('/api/notifications/:id/read', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    await storage.markAsRead(parseInt(req.params.id), req.session.userId);
+    res.json({ message: "ok" });
+  });
+
+  app.post('/api/notifications/read-all', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    await storage.markAllAsRead(req.session.userId);
+    res.json({ message: "ok" });
+  });
+
+  // ==================== USER ROUTES ====================
+
+  app.post('/api/user/update', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const { name } = req.body;
+    const user = await storage.updateUser(req.session.userId, { name });
+    res.json(user);
+  });
+
+  // ==================== PLACES ROUTES ====================
+
+  app.get('/api/places', async (_req, res) => {
+    const places = await storage.getCustomPlaces();
+    res.json(places);
+  });
+
+  app.get('/api/admin/places', async (req, res) => {
+    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
+    const places = await storage.getCustomPlaces();
+    res.json(places);
+  });
+
+  app.post('/api/admin/places', async (req, res) => {
+    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
+    const { name, nameFr, lat, lng } = req.body;
+    if (!name || !nameFr || !lat || !lng) return res.status(400).json({ message: "Missing fields" });
+    const place = await storage.createCustomPlace({ name, nameFr, lat: String(lat), lng: String(lng) });
+    res.status(201).json(place);
+  });
+
+  app.put('/api/admin/places/:id', async (req, res) => {
+    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id);
+    const { name, nameFr, lat, lng } = req.body;
+    if (!name || !nameFr || !lat || !lng) return res.status(400).json({ message: "Missing fields" });
+    const place = await storage.updateCustomPlace(id, { name, nameFr, lat: String(lat), lng: String(lng) });
+    res.json(place);
+  });
+
+  app.delete('/api/admin/places/:id', async (req, res) => {
+    if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id);
+    await storage.deleteCustomPlace(id);
+    res.json({ message: "Deleted" });
+  });
+
   // ==================== SEED DATABASE ====================
 
   async function seedDatabase() {
     try {
-      const existingConfig = await storage.getConfig();
-      
       const admin = await storage.getUserByPhone("0340000000");
       if (!admin) {
         await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });
