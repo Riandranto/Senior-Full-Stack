@@ -1,6 +1,4 @@
 import { Switch, Route, Redirect } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { I18nProvider } from "./lib/i18n";
@@ -49,7 +47,6 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 
 function Router() {
   const { user, isLoading } = useAuth();
-  console.log('🔄 Router - user:', user, 'isLoading:', isLoading);
 
   if (isLoading) {
     return (
@@ -128,23 +125,15 @@ function App() {
 
   // Gestion de l'affichage des publicités plein écran
   useEffect(() => {
-    // Ne pas afficher de pub si l'utilisateur n'est pas connecté ou si on est en train de charger
     if (!user || isLoading) return;
 
-    // Vérifier si une pub plein écran a déjà été montrée dans cette session
     const adShown = sessionStorage.getItem('fullscreen_ad_shown');
-    
-    // Vérifier si l'utilisateur a déjà vu une pub aujourd'hui
     const lastAdDate = localStorage.getItem('last_fullscreen_ad_date');
     const today = new Date().toDateString();
     
-    // Condition pour afficher la pub:
-    // - Pas de pub dans cette session
-    // - Pas de pub aujourd'hui (ou si on veut forcer l'affichage)
     const shouldShowAd = !adShown && lastAdDate !== today;
     
     if (shouldShowAd) {
-      // Délai différent selon le rôle (pour ne pas gêner l'expérience)
       const delay = user.role === 'DRIVER' ? 3000 : 2000;
       setAdDelay(delay);
       
@@ -163,19 +152,16 @@ function App() {
   };
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <I18nProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-          
-          {/* Publicité plein écran */}
-          {showFullscreenAd && !isLoading && user && (
-            <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
-          )}
-        </TooltipProvider>
-      </I18nProvider>
-    </QueryClientProvider>
+    <I18nProvider>
+      <TooltipProvider>
+        <Toaster />
+        <Router />
+        
+        {showFullscreenAd && !isLoading && user && (
+          <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
+        )}
+      </TooltipProvider>
+    </I18nProvider>
   );
 }
 
