@@ -27,16 +27,15 @@ const uploadStorage = multer.diskStorage({
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`),
 });
 
-// Upload général (documents) - 20MB
 const upload = multer({ 
   storage: uploadStorage, 
-  limits: { fileSize: 20 * 1024 * 1024 } 
+  limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
 // Configuration spécifique pour les publicités
 const adUpload = multer({
   storage: uploadStorage,
-  limits: { fileSize: 20 * 1024 * 1024 },  // 20MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -61,10 +60,8 @@ export async function registerRoutes(
 
   // ==================== MIDDLEWARES ====================
   
-  // Servir les fichiers uploadés statiquement
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-  // Middleware pour vérifier que la session est initialisée
   app.use((req, res, next) => {
     if (!req.session) {
       console.error('❌ Session not initialized for request:', req.path);
@@ -73,7 +70,6 @@ export async function registerRoutes(
     next();
   });
 
-  // Middleware pour vérifier l'authentification
   const requireAuth = (req: Request, res: Response, next: NextFunction) => {
     if (!req.session?.userId) {
       return res.status(401).json({ message: "Non authentifié" });
@@ -81,7 +77,6 @@ export async function registerRoutes(
     next();
   };
 
-  // Middleware pour vérifier le rôle admin
   const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
     if (!req.session?.userId || req.session?.role !== 'ADMIN') {
       return res.status(403).json({ message: "Accès refusé" });
@@ -102,7 +97,6 @@ export async function registerRoutes(
     }
   });
 
-  // Manage WS clients
   const clients = new Map<number, WebSocket>();
 
   wss.on('connection', (ws, req) => {
@@ -149,7 +143,6 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
-  // Route OTP
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
       console.log('📞 Backend - requestOtp called');
@@ -168,39 +161,56 @@ export async function registerRoutes(
     }
   });
 
-  // Route verify OTP
-  app.post(api.auth.requestOtp.path, async (req, res) => {
+  app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
-      console.log('📞 Backend - requestOtp called');
+      console.log('🔐 Backend - verifyOtp called');
       console.log('📦 Body:', req.body);
       
-      const input = api.auth.requestOtp.input.parse(req.body);
-      console.log(`✅ OTP for ${input.phone} is 123456`);
+      const input = api.auth.verifyOtp.input.parse(req.body);
       
-      res.json({ message: "OTP sent", success: true });
+      if (input.otp !== "123456") {
+        return res.status(401).json({ message: "Code invalide" });
+      }
+  
+      let user = await storage.getUserByPhone(input.phone);
+      if (!user) {
+        user = await storage.createUser({ 
+          phone: input.phone, 
+          name: "User " + input.phone.slice(-4), 
+          role: "PASSENGER", 
+          language: "mg" 
+        });
+      }
+  
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error('❌ Session save error:', err);
+            reject(err);
+          } else {
+            console.log('✅ Session saved successfully');
+            console.log('📦 Session ID:', req.session.id);
+            console.log('📦 Session user:', req.session.userId);
+            resolve();
+          }
+        });
+      });
+  
+      console.log('✅ User authenticated:', user.id, user.role);
+      res.json({ user, success: true });
+      
     } catch (e) {
-      console.error('❌ OTP request error:', e);
+      console.error('❌ Backend error:', e);
       if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: "Numéro de téléphone invalide" });
+        return res.status(400).json({ message: "Données invalides" });
       }
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
 
-  // Dans server/routes.ts, ajoute
-  app.get('/api/debug/cookies', (req, res) => {
-    console.log('🍪 Cookies received:', req.headers.cookie);
-    console.log('🍪 Session:', req.session);
-    
-    res.json({
-      cookies: req.headers.cookie,
-      sessionId: req.session?.id,
-      userId: req.session?.userId,
-      sessionExists: !!req.session,
-    });
-  });
-
-  // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 Backend - getMe called');
     
@@ -216,7 +226,6 @@ export async function registerRoutes(
     res.json(user);
   });
 
-  // Route logout
   app.post(api.auth.logout.path, (req, res) => {
     console.log('🚪 Backend - logout called');
     
@@ -235,6 +244,8 @@ export async function registerRoutes(
     console.log('🔍 Debug session:');
     console.log('Session ID:', req.session.id);
     console.log('Session data:', req.session);
+    console.log('User ID:', req.session.userId);
+    console.log('Role:', req.session.role);
     
     res.json({
       sessionId: req.session.id,
@@ -300,7 +311,6 @@ export async function registerRoutes(
 
   // ==================== ADVERTISEMENT ROUTES ====================
 
-  // GET - Récupérer toutes les publicités actives (pour les utilisateurs)
   app.get('/api/ads', async (req, res) => {
     try {
       const { screen, userRole } = req.query;
@@ -309,12 +319,10 @@ export async function registerRoutes(
         .where(eq(advertisements.isActive, true))
         .orderBy(sql`${advertisements.priority} DESC`);
       
-      // Filtrer par écran
       if (screen && typeof screen === 'string') {
         query = query.where(eq(advertisements.position, screen));
       }
       
-      // Filtrer par date
       const now = new Date();
       query = query.where(
         or(
@@ -329,7 +337,6 @@ export async function registerRoutes(
         )
       );
       
-      // Filtrer par audience
       if (userRole && typeof userRole === 'string') {
         query = query.where(
           or(
@@ -341,7 +348,6 @@ export async function registerRoutes(
       
       const ads = await query;
       
-      // Enregistrer les impressions en arrière-plan
       if (req.session.userId && ads.length > 0) {
         for (const ad of ads) {
           await db.insert(adStats).values({
@@ -360,7 +366,6 @@ export async function registerRoutes(
     }
   });
 
-  // GET - Récupérer toutes les publicités (admin)
   app.get('/api/admin/ads', async (req, res) => {
     console.log('📢 Admin getAds called');
     
@@ -377,7 +382,6 @@ export async function registerRoutes(
     }
   });
 
-  // GET - Récupérer une publicité spécifique (admin)
   app.get('/api/admin/ads/:id', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -395,7 +399,6 @@ export async function registerRoutes(
     }
   });
 
-  // POST - Créer une publicité (admin)
   app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
     console.log('📢 Creating ad - body:', req.body);
     console.log('📢 Creating ad - file:', req.file);
@@ -407,7 +410,6 @@ export async function registerRoutes(
     try {
       const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
       
-      // Validation
       if (!title || !titleFr) {
         return res.status(400).json({ message: "Les titres sont requis" });
       }
@@ -438,11 +440,10 @@ export async function registerRoutes(
       res.status(201).json(newAd);
     } catch (error) {
       console.error('❌ Error creating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la création: " + (error as Error).message });
+      res.status(500).json({ message: "Erreur lors de la création" });
     }
   });
 
-  // PUT - Mettre à jour une publicité (admin)
   app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
     console.log('📢 Updating ad - body:', req.body);
     console.log('📢 Updating ad - file:', req.file);
@@ -456,7 +457,6 @@ export async function registerRoutes(
     try {
       const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
       
-      // Validation
       if (!title || !titleFr) {
         return res.status(400).json({ message: "Les titres sont requis" });
       }
@@ -490,11 +490,10 @@ export async function registerRoutes(
       res.json(updatedAd);
     } catch (error) {
       console.error('❌ Error updating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la mise à jour: " + (error as Error).message });
+      res.status(500).json({ message: "Erreur lors de la mise à jour" });
     }
   });
 
-  // DELETE - Supprimer une publicité (admin)
   app.delete('/api/admin/ads/:id', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -511,12 +510,10 @@ export async function registerRoutes(
     }
   });
 
-  // POST - Enregistrer un clic sur une publicité
   app.post('/api/ads/:id/click', async (req, res) => {
     const id = parseInt(req.params.id);
     
     try {
-      // Enregistrer le clic
       if (req.session.userId) {
         await db.insert(adStats).values({
           adId: id,
@@ -526,14 +523,11 @@ export async function registerRoutes(
         });
       }
       
-      // Incrémenter le compteur de clics
       await db.update(advertisements)
         .set({ clickCount: sql`${advertisements.clickCount} + 1` })
         .where(eq(advertisements.id, id));
       
-      // Récupérer l'URL de redirection
       const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-      
       res.json({ linkUrl: ad?.linkUrl });
     } catch (error) {
       console.error('❌ Error recording ad click:', error);
@@ -541,7 +535,6 @@ export async function registerRoutes(
     }
   });
 
-  // GET - Statistiques des publicités (admin)
   app.get('/api/admin/ads/:id/stats', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -564,58 +557,15 @@ export async function registerRoutes(
           eq(adStats.action, 'CLICK')
         ));
       
-      const impressionsByScreen = await db.select({
-        screen: adStats.screen,
-        count: sql<number>`count(*)`
-      })
-      .from(adStats)
-      .where(and(
-        eq(adStats.adId, id),
-        eq(adStats.action, 'IMPRESSION')
-      ))
-      .groupBy(adStats.screen);
-      
       res.json({
         impressions: Number(impressions[0]?.count || 0),
         clicks: Number(clicks[0]?.count || 0),
         ctr: Number(clicks[0]?.count || 0) / Number(impressions[0]?.count || 1) * 100,
-        impressionsByScreen,
       });
     } catch (error) {
       console.error('❌ Error getting ad stats:', error);
       res.status(500).json({ message: "Erreur" });
     }
-  });
-
-  // ==================== JSON MIDDLEWARE ====================
-  
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-
-  // Middleware de logging des requêtes
-  app.use((req, res, next) => {
-    const start = Date.now();
-    const path = req.path;
-    let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-    const originalResJson = res.json;
-    res.json = function (bodyJson, ...args) {
-      capturedJsonResponse = bodyJson;
-      return originalResJson.apply(res, [bodyJson, ...args]);
-    };
-
-    res.on("finish", () => {
-      const duration = Date.now() - start;
-      if (path.startsWith("/api")) {
-        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-        if (capturedJsonResponse) {
-          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-        }
-        console.log(logLine);
-      }
-    });
-
-    next();
   });
 
   // ==================== PASSENGER ROUTES ====================
@@ -1222,8 +1172,6 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   async function seedDatabase() {
     try {
-      const existingConfig = await storage.getConfig();
-      
       const admin = await storage.getUserByPhone("0340000000");
       if (!admin) {
         await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });

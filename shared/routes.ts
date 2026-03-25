@@ -26,38 +26,23 @@ const documentSchema = z.custom<typeof driverDocuments.$inferSelect>();
 
 export const api = {
   auth: {
-    me: {
-      method: 'GET' as const,
-      path: '/api/auth/me' as const,
-      responses: {
-        200: userSchema,
-        401: errorSchemas.unauthorized,
-      }
-    },
     requestOtp: {
-      method: 'POST' as const,
-      path: '/api/auth/request-otp' as const,
-      input: z.object({ phone: z.string() }),
-      responses: {
-        200: z.object({ message: z.string() }),
-        400: errorSchemas.validation,
-      }
+      path: '/api/auth/request-otp',
+      method: 'POST',
+      input: z.object({ phone: z.string() })
     },
     verifyOtp: {
-      method: 'POST' as const,
-      path: '/api/auth/verify-otp' as const,
-      input: z.object({ phone: z.string(), otp: z.string() }),
-      responses: {
-        200: z.object({ user: userSchema }),
-        401: errorSchemas.unauthorized,
-      }
+      path: '/api/auth/verify-otp',
+      method: 'POST',
+      input: z.object({ phone: z.string(), otp: z.string() })
+    },
+    me: {
+      path: '/api/auth/me',
+      method: 'GET'
     },
     logout: {
-      method: 'POST' as const,
-      path: '/api/auth/logout' as const,
-      responses: {
-        200: z.object({ message: z.string() }),
-      }
+      path: '/api/auth/logout',
+      method: 'POST'
     }
   },
   passenger: {
