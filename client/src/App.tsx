@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { I18nProvider } from "./lib/i18n";
 import { useAuth } from "./hooks/use-auth";
+import { useState, useEffect } from "react";
 
 // Pages
 import AuthPage from "./pages/Auth";
@@ -16,6 +17,9 @@ import Settings from "./pages/Settings";
 import DriverHome from "./pages/driver/Home";
 import AdminDashboard from "./pages/admin/Dashboard";
 import Help from "./pages/Help";
+
+// Composants publicitaires
+import { FullscreenAd } from "@/components/FullscreenAd";
 
 function ProtectedRoute({ component: Component, allowedRoles }: { component: any, allowedRoles: string[] }) {
   const { user, isLoading } = useAuth();
@@ -118,12 +122,57 @@ function Router() {
 }
 
 function App() {
+  const [showFullscreenAd, setShowFullscreenAd] = useState(false);
+  const [adDelay, setAdDelay] = useState(2000);
+  const { user, isLoading } = useAuth();
+
+  // Gestion de l'affichage des publicités plein écran
+  useEffect(() => {
+    // Ne pas afficher de pub si l'utilisateur n'est pas connecté ou si on est en train de charger
+    if (!user || isLoading) return;
+
+    // Vérifier si une pub plein écran a déjà été montrée dans cette session
+    const adShown = sessionStorage.getItem('fullscreen_ad_shown');
+    
+    // Vérifier si l'utilisateur a déjà vu une pub aujourd'hui
+    const lastAdDate = localStorage.getItem('last_fullscreen_ad_date');
+    const today = new Date().toDateString();
+    
+    // Condition pour afficher la pub:
+    // - Pas de pub dans cette session
+    // - Pas de pub aujourd'hui (ou si on veut forcer l'affichage)
+    const shouldShowAd = !adShown && lastAdDate !== today;
+    
+    if (shouldShowAd) {
+      // Délai différent selon le rôle (pour ne pas gêner l'expérience)
+      const delay = user.role === 'DRIVER' ? 3000 : 2000;
+      setAdDelay(delay);
+      
+      const timer = setTimeout(() => {
+        setShowFullscreenAd(true);
+        sessionStorage.setItem('fullscreen_ad_shown', 'true');
+        localStorage.setItem('last_fullscreen_ad_date', today);
+      }, delay);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [user, isLoading]);
+
+  const handleCloseFullscreenAd = () => {
+    setShowFullscreenAd(false);
+  };
+
   return (
     <QueryClientProvider client={queryClient}>
       <I18nProvider>
         <TooltipProvider>
           <Toaster />
           <Router />
+          
+          {/* Publicité plein écran */}
+          {showFullscreenAd && !isLoading && user && (
+            <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
+          )}
         </TooltipProvider>
       </I18nProvider>
     </QueryClientProvider>

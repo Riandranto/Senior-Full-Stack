@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import AdminAds from './Ads';
 
 function formatDate(d: string | null) {
   if (!d) return '—';
@@ -1054,6 +1055,9 @@ export default function AdminDashboard() {
               <TabsTrigger value="locations" className="rounded-lg text-xs md:text-sm" data-testid="tab-locations">
                 <MapPin className="w-4 h-4 mr-1.5" /> Lieux
               </TabsTrigger>
+              <TabsTrigger value="ads" className="rounded-lg text-xs md:text-sm" data-testid="tab-ads">
+                <Image className="w-4 h-4 mr-1.5" /> Publicités
+              </TabsTrigger>
               <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
                 <Settings className="w-4 h-4 mr-1.5" /> Paramètres
               </TabsTrigger>
@@ -1494,6 +1498,11 @@ export default function AdminDashboard() {
           <TabsContent value="settings" className="space-y-6 mt-0">
             <h2 className="text-xl font-bold font-display">Configuration de la plateforme</h2>
             {config && <ConfigForm config={config} onSave={(data: any) => updateConfig.mutate(data)} isPending={updateConfig.isPending} />}
+          </TabsContent>
+
+          {/* ======= ADS TAB =========*/}
+          <TabsContent value="ads" className="space-y-4 mt-0">
+            <AdminAds />
           </TabsContent>
         </Tabs>
       </div>

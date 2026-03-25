@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AdBanner } from '@/components/AdBanner';
 
 export default function PassengerRide() {
   const [, params] = useRoute('/passenger/ride/:id');
@@ -147,6 +148,12 @@ export default function PassengerRide() {
 
   return (
     <MobileLayout role="passenger">
+      {/* Publicité dans l'écran de course */}
+      {isActive && (
+        <div className="absolute bottom-[calc(100%-180px)] left-0 right-0 z-20 px-3">
+          <AdBanner position="RIDE_SCREEN" />
+        </div>
+      )}
       <div className="absolute inset-0 z-0 pt-14">
         <MapView 
           center={pickupCoords}

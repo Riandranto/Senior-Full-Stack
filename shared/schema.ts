@@ -136,6 +136,44 @@ export const appConfig = pgTable("app_config", {
   commissionPercent: numeric("commission_percent", { precision: 5, scale: 2 }).notNull().default("0.0"),
 });
 
+// Table pour les publicités
+export const advertisements = pgTable("advertisements", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  titleFr: text("title_fr").notNull(),
+  description: text("description"),
+  descriptionFr: text("description_fr"),
+  imageUrl: text("image_url").notNull(),
+  linkUrl: text("link_url"),
+  type: text("type").notNull().default("BANNER"), // BANNER, FULLSCREEN, SPLASH
+  position: text("position").default("HOME_TOP"), // HOME_TOP, HOME_BOTTOM, RIDE_SCREEN, PROFILE
+  priority: integer("priority").default(0), // Plus haut = affiché en premier
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  isActive: boolean("is_active").default(true),
+  impressionCount: integer("impression_count").default(0),
+  clickCount: integer("click_count").default(0),
+  targetAudience: text("target_audience"), // ALL, PASSENGER, DRIVER
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Table pour les statistiques d'affichage
+export const adStats = pgTable("ad_stats", {
+  id: serial("id").primaryKey(),
+  adId: integer("ad_id").references(() => advertisements.id, { onDelete: "cascade" }).notNull(),
+  userId: integer("user_id").references(() => users.id),
+  action: text("action").notNull(), // IMPRESSION, CLICK
+  screen: text("screen"), // HOME, RIDE, PROFILE
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Types TypeScript
+export type Advertisement = typeof advertisements.$inferSelect;
+export type InsertAdvertisement = typeof advertisements.$inferInsert;
+export type AdStat = typeof adStats.$inferSelect;
+export type InsertAdStat = typeof adStats.$inferInsert;
+
 // Zod schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertDriverProfileSchema = createInsertSchema(driverProfiles).omit({ id: true });

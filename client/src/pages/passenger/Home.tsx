@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AdBanner } from '@/components/AdBanner';
 
 interface NominatimResult {
   place_id: number;
@@ -432,6 +433,11 @@ export default function PassengerHome() {
   return (
     <MobileLayout role="passenger">
       <RefreshIndicator isRefreshing={isRefreshing} />
+
+      {/* Publicité en haut */}
+      <div className="absolute top-16 left-0 right-0 z-20 px-3">
+        <AdBanner position="HOME_TOP" />
+      </div>
       
       <div className="absolute inset-0 z-0 pt-14">
         <MapView 
