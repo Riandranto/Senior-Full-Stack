@@ -92,13 +92,14 @@ function getLocalIP(): string {
 
 app.use(
   express.json({
+    limit: '20mb',  // Augmenter la limite
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
 // Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
 const allowedOrigins = [

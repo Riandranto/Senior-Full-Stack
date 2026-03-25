@@ -27,15 +27,16 @@ const uploadStorage = multer.diskStorage({
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`),
 });
 
+// Upload général (documents) - 20MB
 const upload = multer({ 
   storage: uploadStorage, 
-  limits: { fileSize: 10 * 1024 * 1024 } 
+  limits: { fileSize: 20 * 1024 * 1024 } 
 });
 
 // Configuration spécifique pour les publicités
 const adUpload = multer({
   storage: uploadStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 },  // 20MB
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -605,8 +606,8 @@ export async function registerRoutes(
 
   // ==================== JSON MIDDLEWARE ====================
   
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
   // Middleware de logging des requêtes
   app.use((req, res, next) => {

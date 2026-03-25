@@ -117,9 +117,9 @@ function AdForm({ ad, onClose, onSubmit, isSubmitting }: { ad?: Ad; onClose: () 
         setErrors({ ...errors, image: 'Seules les images sont acceptées' });
         return;
       }
-      // Vérifier la taille (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        setErrors({ ...errors, image: 'Image trop grande (max 5MB)' });
+      // Augmenter la limite à 10MB
+      if (file.size > 10 * 1024 * 1024) {
+        setErrors({ ...errors, image: 'Image trop grande (max 10MB)' });
         return;
       }
       
