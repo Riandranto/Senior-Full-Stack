@@ -207,14 +207,12 @@ export async function registerRoutes(
         });
       });
       
-      // FORCER l'envoi du cookie
+      // FORCER l'envoi du cookie avec les bons paramètres
+      const isProduction = process.env.NODE_ENV === 'production';
       res.setHeader('Set-Cookie', [
-        `farady.sid=${req.session.id}; Path=/; HttpOnly; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=None;' : ''} Max-Age=2592000`
+        `farady.sid=${req.session.id}; Path=/; HttpOnly; ${isProduction ? 'Secure; SameSite=None;' : ''} Max-Age=2592000`
       ]);
       
-      res.json({ user, success: true });
-
-  
       console.log('✅ User authenticated:', user.id, user.role);
       res.json({ user, success: true });
       

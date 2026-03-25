@@ -11,6 +11,7 @@ const getBaseUrl = () => {
   return 'http://localhost:5000';
 };
 
+// api.ts
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 
   (import.meta.env.MODE === 'production' 
     ? window.location.origin 
@@ -20,6 +21,7 @@ console.log('🌐 API_BASE_URL:', API_BASE_URL);
 console.log('📦 import.meta.env.PROD:', import.meta.env.PROD);
 console.log('📦 import.meta.env.MODE:', import.meta.env.MODE);
 
+// Fonction fetch unifiée
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   const url = endpoint.startsWith('http') 
     ? endpoint 
@@ -28,7 +30,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   console.log('🌐 Fetching:', url);
   
   const defaultOptions: RequestInit = {
-    credentials: 'include', // IMPORTANT: inclure les cookies
+    credentials: 'include', // TOUJOURS inclure les cookies
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -44,10 +46,10 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
     
     console.log(`📡 Response: ${response.status} ${response.statusText}`);
     
-    // Vérifier si un cookie Set-Cookie est présent
+    // Vérifier les cookies dans la réponse
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) {
-      console.log('🍪 Set-Cookie header present');
+      console.log('🍪 Set-Cookie received');
     }
     
     return response;
@@ -57,7 +59,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   }
 }
 
-// Pour les formulaires (multipart/form-data)
+// Pour les formulaires
 export async function apiFetchFormData(endpoint: string, formData: FormData) {
   const url = endpoint.startsWith('http') 
     ? endpoint 
@@ -68,7 +70,7 @@ export async function apiFetchFormData(endpoint: string, formData: FormData) {
   const response = await fetch(url, {
     method: 'POST',
     body: formData,
-    credentials: 'include',
+    credentials: 'include', // TOUJOURS inclure les cookies
   });
   
   return response;

@@ -13,7 +13,6 @@ let initializeRedis: () => Promise<boolean> = async () => false;
 let redisStore: any = null;
 let redisAvailable = false;
 
-// Essayer d'importer Redis, mais ignorer si erreur
 try {
   const redisModule = await import("./lib/redis.js");
   initializeRedis = redisModule.initializeRedis || (async () => false);
@@ -37,7 +36,6 @@ declare module "http" {
   }
 }
 
-// Extension du type Session
 declare module "express-session" {
   interface SessionData {
     userId: number;
@@ -92,7 +90,7 @@ function getLocalIP(): string {
 
 app.use(
   express.json({
-    limit: '20mb',  // Augmenter la limite
+    limit: '20mb',
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -101,8 +99,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
-// Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
-// Configuration CORS
+// Configuration CORS - CORRIGÉE
 const allowedOrigins = [
   'https://ride-mada-mg.up.railway.app',
   'capacitor://localhost',
@@ -128,12 +125,12 @@ app.use(cors({
       callback(null, false);
     }
   },
-  credentials: true, // IMPORTANT: permet l'envoi des cookies
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
 }));
 
-// Middleware de logging des requêtes (AVANT LES ROUTES)
+// Middleware de logging des requêtes
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -173,7 +170,6 @@ app.use((req, res, next) => {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Fonction pour initialiser le store de session
 async function getSessionStore() {
   let store;
   
@@ -204,16 +200,12 @@ async function getSessionStore() {
   return store;
 }
 
-// Configuration de la session - DOIT ÊTRE AVANT LES ROUTES
 let sessionConfigured = false;
 
 async function setupSession() {
   const sessionStore = await getSessionStore();
   
-  const isProduction = process.env.NODE_ENV === 'production';
-  const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || process.env.RAILWAY_SERVICE_NAME;
-  
-  // Configuration pour Railway
+  // Configuration CORRECTE pour Railway
   const sessionConfig = {
     store: sessionStore,
     secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
@@ -223,13 +215,13 @@ async function setupSession() {
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
       httpOnly: true,
-      secure: true, // Toujours true en production
-      sameSite: 'none' as const, // Important pour cross-origin
-      domain: undefined, // Ne pas définir de domaine pour Railway
+      secure: true, // Toujours true en production (HTTPS)
+      sameSite: 'none' as const, // CRUCIAL pour cross-origin
+      domain: undefined, // Ne pas définir de domaine
       path: '/',
     },
     rolling: true,
-    proxy: true, // Toujours true en production derrière un proxy
+    proxy: true, // CRUCIAL derrière Railway
   };
   
   console.log('📦 Session config:', {
@@ -238,7 +230,7 @@ async function setupSession() {
     sameSite: sessionConfig.cookie.sameSite,
     proxy: sessionConfig.proxy,
     env: process.env.NODE_ENV,
-    railway: isRailway
+    railway: !!process.env.RAILWAY_ENVIRONMENT
   });
   
   app.use(session(sessionConfig));
@@ -246,14 +238,9 @@ async function setupSession() {
   console.log('✅ Session middleware configured');
 }
 
-// ========== ENDPOINTS DE DEBUG (AVANT LES ROUTES API) ==========
+// ========== ENDPOINTS DE DEBUG ==========
 
-// Endpoint de test amélioré
 app.get('/api/test', (req, res) => {
-  console.log('🔧 Test endpoint called');
-  console.log('📦 Session ID:', req.session?.id);
-  console.log('📦 Session data:', req.session);
-  
   res.json({ 
     message: 'Backend is working!',
     time: new Date().toISOString(),
@@ -274,21 +261,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Middleware de debug des sessions (AVANT LES ROUTES)
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    console.log('📦 Session Debug:', {
-      path: req.path,
-      sessionID: req.sessionID,
-      hasSession: !!req.session,
-      userId: req.session?.userId,
-      role: req.session?.role,
-    });
-  }
-  next();
-});
-
-// Endpoint de debug pour la session
 app.get('/api/debug/session-state', (req, res) => {
   res.json({
     sessionID: req.sessionID,
@@ -304,32 +276,15 @@ app.get('/api/debug/session-state', (req, res) => {
   });
 });
 
-// Endpoint pour voir les chemins (debug)
-app.get('/api/debug/paths', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  
-  const currentDir = process.cwd();
-  const distPublic = path.join(currentDir, 'dist', 'public');
-  
-  let files = {};
-  if (fs.existsSync(distPublic)) {
-    files = fs.readdirSync(distPublic).reduce((acc, file) => {
-      if (file === 'assets') {
-        acc[file] = fs.readdirSync(path.join(distPublic, file));
-      } else {
-        acc[file] = true;
-      }
-      return acc;
-    }, {});
-  }
+app.get('/api/debug/cookies', (req, res) => {
+  console.log('🍪 Cookies received:', req.headers.cookie);
+  console.log('🍪 Session:', req.session);
   
   res.json({
-    currentDirectory: currentDir,
-    distPublicExists: fs.existsSync(distPublic),
-    distPublicContent: files,
-    env: process.env.NODE_ENV,
-    sessionStore: redisAvailable ? 'Redis' : 'MemoryStore'
+    cookies: req.headers.cookie,
+    sessionId: req.session?.id,
+    userId: req.session?.userId,
+    sessionExists: !!req.session,
   });
 });
 
@@ -340,7 +295,7 @@ app.get('/api/debug/paths', (req, res) => {
     // 1. Configurer les sessions
     await setupSession();
     
-    // 2. Enregistrer les routes (qui utilisent maintenant la session)
+    // 2. Enregistrer les routes
     await registerRoutes(httpServer, app);
     console.log('✅ Routes registered');
 
