@@ -12,10 +12,18 @@ import { eq, and, or, sql } from "drizzle-orm";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import express from "express";
+import path from "path";
+import fs from "fs";
 
 // Configuration multer pour l'upload des fichiers
 const uploadStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, 'uploads/'),
+  destination: (_req, _file, cb) => {
+    const uploadDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`),
 });
 
@@ -24,7 +32,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// Configuration spécifique pour les publicités (5MB max, seulement images)
+// Configuration spécifique pour les publicités
 const adUpload = multer({
   storage: uploadStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -38,7 +46,6 @@ const adUpload = multer({
   }
 });
 
-// Extend session to store userId
 declare module "express-session" {
   interface SessionData {
     userId: number;
@@ -50,6 +57,11 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // ==================== MIDDLEWARES ====================
+  
+  // Servir les fichiers uploadés statiquement
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Middleware pour vérifier que la session est initialisée
   app.use((req, res, next) => {
@@ -76,7 +88,8 @@ export async function registerRoutes(
     next();
   };
 
-  app.use('/uploads', express.static('uploads'));
+  // ==================== WEBSOCKET ====================
+  
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (request, socket, head) => {
@@ -135,6 +148,7 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
+  // Route OTP
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
       console.log('📞 Backend - requestOtp called');
@@ -153,6 +167,7 @@ export async function registerRoutes(
     }
   });
 
+  // Route verify OTP
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
       console.log('🔐 Backend - verifyOtp called');
@@ -190,7 +205,6 @@ export async function registerRoutes(
       });
   
       console.log('✅ User authenticated:', user.id, user.role);
-      
       res.json({ user, success: true });
       
     } catch (e) {
@@ -202,6 +216,7 @@ export async function registerRoutes(
     }
   });
 
+  // Route GET /me
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 Backend - getMe called');
     
@@ -217,6 +232,7 @@ export async function registerRoutes(
     res.json(user);
   });
 
+  // Route logout
   app.post(api.auth.logout.path, (req, res) => {
     console.log('🚪 Backend - logout called');
     
@@ -232,6 +248,10 @@ export async function registerRoutes(
   // ==================== DEBUG ROUTES ====================
   
   app.get('/api/debug/session', (req, res) => {
+    console.log('🔍 Debug session:');
+    console.log('Session ID:', req.session.id);
+    console.log('Session data:', req.session);
+    
     res.json({
       sessionId: req.session.id,
       userId: req.session.userId,
@@ -254,9 +274,6 @@ export async function registerRoutes(
   });
 
   app.get('/api/debug/paths', (req, res) => {
-    const fs = require('fs');
-    const path = require('path');
-    
     const currentDir = process.cwd();
     const distPublic = path.join(currentDir, 'dist', 'public');
     
@@ -295,6 +312,326 @@ export async function registerRoutes(
       userId: req.session?.userId,
       environment: process.env.NODE_ENV,
     });
+  });
+
+  // ==================== ADVERTISEMENT ROUTES ====================
+
+  // GET - Récupérer toutes les publicités actives (pour les utilisateurs)
+  app.get('/api/ads', async (req, res) => {
+    try {
+      const { screen, userRole } = req.query;
+      
+      let query = db.select().from(advertisements)
+        .where(eq(advertisements.isActive, true))
+        .orderBy(sql`${advertisements.priority} DESC`);
+      
+      // Filtrer par écran
+      if (screen && typeof screen === 'string') {
+        query = query.where(eq(advertisements.position, screen));
+      }
+      
+      // Filtrer par date
+      const now = new Date();
+      query = query.where(
+        or(
+          sql`${advertisements.startDate} IS NULL`,
+          sql`${advertisements.startDate} <= ${now}`
+        )
+      );
+      query = query.where(
+        or(
+          sql`${advertisements.endDate} IS NULL`,
+          sql`${advertisements.endDate} >= ${now}`
+        )
+      );
+      
+      // Filtrer par audience
+      if (userRole && typeof userRole === 'string') {
+        query = query.where(
+          or(
+            eq(advertisements.targetAudience, 'ALL'),
+            eq(advertisements.targetAudience, userRole)
+          )
+        );
+      }
+      
+      const ads = await query;
+      
+      // Enregistrer les impressions en arrière-plan
+      if (req.session.userId && ads.length > 0) {
+        for (const ad of ads) {
+          await db.insert(adStats).values({
+            adId: ad.id,
+            userId: req.session.userId,
+            action: 'IMPRESSION',
+            screen: screen as string || 'UNKNOWN',
+          });
+        }
+      }
+      
+      res.json(ads);
+    } catch (error) {
+      console.error('❌ Error fetching ads:', error);
+      res.status(500).json({ message: "Erreur lors du chargement des publicités" });
+    }
+  });
+
+  // GET - Récupérer toutes les publicités (admin)
+  app.get('/api/admin/ads', async (req, res) => {
+    console.log('📢 Admin getAds called');
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
+      res.json(ads);
+    } catch (error) {
+      console.error('❌ Error getting ads:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  // GET - Récupérer une publicité spécifique (admin)
+  app.get('/api/admin/ads/:id', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const id = parseInt(req.params.id);
+    try {
+      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
+      if (!ad) {
+        return res.status(404).json({ message: "Publicité non trouvée" });
+      }
+      res.json(ad);
+    } catch (error) {
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  // POST - Créer une publicité (admin)
+  app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Creating ad - body:', req.body);
+    console.log('📢 Creating ad - file:', req.file);
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
+      
+      // Validation
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "L'image est requise" });
+      }
+      
+      const imageUrl = `/uploads/${req.file.filename}`;
+      
+      const [newAd] = await db.insert(advertisements).values({
+        title,
+        titleFr,
+        description: description || null,
+        descriptionFr: descriptionFr || null,
+        imageUrl,
+        linkUrl: linkUrl || null,
+        type: type || 'BANNER',
+        position: position || 'HOME_TOP',
+        priority: parseInt(priority) || 0,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        isActive: true,
+        targetAudience: targetAudience || 'ALL',
+      }).returning();
+      
+      console.log('✅ Ad created:', newAd);
+      res.status(201).json(newAd);
+    } catch (error) {
+      console.error('❌ Error creating ad:', error);
+      res.status(500).json({ message: "Erreur lors de la création: " + (error as Error).message });
+    }
+  });
+
+  // PUT - Mettre à jour une publicité (admin)
+  app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Updating ad - body:', req.body);
+    console.log('📢 Updating ad - file:', req.file);
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const id = parseInt(req.params.id);
+    
+    try {
+      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
+      
+      // Validation
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
+      
+      const updateData: any = {
+        title,
+        titleFr,
+        description: description || null,
+        descriptionFr: descriptionFr || null,
+        linkUrl: linkUrl || null,
+        type: type || 'BANNER',
+        position: position || 'HOME_TOP',
+        priority: parseInt(priority) || 0,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        isActive: isActive === 'true' || isActive === true,
+        targetAudience: targetAudience || 'ALL',
+        updatedAt: new Date(),
+      };
+      
+      if (req.file) {
+        updateData.imageUrl = `/uploads/${req.file.filename}`;
+      }
+      
+      const [updatedAd] = await db.update(advertisements)
+        .set(updateData)
+        .where(eq(advertisements.id, id))
+        .returning();
+      
+      console.log('✅ Ad updated:', updatedAd);
+      res.json(updatedAd);
+    } catch (error) {
+      console.error('❌ Error updating ad:', error);
+      res.status(500).json({ message: "Erreur lors de la mise à jour: " + (error as Error).message });
+    }
+  });
+
+  // DELETE - Supprimer une publicité (admin)
+  app.delete('/api/admin/ads/:id', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const id = parseInt(req.params.id);
+    
+    try {
+      await db.delete(advertisements).where(eq(advertisements.id, id));
+      res.json({ message: "Publicité supprimée" });
+    } catch (error) {
+      console.error('❌ Error deleting ad:', error);
+      res.status(500).json({ message: "Erreur lors de la suppression" });
+    }
+  });
+
+  // POST - Enregistrer un clic sur une publicité
+  app.post('/api/ads/:id/click', async (req, res) => {
+    const id = parseInt(req.params.id);
+    
+    try {
+      // Enregistrer le clic
+      if (req.session.userId) {
+        await db.insert(adStats).values({
+          adId: id,
+          userId: req.session.userId,
+          action: 'CLICK',
+          screen: req.body.screen || 'UNKNOWN',
+        });
+      }
+      
+      // Incrémenter le compteur de clics
+      await db.update(advertisements)
+        .set({ clickCount: sql`${advertisements.clickCount} + 1` })
+        .where(eq(advertisements.id, id));
+      
+      // Récupérer l'URL de redirection
+      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
+      
+      res.json({ linkUrl: ad?.linkUrl });
+    } catch (error) {
+      console.error('❌ Error recording ad click:', error);
+      res.status(500).json({ message: "Erreur" });
+    }
+  });
+
+  // GET - Statistiques des publicités (admin)
+  app.get('/api/admin/ads/:id/stats', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const id = parseInt(req.params.id);
+    
+    try {
+      const impressions = await db.select({ count: sql<number>`count(*)` })
+        .from(adStats)
+        .where(and(
+          eq(adStats.adId, id),
+          eq(adStats.action, 'IMPRESSION')
+        ));
+      
+      const clicks = await db.select({ count: sql<number>`count(*)` })
+        .from(adStats)
+        .where(and(
+          eq(adStats.adId, id),
+          eq(adStats.action, 'CLICK')
+        ));
+      
+      const impressionsByScreen = await db.select({
+        screen: adStats.screen,
+        count: sql<number>`count(*)`
+      })
+      .from(adStats)
+      .where(and(
+        eq(adStats.adId, id),
+        eq(adStats.action, 'IMPRESSION')
+      ))
+      .groupBy(adStats.screen);
+      
+      res.json({
+        impressions: Number(impressions[0]?.count || 0),
+        clicks: Number(clicks[0]?.count || 0),
+        ctr: Number(clicks[0]?.count || 0) / Number(impressions[0]?.count || 1) * 100,
+        impressionsByScreen,
+      });
+    } catch (error) {
+      console.error('❌ Error getting ad stats:', error);
+      res.status(500).json({ message: "Erreur" });
+    }
+  });
+
+  // ==================== JSON MIDDLEWARE ====================
+  
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+  // Middleware de logging des requêtes
+  app.use((req, res, next) => {
+    const start = Date.now();
+    const path = req.path;
+    let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+    const originalResJson = res.json;
+    res.json = function (bodyJson, ...args) {
+      capturedJsonResponse = bodyJson;
+      return originalResJson.apply(res, [bodyJson, ...args]);
+    };
+
+    res.on("finish", () => {
+      const duration = Date.now() - start;
+      if (path.startsWith("/api")) {
+        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+        if (capturedJsonResponse) {
+          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        }
+        console.log(logLine);
+      }
+    });
+
+    next();
   });
 
   // ==================== PASSENGER ROUTES ====================
@@ -679,15 +1016,18 @@ export async function registerRoutes(
     console.log('📊 Admin stats called');
     
     if (!req.session.userId) {
+      console.log('❌ No userId in session');
       return res.status(401).json({ message: "Non authentifié" });
     }
     
     if (req.session.role !== 'ADMIN') {
+      console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
       return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
     }
     
     try {
       const stats = await storage.getAdminStats();
+      console.log('✅ Stats retrieved successfully');
       res.json(stats);
     } catch (error) {
       console.error('❌ Error getting stats:', error);
@@ -696,12 +1036,16 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getDrivers.path, async (req, res) => {
+    console.log('👥 Admin getDrivers called');
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const drivers = await storage.getDriversWithDetails();
+      console.log(`✅ ${drivers.length} drivers retrieved`);
       res.json(drivers);
     } catch (error) {
       console.error('❌ Error getting drivers:', error);
@@ -723,12 +1067,16 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getUsers.path, async (req, res) => {
+    console.log('👥 Admin getUsers called');
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const allUsers = await storage.getAllUsers();
+      console.log(`✅ ${allUsers.length} users retrieved`);
       res.json(allUsers);
     } catch (error) {
       console.error('❌ Error getting users:', error);
@@ -737,12 +1085,16 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getRides.path, async (req, res) => {
+    console.log('🚗 Admin getRides called');
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const ridesData = await storage.getRidesWithDetails();
+      console.log(`✅ ${ridesData.length} rides retrieved`);
       res.json(ridesData);
     } catch (error) {
       console.error('❌ Error getting rides:', error);
@@ -782,12 +1134,16 @@ export async function registerRoutes(
   });
 
   app.get(api.admin.getConfig.path, async (req, res) => {
+    console.log('⚙️ Admin getConfig called');
+    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
+      console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
     
     try {
       const config = await storage.getConfig();
+      console.log('✅ Config retrieved');
       res.json(config);
     } catch (error) {
       console.error('❌ Error getting config:', error);
@@ -803,295 +1159,6 @@ export async function registerRoutes(
       res.json(config);
     } catch (e) {
       res.status(400).json({ message: "Invalid input" });
-    }
-  });
-
-  // ==================== ADVERTISEMENT ROUTES ====================
-
-  // GET - Récupérer toutes les publicités actives (pour les utilisateurs)
-  app.get('/api/ads', async (req, res) => {
-    try {
-      const { screen, userRole } = req.query;
-      
-      let query = db.select().from(advertisements)
-        .where(eq(advertisements.isActive, true))
-        .orderBy(sql`${advertisements.priority} DESC`);
-      
-      // Filtrer par écran
-      if (screen && typeof screen === 'string') {
-        query = query.where(eq(advertisements.position, screen));
-      }
-      
-      // Filtrer par date
-      const now = new Date();
-      query = query.where(
-        or(
-          sql`${advertisements.startDate} IS NULL`,
-          sql`${advertisements.startDate} <= ${now}`
-        )
-      );
-      query = query.where(
-        or(
-          sql`${advertisements.endDate} IS NULL`,
-          sql`${advertisements.endDate} >= ${now}`
-        )
-      );
-      
-      // Filtrer par audience
-      if (userRole && typeof userRole === 'string') {
-        query = query.where(
-          or(
-            eq(advertisements.targetAudience, 'ALL'),
-            eq(advertisements.targetAudience, userRole)
-          )
-        );
-      }
-      
-      const ads = await query;
-      
-      // Enregistrer les impressions en arrière-plan
-      if (req.session.userId && ads.length > 0) {
-        for (const ad of ads) {
-          await db.insert(adStats).values({
-            adId: ad.id,
-            userId: req.session.userId,
-            action: 'IMPRESSION',
-            screen: screen as string || 'UNKNOWN',
-          });
-        }
-      }
-      
-      res.json(ads);
-    } catch (error) {
-      console.error('❌ Error fetching ads:', error);
-      res.status(500).json({ message: "Erreur lors du chargement des publicités" });
-    }
-  });
-
-  // GET - Récupérer toutes les publicités (admin)
-  app.get('/api/admin/ads', async (req, res) => {
-    console.log('📢 Admin getAds called');
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    try {
-      const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
-      res.json(ads);
-    } catch (error) {
-      console.error('❌ Error getting ads:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-
-  // GET - Récupérer une publicité spécifique (admin)
-  app.get('/api/admin/ads/:id', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    try {
-      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-      if (!ad) {
-        return res.status(404).json({ message: "Publicité non trouvée" });
-      }
-      res.json(ad);
-    } catch (error) {
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-
-  // POST - Créer une publicité (admin)
-  app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Creating ad - body:', req.body);
-    console.log('📢 Creating ad - file:', req.file);
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    try {
-      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
-      
-      // Validation
-      if (!title || !titleFr) {
-        return res.status(400).json({ message: "Les titres sont requis" });
-      }
-      
-      if (!req.file) {
-        return res.status(400).json({ message: "L'image est requise" });
-      }
-      
-      const imageUrl = `/uploads/${req.file.filename}`;
-      
-      const [newAd] = await db.insert(advertisements).values({
-        title,
-        titleFr,
-        description: description || null,
-        descriptionFr: descriptionFr || null,
-        imageUrl,
-        linkUrl: linkUrl || null,
-        type: type || 'BANNER',
-        position: position || 'HOME_TOP',
-        priority: parseInt(priority) || 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        isActive: true,
-        targetAudience: targetAudience || 'ALL',
-      }).returning();
-      
-      console.log('✅ Ad created:', newAd);
-      res.status(201).json(newAd);
-    } catch (error) {
-      console.error('❌ Error creating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la création: " + (error as Error).message });
-    }
-  });
-
-  // PUT - Mettre à jour une publicité (admin)
-  app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Updating ad - body:', req.body);
-    console.log('📢 Updating ad - file:', req.file);
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    
-    try {
-      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
-      
-      // Validation
-      if (!title || !titleFr) {
-        return res.status(400).json({ message: "Les titres sont requis" });
-      }
-      
-      const updateData: any = {
-        title,
-        titleFr,
-        description: description || null,
-        descriptionFr: descriptionFr || null,
-        linkUrl: linkUrl || null,
-        type: type || 'BANNER',
-        position: position || 'HOME_TOP',
-        priority: parseInt(priority) || 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        isActive: isActive === 'true' || isActive === true,
-        targetAudience: targetAudience || 'ALL',
-        updatedAt: new Date(),
-      };
-      
-      if (req.file) {
-        updateData.imageUrl = `/uploads/${req.file.filename}`;
-      }
-      
-      const [updatedAd] = await db.update(advertisements)
-        .set(updateData)
-        .where(eq(advertisements.id, id))
-        .returning();
-      
-      console.log('✅ Ad updated:', updatedAd);
-      res.json(updatedAd);
-    } catch (error) {
-      console.error('❌ Error updating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la mise à jour: " + (error as Error).message });
-    }
-  });
-
-  // DELETE - Supprimer une publicité (admin)
-  app.delete('/api/admin/ads/:id', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    
-    try {
-      await db.delete(advertisements).where(eq(advertisements.id, id));
-      res.json({ message: "Publicité supprimée" });
-    } catch (error) {
-      console.error('❌ Error deleting ad:', error);
-      res.status(500).json({ message: "Erreur lors de la suppression" });
-    }
-  });
-
-  // POST - Enregistrer un clic sur une publicité
-  app.post('/api/ads/:id/click', async (req, res) => {
-    const id = parseInt(req.params.id);
-    
-    try {
-      // Enregistrer le clic
-      if (req.session.userId) {
-        await db.insert(adStats).values({
-          adId: id,
-          userId: req.session.userId,
-          action: 'CLICK',
-          screen: req.body.screen || 'UNKNOWN',
-        });
-      }
-      
-      // Incrémenter le compteur de clics
-      await db.update(advertisements)
-        .set({ clickCount: sql`${advertisements.clickCount} + 1` })
-        .where(eq(advertisements.id, id));
-      
-      // Récupérer l'URL de redirection
-      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-      
-      res.json({ linkUrl: ad?.linkUrl });
-    } catch (error) {
-      console.error('❌ Error recording ad click:', error);
-      res.status(500).json({ message: "Erreur" });
-    }
-  });
-
-  // GET - Statistiques des publicités (admin)
-  app.get('/api/admin/ads/:id/stats', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    
-    try {
-      const impressions = await db.select({ count: sql<number>`count(*)` })
-        .from(adStats)
-        .where(and(
-          eq(adStats.adId, id),
-          eq(adStats.action, 'IMPRESSION')
-        ));
-      
-      const clicks = await db.select({ count: sql<number>`count(*)` })
-        .from(adStats)
-        .where(and(
-          eq(adStats.adId, id),
-          eq(adStats.action, 'CLICK')
-        ));
-      
-      const impressionsByScreen = await db.select({
-        screen: adStats.screen,
-        count: sql<number>`count(*)`
-      })
-      .from(adStats)
-      .where(and(
-        eq(adStats.adId, id),
-        eq(adStats.action, 'IMPRESSION')
-      ))
-      .groupBy(adStats.screen);
-      
-      res.json({
-        impressions: Number(impressions[0]?.count || 0),
-        clicks: Number(clicks[0]?.count || 0),
-        ctr: Number(clicks[0]?.count || 0) / Number(impressions[0]?.count || 1) * 100,
-        impressionsByScreen,
-      });
-    } catch (error) {
-      console.error('❌ Error getting ad stats:', error);
-      res.status(500).json({ message: "Erreur" });
     }
   });
 
@@ -1171,6 +1238,8 @@ export async function registerRoutes(
 
   async function seedDatabase() {
     try {
+      const existingConfig = await storage.getConfig();
+      
       const admin = await storage.getUserByPhone("0340000000");
       if (!admin) {
         await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });
