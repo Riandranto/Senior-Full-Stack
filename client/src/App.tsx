@@ -118,9 +118,8 @@ function Router() {
   );
 }
 
-function App() {
+function AppContent() {
   const [showFullscreenAd, setShowFullscreenAd] = useState(false);
-  const [adDelay, setAdDelay] = useState(2000);
   const { user, isLoading } = useAuth();
 
   // Gestion de l'affichage des publicités plein écran
@@ -135,7 +134,6 @@ function App() {
     
     if (shouldShowAd) {
       const delay = user.role === 'DRIVER' ? 3000 : 2000;
-      setAdDelay(delay);
       
       const timer = setTimeout(() => {
         setShowFullscreenAd(true);
@@ -152,14 +150,21 @@ function App() {
   };
 
   return (
+    <>
+      <Router />
+      {showFullscreenAd && !isLoading && user && (
+        <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
+      )}
+    </>
+  );
+}
+
+function App() {
+  return (
     <I18nProvider>
       <TooltipProvider>
         <Toaster />
-        <Router />
-        
-        {showFullscreenAd && !isLoading && user && (
-          <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
-        )}
+        <AppContent />
       </TooltipProvider>
     </I18nProvider>
   );
