@@ -169,57 +169,19 @@ export async function registerRoutes(
   });
 
   // Route verify OTP
-  app.post(api.auth.verifyOtp.path, async (req, res) => {
+  app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
-      console.log('🔐 Backend - verifyOtp called');
+      console.log('📞 Backend - requestOtp called');
       console.log('📦 Body:', req.body);
       
-      const input = api.auth.verifyOtp.input.parse(req.body);
+      const input = api.auth.requestOtp.input.parse(req.body);
+      console.log(`✅ OTP for ${input.phone} is 123456`);
       
-      if (input.otp !== "123456") {
-        return res.status(401).json({ message: "Code invalide" });
-      }
-  
-      let user = await storage.getUserByPhone(input.phone);
-      if (!user) {
-        user = await storage.createUser({ 
-          phone: input.phone, 
-          name: "User " + input.phone.slice(-4), 
-          role: "PASSENGER", 
-          language: "mg" 
-        });
-      }
-  
-      req.session.userId = user.id;
-      req.session.role = user.role;
-      
-      await new Promise<void>((resolve, reject) => {
-        req.session.save((err) => {
-          if (err) {
-            console.error('❌ Session save error:', err);
-            reject(err);
-          } else {
-            console.log('✅ Session saved successfully');
-            console.log('📦 Session ID:', req.session.id);
-            console.log('📦 Session user:', req.session.userId);
-            resolve();
-          }
-        });
-      });
-      
-      // FORCER l'envoi du cookie avec les bons paramètres
-      const isProduction = process.env.NODE_ENV === 'production';
-      res.setHeader('Set-Cookie', [
-        `farady.sid=${req.session.id}; Path=/; HttpOnly; ${isProduction ? 'Secure; SameSite=None;' : ''} Max-Age=2592000`
-      ]);
-      
-      console.log('✅ User authenticated:', user.id, user.role);
-      res.json({ user, success: true });
-      
+      res.json({ message: "OTP sent", success: true });
     } catch (e) {
-      console.error('❌ Backend error:', e);
+      console.error('❌ OTP request error:', e);
       if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: "Données invalides" });
+        return res.status(400).json({ message: "Numéro de téléphone invalide" });
       }
       res.status(500).json({ message: "Erreur serveur" });
     }

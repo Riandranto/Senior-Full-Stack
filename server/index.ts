@@ -90,8 +90,21 @@ function getLocalIP(): string {
 
 // ========== MIDDLEWARES AVANT TOUT ==========
 
-// Servir les fichiers uploads STATIQUEMENT (AVANT les middlewares JSON)
+// Servir les fichiers uploads statiquement
 app.use('/uploads', express.static('uploads'));
+
+// Middleware JSON - DOIT ÊTRE AVANT LES ROUTES pour les routes normales
+// MAIS les routes d'upload dans routes.ts utilisent multer qui gère son propre body parsing
+app.use(
+  express.json({
+    limit: '20mb',
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
+
+app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
 // Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
 const allowedOrigins = [
@@ -331,18 +344,11 @@ app.get('/api/debug/cookies', (req, res) => {
     // 1. Configurer les sessions
     await setupSession();
     
-    // 2. Enregistrer les routes (les routes d'upload sont DANS routes.ts)
+    // 2. Enregistrer les routes (les routes d'upload sont DANS routes.ts avec multer)
     await registerRoutes(httpServer, app);
     console.log('✅ Routes registered');
-    
-    // 3. AJOUTER express.json APRÈS les routes d'upload (important pour multer)
-    app.use(express.json({ limit: '20mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-    
-    // 4. Middleware de vérification d'authentification (peut être utilisé après)
-    // Note: Les middlewares requireAuth et requireAdmin sont dans routes.ts
 
-    // 5. Gestion des erreurs
+    // 3. Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
       const status = err.status || err.statusCode || 500;
       const message = err.message || "Internal Server Error";
@@ -356,7 +362,7 @@ app.get('/api/debug/cookies', (req, res) => {
       return res.status(status).json({ message });
     });
 
-    // 6. Servir les fichiers statiques en production
+    // 4. Servir les fichiers statiques en production
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
       console.log('✅ Static files configured');
