@@ -200,10 +200,20 @@ export async function registerRoutes(
             reject(err);
           } else {
             console.log('✅ Session saved successfully');
+            console.log('📦 Session ID:', req.session.id);
+            console.log('📦 Session user:', req.session.userId);
             resolve();
           }
         });
       });
+      
+      // FORCER l'envoi du cookie
+      res.setHeader('Set-Cookie', [
+        `farady.sid=${req.session.id}; Path=/; HttpOnly; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=None;' : ''} Max-Age=2592000`
+      ]);
+      
+      res.json({ user, success: true });
+
   
       console.log('✅ User authenticated:', user.id, user.role);
       res.json({ user, success: true });
@@ -215,6 +225,19 @@ export async function registerRoutes(
       }
       res.status(500).json({ message: "Erreur serveur" });
     }
+  });
+
+  // Dans server/routes.ts, ajoute
+  app.get('/api/debug/cookies', (req, res) => {
+    console.log('🍪 Cookies received:', req.headers.cookie);
+    console.log('🍪 Session:', req.session);
+    
+    res.json({
+      cookies: req.headers.cookie,
+      sessionId: req.session?.id,
+      userId: req.session?.userId,
+      sessionExists: !!req.session,
+    });
   });
 
   // Route GET /me

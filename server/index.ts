@@ -102,6 +102,7 @@ app.use(
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
 // Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
+// Configuration CORS
 const allowedOrigins = [
   'https://ride-mada-mg.up.railway.app',
   'capacitor://localhost',
@@ -114,10 +115,12 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
+    // En développement, accepter toutes les origines
     if (!origin) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
+    // En production, vérifier l'origine
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -125,7 +128,9 @@ app.use(cors({
       callback(null, false);
     }
   },
-  credentials: true,
+  credentials: true, // IMPORTANT: permet l'envoi des cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
 }));
 
 // Middleware de logging des requêtes (AVANT LES ROUTES)
@@ -205,6 +210,10 @@ let sessionConfigured = false;
 async function setupSession() {
   const sessionStore = await getSessionStore();
   
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || process.env.RAILWAY_SERVICE_NAME;
+  
+  // Configuration pour Railway
   const sessionConfig = {
     store: sessionStore,
     secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
@@ -212,14 +221,15 @@ async function setupSession() {
     saveUninitialized: false,
     name: 'farady.sid',
     cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      secure: isProduction ? true : false,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
       httpOnly: true,
-      sameSite: isProduction ? 'none' : 'lax',
+      secure: true, // Toujours true en production
+      sameSite: 'none' as const, // Important pour cross-origin
+      domain: undefined, // Ne pas définir de domaine pour Railway
       path: '/',
     },
     rolling: true,
-    proxy: isProduction,
+    proxy: true, // Toujours true en production derrière un proxy
   };
   
   console.log('📦 Session config:', {
@@ -228,6 +238,7 @@ async function setupSession() {
     sameSite: sessionConfig.cookie.sameSite,
     proxy: sessionConfig.proxy,
     env: process.env.NODE_ENV,
+    railway: isRailway
   });
   
   app.use(session(sessionConfig));
