@@ -13,6 +13,7 @@ let initializeRedis: () => Promise<boolean> = async () => false;
 let redisStore: any = null;
 let redisAvailable = false;
 
+// Essayer d'importer Redis, mais ignorer si erreur
 try {
   const redisModule = await import("./lib/redis.js");
   initializeRedis = redisModule.initializeRedis || (async () => false);
@@ -36,6 +37,7 @@ declare module "http" {
   }
 }
 
+// Extension du type Session
 declare module "express-session" {
   interface SessionData {
     userId: number;
@@ -88,18 +90,10 @@ function getLocalIP(): string {
 
 // ========== MIDDLEWARES AVANT TOUT ==========
 
-app.use(
-  express.json({
-    limit: '20mb',
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
+// Servir les fichiers uploads STATIQUEMENT (AVANT les middlewares JSON)
+app.use('/uploads', express.static('uploads'));
 
-app.use(express.urlencoded({ extended: false, limit: '20mb' }));
-
-// Configuration CORS - CORRIGÉE
+// Configuration CORS - DOIT ÊTRE AVANT LES ROUTES
 const allowedOrigins = [
   'https://ride-mada-mg.up.railway.app',
   'capacitor://localhost',
@@ -112,12 +106,10 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    // En développement, accepter toutes les origines
     if (!origin) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    // En production, vérifier l'origine
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -130,7 +122,79 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
 }));
 
-// Middleware de logging des requêtes
+// ========== CONFIGURATION DE LA SESSION ==========
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Fonction pour initialiser le store de session
+async function getSessionStore() {
+  let store;
+  
+  if (redisStore) {
+    try {
+      console.log('🔄 Tentative de connexion à Redis...');
+      const redisInitialized = await initializeRedis();
+      if (redisInitialized) {
+        store = redisStore;
+        redisAvailable = true;
+        console.log('✅ Redis session store initialized');
+      } else {
+        console.warn('⚠️ Redis initialization failed, falling back to MemoryStore');
+      }
+    } catch (err) {
+      console.error('❌ Redis connection error:', err);
+      console.warn('⚠️ Falling back to MemoryStore');
+    }
+  }
+  
+  if (!store) {
+    console.log('📦 Using MemoryStore for sessions');
+    store = new MemoryStore({
+      checkPeriod: 86400000,
+    });
+  }
+  
+  return store;
+}
+
+// Configuration de la session
+let sessionConfigured = false;
+
+async function setupSession() {
+  const sessionStore = await getSessionStore();
+  
+  const sessionConfig = {
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    name: 'farady.sid',
+    cookie: {
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      secure: true,
+      httpOnly: true,
+      sameSite: 'none' as const,
+      path: '/',
+    },
+    rolling: true,
+    proxy: true,
+  };
+  
+  console.log('📦 Session config:', {
+    store: redisAvailable ? 'Redis' : 'MemoryStore',
+    secure: sessionConfig.cookie.secure,
+    sameSite: sessionConfig.cookie.sameSite,
+    proxy: sessionConfig.proxy,
+    env: process.env.NODE_ENV,
+  });
+  
+  app.use(session(sessionConfig));
+  sessionConfigured = true;
+  console.log('✅ Session middleware configured');
+}
+
+// ========== MIDDLEWARE DE LOGGING ==========
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -166,81 +230,26 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== CONFIGURATION DE LA SESSION ==========
-
-const isProduction = process.env.NODE_ENV === 'production';
-
-async function getSessionStore() {
-  let store;
-  
-  if (redisStore) {
-    try {
-      console.log('🔄 Tentative de connexion à Redis...');
-      const redisInitialized = await initializeRedis();
-      if (redisInitialized) {
-        store = redisStore;
-        redisAvailable = true;
-        console.log('✅ Redis session store initialized');
-      } else {
-        console.warn('⚠️ Redis initialization failed, falling back to MemoryStore');
-      }
-    } catch (err) {
-      console.error('❌ Redis connection error:', err);
-      console.warn('⚠️ Falling back to MemoryStore');
-    }
-  }
-  
-  if (!store) {
-    console.log('📦 Using MemoryStore for sessions');
-    store = new MemoryStore({
-      checkPeriod: 86400000,
+// Middleware de debug des sessions
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    console.log('📦 Session Debug:', {
+      path: req.path,
+      sessionID: req.sessionID,
+      hasSession: !!req.session,
+      userId: req.session?.userId,
+      role: req.session?.role,
     });
   }
-  
-  return store;
-}
-
-let sessionConfigured = false;
-
-async function setupSession() {
-  const sessionStore = await getSessionStore();
-  
-  // Configuration CORRECTE pour Railway
-  const sessionConfig = {
-    store: sessionStore,
-    secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    name: 'farady.sid',
-    cookie: {
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-      httpOnly: true,
-      secure: true, // Toujours true en production (HTTPS)
-      sameSite: 'none' as const, // CRUCIAL pour cross-origin
-      domain: undefined, // Ne pas définir de domaine
-      path: '/',
-    },
-    rolling: true,
-    proxy: true, // CRUCIAL derrière Railway
-  };
-  
-  console.log('📦 Session config:', {
-    store: redisAvailable ? 'Redis' : 'MemoryStore',
-    secure: sessionConfig.cookie.secure,
-    sameSite: sessionConfig.cookie.sameSite,
-    proxy: sessionConfig.proxy,
-    env: process.env.NODE_ENV,
-    railway: !!process.env.RAILWAY_ENVIRONMENT
-  });
-  
-  app.use(session(sessionConfig));
-  sessionConfigured = true;
-  console.log('✅ Session middleware configured');
-}
+  next();
+});
 
 // ========== ENDPOINTS DE DEBUG ==========
 
+// Endpoint de test
 app.get('/api/test', (req, res) => {
+  console.log('🔧 Test endpoint called');
+  
   res.json({ 
     message: 'Backend is working!',
     time: new Date().toISOString(),
@@ -276,9 +285,36 @@ app.get('/api/debug/session-state', (req, res) => {
   });
 });
 
+app.get('/api/debug/paths', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  
+  const currentDir = process.cwd();
+  const distPublic = path.join(currentDir, 'dist', 'public');
+  
+  let files = {};
+  if (fs.existsSync(distPublic)) {
+    files = fs.readdirSync(distPublic).reduce((acc, file) => {
+      if (file === 'assets') {
+        acc[file] = fs.readdirSync(path.join(distPublic, file));
+      } else {
+        acc[file] = true;
+      }
+      return acc;
+    }, {});
+  }
+  
+  res.json({
+    currentDirectory: currentDir,
+    distPublicExists: fs.existsSync(distPublic),
+    distPublicContent: files,
+    env: process.env.NODE_ENV,
+    sessionStore: redisAvailable ? 'Redis' : 'MemoryStore'
+  });
+});
+
 app.get('/api/debug/cookies', (req, res) => {
   console.log('🍪 Cookies received:', req.headers.cookie);
-  console.log('🍪 Session:', req.session);
   
   res.json({
     cookies: req.headers.cookie,
@@ -295,11 +331,18 @@ app.get('/api/debug/cookies', (req, res) => {
     // 1. Configurer les sessions
     await setupSession();
     
-    // 2. Enregistrer les routes
+    // 2. Enregistrer les routes (les routes d'upload sont DANS routes.ts)
     await registerRoutes(httpServer, app);
     console.log('✅ Routes registered');
+    
+    // 3. AJOUTER express.json APRÈS les routes d'upload (important pour multer)
+    app.use(express.json({ limit: '20mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+    
+    // 4. Middleware de vérification d'authentification (peut être utilisé après)
+    // Note: Les middlewares requireAuth et requireAdmin sont dans routes.ts
 
-    // 3. Gestion des erreurs
+    // 5. Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
       const status = err.status || err.statusCode || 500;
       const message = err.message || "Internal Server Error";
@@ -313,7 +356,7 @@ app.get('/api/debug/cookies', (req, res) => {
       return res.status(status).json({ message });
     });
 
-    // 4. Servir les fichiers statiques en production
+    // 6. Servir les fichiers statiques en production
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
       console.log('✅ Static files configured');
