@@ -444,7 +444,7 @@ export default function PassengerHome() {
         <div className="flex h-screen items-center justify-center">
           <LoadingAnimation />
         </div>
-        {/* Chat Box qui s'ouvre automatiquement quand la course est acceptée */}
+        {/* Chat Box qui s'ouvre automatiquement */}
         {showChat && activeRideId && (
           <ChatBox
             rideId={activeRideId}

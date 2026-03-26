@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './use-websocket';
+import { useQueryClient } from '@tanstack/react-query';
 
 export interface ChatMessage {
   id?: string;
@@ -13,7 +14,8 @@ export interface ChatMessage {
 }
 
 export function useChat(rideId: number, currentUserId: number, otherUserName?: string) {
-  const { sendMessage, lastMessage, connected } = useWebSocket();
+  const { sendMessage, subscribe, connected } = useWebSocket();
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -28,7 +30,11 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
       });
       if (res.ok) {
         const history = await res.json();
-        setMessages(history.map((msg: any) => ({ ...msg, isOwn: msg.from === currentUserId })));
+        const formattedMessages = history.map((msg: any) => ({ 
+          ...msg, 
+          isOwn: msg.from === currentUserId 
+        }));
+        setMessages(formattedMessages);
         setUnreadCount(history.filter((msg: any) => !msg.isRead && msg.from !== currentUserId).length);
       }
     } catch (error) {
@@ -38,15 +44,27 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
 
   // Scroll automatique vers le bas
   const scrollToBottom = useCallback(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
   }, []);
 
   // Envoyer un message
   const sendChatMessage = useCallback((message: string) => {
-    if (!message.trim() || !connected) return;
+    if (!message.trim()) {
+      console.warn('Message vide, non envoyé');
+      return false;
+    }
+    
+    if (!connected) {
+      console.warn('WebSocket non connecté, impossible d\'envoyer le message');
+      return false;
+    }
 
+    console.log('📤 Sending chat message:', { rideId, message });
+    
     const tempId = Date.now().toString();
     const tempMessage: ChatMessage = {
       id: tempId,
@@ -61,35 +79,45 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     setMessages(prev => [...prev, tempMessage]);
     scrollToBottom();
 
-    sendMessage({
+    const success = sendMessage({
       type: 'chat',
       payload: {
-        toUserId: 0, // Sera déterminé par le backend
-        message: message.trim(),
         rideId,
-        fromName: 'Moi'
+        message: message.trim(),
+        fromName: otherUserName || 'Utilisateur'
       }
     });
 
-    // Simuler l'envoi réussi après un court délai
-    setTimeout(() => {
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === tempId ? { ...msg, id: undefined } : msg
-        )
-      );
-    }, 500);
-  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom]);
+    if (!success) {
+      console.error('Échec d\'envoi du message');
+      setMessages(prev => prev.filter(msg => msg.id !== tempId));
+      return false;
+    }
 
-  // Écouter les messages entrants
+    return true;
+  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName]);
+
+  // Écouter les messages entrants via WebSocket
   useEffect(() => {
-    if (lastMessage?.type === 'CHAT_MESSAGE') {
-      const payload = lastMessage.payload;
+    const unsubscribe = subscribe('CHAT_MESSAGE', (payload: any) => {
+      console.log('📨 Chat message received:', payload);
+      
       if (payload.rideId === rideId) {
         const isOwn = payload.from === currentUserId;
+        
+        // Vérifier si le message existe déjà
+        const exists = messages.some(m => 
+          m.from === payload.from && 
+          m.message === payload.message && 
+          Math.abs(new Date(m.timestamp).getTime() - new Date(payload.timestamp || Date.now()).getTime()) < 1000
+        );
+        
+        if (exists) return;
+        
         const newMessage: ChatMessage = {
+          id: payload.id || Date.now().toString(),
           from: payload.from,
-          fromName: payload.fromName || (isOwn ? 'Moi' : otherUserName || 'Utilisateur'),
+          fromName: payload.fromName || (isOwn ? 'Moi' : otherUserName || 'Chauffeur'),
           message: payload.message,
           rideId: payload.rideId,
           timestamp: payload.timestamp || new Date().toISOString(),
@@ -98,23 +126,23 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
         };
 
         setMessages(prev => {
-          // Vérifier si le message existe déjà
-          const exists = prev.some(m => 
-            m.from === newMessage.from && 
-            m.message === newMessage.message && 
-            Math.abs(new Date(m.timestamp).getTime() - new Date(newMessage.timestamp).getTime()) < 1000
-          );
-          if (exists) return prev;
-          
           if (!isOwn) {
             setUnreadCount(prevCount => prevCount + 1);
           }
           return [...prev, newMessage];
         });
+        
         scrollToBottom();
+        
+        // Recharger l'historique pour être sûr
+        if (!isOwn) {
+          loadHistory();
+        }
       }
-    }
-  }, [lastMessage, rideId, currentUserId, otherUserName, scrollToBottom]);
+    });
+    
+    return () => unsubscribe();
+  }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom, loadHistory]);
 
   // Charger l'historique au montage
   useEffect(() => {

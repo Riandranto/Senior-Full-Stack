@@ -20,27 +20,17 @@ export function useWebSocket() {
   const { lang } = useTranslation();
 
   const getWebSocketUrl = useCallback(() => {
-    // En production (deployed on Railway)
     if (import.meta.env.PROD) {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.host;
       return `${protocol}//${host}/ws`;
     }
-    
-    // En développement
     return 'ws://localhost:5000/ws';
   }, []);
 
   const connect = useCallback(() => {
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       console.error("Max WebSocket reconnection attempts reached");
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy afaka mifandray" : "Connexion perdue",
-        description: lang === 'mg'
-          ? "Hamafiso ny tambajotra"
-          : "Vérifiez votre connexion",
-      });
       return;
     }
 
@@ -58,7 +48,6 @@ export function useWebSocket() {
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
-      // Authentifier après connexion
       const user = queryClient.getQueryData([api.auth.me.path]) as any;
       if (user?.id) {
         wsRef.current?.send(JSON.stringify({
@@ -72,13 +61,11 @@ export function useWebSocket() {
       console.log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason}`);
       setConnected(false);
       
-      // Ne pas reconnecter pour les fermetures normales
       if (event.code === 1000 || event.code === 1001) {
         console.log("WebSocket closed cleanly");
         return;
       }
 
-      // Reconnecter avec backoff exponentiel
       const delay = Math.min(
         BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttemptsRef.current),
         30000
@@ -99,54 +86,45 @@ export function useWebSocket() {
     wsRef.current.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as WsMessage;
-        console.log(`📨 WebSocket message: ${msg.type}`);
+        console.log(`📨 WebSocket message: ${msg.type}`, msg.payload);
         
-        // Exécuter les handlers enregistrés
         const handlers = handlersRef.current.get(msg.type);
         if (handlers) {
           handlers.forEach(fn => fn(msg.payload));
         }
         
-        // Invalider les requêtes selon le type de message
         switch (msg.type) {
-          case WS_EVENTS.RIDE_STATUS_CHANGED:
-            queryClient.invalidateQueries({ 
-              predicate: (query) => {
-                const key = query.queryKey[0];
-                return key === api.passenger.getRide.path || 
-                       key === api.passenger.history.path ||
-                       key === api.driver.getRequests.path;
-              }
-            });
+          case 'RIDE_STATUS_CHANGED':
+            console.log('🔄 Ride status changed:', msg.payload);
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id] });
             break;
             
-          case WS_EVENTS.OFFER_NEW:
-            queryClient.invalidateQueries({ 
-              queryKey: [api.passenger.getOffers.path, msg.payload.rideId] 
-            });
+          case 'CHAT_MESSAGE':
+            console.log('💬 Chat message received:', msg.payload);
+            // Forcer l'invalidation du cache du chat
+            queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
             break;
             
-          case WS_EVENTS.OFFER_ACCEPTED:
-            queryClient.invalidateQueries({ 
-              queryKey: [api.passenger.getRide.path, msg.payload.id] 
-            });
-            queryClient.invalidateQueries({ 
-              queryKey: [api.driver.getRequests.path] 
-            });
+          case 'OFFER_ACCEPTED':
+            console.log('✅ Offer accepted:', msg.payload);
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
             break;
             
-          case WS_EVENTS.DRIVER_LOCATION:
-            queryClient.setQueryData(
-              ['/api/driver', msg.payload.driverId, 'location'],
-              { lat: msg.payload.lat, lng: msg.payload.lng }
-            );
+          case 'OFFER_NEW':
+            console.log('🆕 New offer:', msg.payload);
+            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId, 'offers'] });
             break;
         }
       } catch (err) {
         console.error("Failed to parse WS message", err);
       }
     };
-  }, [queryClient, toast, lang, getWebSocketUrl]);
+  }, [queryClient, getWebSocketUrl]);
 
   useEffect(() => {
     connect();
@@ -161,7 +139,7 @@ export function useWebSocket() {
     };
   }, [connect]);
 
-  const subscribe = useCallback((event: keyof typeof WS_EVENTS, handler: (data: any) => void) => {
+  const subscribe = useCallback((event: string, handler: (data: any) => void) => {
     if (!handlersRef.current.has(event)) {
       handlersRef.current.set(event, new Set());
     }
@@ -172,17 +150,19 @@ export function useWebSocket() {
     };
   }, []);
 
-  const emit = useCallback((type: keyof typeof WS_EVENTS, payload: any) => {
+  const sendMessage = useCallback((message: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type, payload }));
+      wsRef.current.send(JSON.stringify(message));
+      return true;
     } else {
-      console.warn("WebSocket not connected, message not sent:", type);
+      console.warn("WebSocket not connected, message not sent:", message.type);
+      return false;
     }
   }, []);
 
   return { 
     connected,
     subscribe, 
-    emit 
+    sendMessage
   };
 }

@@ -11,17 +11,22 @@ export function useWebSocketEvents(userId?: number) {
   const { lang } = useTranslation();
 
   useEffect(() => {
-    if (!connected || !userId) return;
+    if (!connected || !userId) {
+      console.log('WebSocket not ready or no userId:', { connected, userId });
+      return;
+    }
+
+    console.log('🎧 Setting up WebSocket events for user:', userId);
 
     // Écouter les changements de statut des courses
     const unsubscribeRideStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+      console.log('🚗 RIDE_STATUS_CHANGED:', data);
+      
       if (data.driverId === userId || data.passengerId === userId) {
-        // Rafraîchir les données
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/rides'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
         
-        // Afficher une notification
         if (data.status === 'ASSIGNED') {
           toast({
             title: lang === 'mg' ? "Dia vaovao!" : "Nouvelle course!",
@@ -47,22 +52,58 @@ export function useWebSocketEvents(userId?: number) {
       }
     });
 
-    // Écouter les nouvelles offres
-    const unsubscribeNewOffer = subscribe('NEW_OFFER', (data: any) => {
-      if (data.passengerId === userId) {
-        queryClient.invalidateQueries({ queryKey: ['/api/rides', data.rideId, 'offers'] });
+    // Écouter les offres acceptées
+    const unsubscribeOfferAccepted = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('💰 OFFER_ACCEPTED:', data);
+      
+      if (data.driverId === userId) {
         toast({
-          title: lang === 'mg' ? "Tolobidy vaovao!" : "Nouvelle offre!",
+          title: lang === 'mg' ? "Nekena ny tolobidinao!" : "Offre acceptée!",
           description: lang === 'mg' 
-            ? `Tolobidy ${data.priceAr} Ar avy amin'ny mpamily`
-            : `Offre de ${data.priceAr} Ar d'un chauffeur`,
+            ? "Mandehana any amin'ny toerana fiaingana"
+            : "Rendez-vous au point de départ",
+        });
+        
+        // Recharger la course active immédiatement
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+        }, 500);
+      }
+      
+      if (data.passengerId === userId) {
+        toast({
+          title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
+          description: lang === 'mg' 
+            ? "Ho tonga ny mpamily"
+            : "Le chauffeur arrive",
+        });
+        
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+        }, 500);
+      }
+    });
+
+    // Écouter les messages chat
+    const unsubscribeChat = subscribe('CHAT_MESSAGE', (data: any) => {
+      console.log('💬 CHAT_MESSAGE received in events:', data);
+      
+      if (data.toUserId === userId || data.from === userId) {
+        // Recharger l'historique du chat
+        queryClient.invalidateQueries({ queryKey: ['/api/chat/history', data.rideId] });
+        
+        toast({
+          title: lang === 'mg' ? "Hafatra vaovao" : "Nouveau message",
+          description: `${data.fromName}: ${data.message.substring(0, 50)}${data.message.length > 50 ? '...' : ''}`,
         });
       }
     });
 
     return () => {
       unsubscribeRideStatus();
-      unsubscribeNewOffer();
+      unsubscribeOfferAccepted();
+      unsubscribeChat();
     };
   }, [connected, userId, subscribe, queryClient, toast, lang]);
 }
