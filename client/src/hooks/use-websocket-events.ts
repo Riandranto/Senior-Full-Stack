@@ -1,3 +1,4 @@
+// src/hooks/use-websocket-events.ts
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWebSocket } from './use-websocket';
@@ -64,7 +65,6 @@ export function useWebSocketEvents(userId?: number) {
             : "Rendez-vous au point de départ",
         });
         
-        // Recharger la course active immédiatement
         setTimeout(() => {
           queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
           queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
@@ -90,7 +90,6 @@ export function useWebSocketEvents(userId?: number) {
       console.log('💬 CHAT_MESSAGE received in events:', data);
       
       if (data.toUserId === userId || data.from === userId) {
-        // Recharger l'historique du chat
         queryClient.invalidateQueries({ queryKey: ['/api/chat/history', data.rideId] });
         
         toast({
