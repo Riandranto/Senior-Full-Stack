@@ -7,13 +7,19 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
     const fullUrl = `${API_BASE_URL}${url}`;
     console.log(`🌐 [OVERRIDE] ${url} -> ${fullUrl}`);
     
+    const isFormData = options?.body instanceof FormData;
+
     const newOptions: RequestInit = {
       ...options,
-      credentials: 'include', // FORCER les credentials
+      credentials: 'include',
       headers: {
         ...options?.headers,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        ...(isFormData
+          ? {} // ❌ PAS de Content-Type pour FormData
+          : {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            }),
       },
     };
     

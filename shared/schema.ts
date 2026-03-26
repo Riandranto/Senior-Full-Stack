@@ -168,11 +168,24 @@ export const adStats = pgTable("ad_stats", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Table pour l'historique des messages de chat
+export const chatMessages = pgTable("chat_messages", {
+  id: serial("id").primaryKey(),
+  rideId: integer("ride_id").notNull().references(() => rides.id, { onDelete: "cascade" }),
+  senderId: integer("sender_id").notNull().references(() => users.id),
+  receiverId: integer("receiver_id").notNull().references(() => users.id),
+  message: text("message").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Types TypeScript
 export type Advertisement = typeof advertisements.$inferSelect;
 export type InsertAdvertisement = typeof advertisements.$inferInsert;
 export type AdStat = typeof adStats.$inferSelect;
 export type InsertAdStat = typeof adStats.$inferInsert;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = typeof chatMessages.$inferInsert;
 
 // Zod schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
@@ -180,6 +193,7 @@ export const insertDriverProfileSchema = createInsertSchema(driverProfiles).omit
 export const insertRideSchema = createInsertSchema(rides).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true });
 export const insertDriverLocationSchema = createInsertSchema(driverLocations).omit({ id: true, timestamp: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
@@ -240,6 +254,7 @@ export const WS_EVENTS = {
   OFFER_ACCEPTED: 'offer:accepted',
   RIDE_STATUS_CHANGED: 'ride:status_changed',
   DRIVER_LOCATION: 'driver:location',
+  CHAT_MESSAGE: 'CHAT_MESSAGE',
 } as const;
 
 export interface WsMessage<T = unknown> {

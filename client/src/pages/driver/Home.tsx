@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { 
   MapPin, Navigation, Clock, Send, CheckCircle, Route, Phone, 
   Loader2, AlertCircle, User, Bike, Car, Wifi, WifiOff,
-  Play, MapPinCheck, Flag, XCircle
+  Play, MapPinCheck, Flag, XCircle, MessageCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
@@ -33,11 +33,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useWebSocket } from '@/hooks/use-websocket';
-
+import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
 
 interface ActiveRide {
   id: number;
+  passengerId: number;
   passengerName: string;
   passengerPhone: string;
   pickupAddress: string;
@@ -104,7 +105,12 @@ export default function DriverHome() {
   const updateRideStatus = useUpdateRideStatus(activeRide?.id || 0);
   const extendEta = useExtendEta(activeRide?.id || 0);
 
-  // 🔥 Auto-refresh des données
+  // Chat states
+  const [showChat, setShowChat] = useState(false);
+  const [otherUserName, setOtherUserName] = useState('');
+  const [otherUserId, setOtherUserId] = useState(0);
+
+  // Auto-refresh des données
   const { refresh, isRefreshing } = useAutoRefresh({
     queryKeys: [
       ['/api/driver/requests'],
@@ -114,7 +120,7 @@ export default function DriverHome() {
     enabled: !activeRide
   });
 
-  // 🔥 WebSocket events
+  // WebSocket events
   useWebSocketEvents(profile?.userId);
 
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
@@ -127,11 +133,6 @@ export default function DriverHome() {
   const [locationError, setLocationError] = useState<string | null>(null);
   
   const [showRideTracking, setShowRideTracking] = useState(false);
-  const [etaAdjustment, setEtaAdjustment] = useState<string>('');
-  const [etaAdjustmentError, setEtaAdjustmentError] = useState<string | null>(null);
-  const [timeElapsed, setTimeElapsed] = useState<number>(0);
-  const [timeRemaining, setTimeRemaining] = useState<number>(0);
-  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0);
   const [showArrivalConfirm, setShowArrivalConfirm] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [timerStarted, setTimerStarted] = useState(false);
@@ -145,7 +146,7 @@ export default function DriverHome() {
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
 
-  // 🔥 Prix formaté pour l'affichage
+  // Prix formaté pour l'affichage
   const formattedPrice = useMemo(() => {
     const price = extractPrice(activeRide);
     return price ? price.toLocaleString('fr-FR') : "0";
@@ -188,9 +189,6 @@ export default function DriverHome() {
       }
       
       if (activeRide.status === 'ASSIGNED') {
-        setTimeElapsed(0);
-        setTimeRemaining(activeRide.etaMinutes);
-        setTimeRemainingSeconds(0);
         setTimerStarted(false);
         setStartTime(null);
         
@@ -203,36 +201,6 @@ export default function DriverHome() {
           secondsIntervalRef.current = undefined;
         }
       } 
-      else if (timerStarted || ['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {
-        if (!startTime && activeRide.status !== 'ASSIGNED') {
-          setStartTime(Date.now());
-        }
-        
-        if (!secondsIntervalRef.current) {
-          secondsIntervalRef.current = setInterval(() => {
-            if (startTime) {
-              const now = Date.now();
-              const elapsedSeconds = Math.floor((now - startTime) / 1000);
-              const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-              const remainingSeconds = 59 - (elapsedSeconds % 60);
-              const remainingMinutes = Math.max(0, activeRide.etaMinutes - elapsedMinutes - (remainingSeconds === 59 ? 1 : 0));
-              
-              setTimeElapsed(elapsedMinutes);
-              setTimeRemaining(remainingMinutes);
-              setTimeRemainingSeconds(remainingSeconds);
-            }
-          }, 1000);
-        }
-        
-        if (timeRemaining <= 0 && timeRemainingSeconds <= 0) {
-          toast({
-            title: lang === 'mg' ? "Fotoana!" : "Temps écoulé!",
-            description: lang === 'mg' 
-              ? "Tonga ve ianao? Ampio ny toerana misy anao."
-              : "Êtes-vous arrivé? Mettez à jour votre statut.",
-          });
-        }
-      }
     } else {
       setShowRideTracking(false);
       setTimerStarted(false);
@@ -261,7 +229,7 @@ export default function DriverHome() {
         secondsIntervalRef.current = undefined;
       }
     };
-  }, [activeRide, lang, timerStarted, startTime, timeRemaining, timeRemainingSeconds, toast]);
+  }, [activeRide]);
 
   const pickupMarkers = useMemo(() => {
     const markers = requests.map((r: any) => ({
@@ -278,40 +246,6 @@ export default function DriverHome() {
   
     return markers;
   }, [requests, activeRide]);
-
-  // Validation de l'ajustement ETA
-  const validateEtaAdjustment = useCallback((value: string): string | null => {
-    if (!value) return null;
-    
-    const num = Number(value);
-    if (isNaN(num) || num < 1) {
-      return lang === 'mg' ? "1 minitra ny farany kely" : "Minimum 1 minute";
-    }
-    if (num > 60) {
-      return lang === 'mg' ? "60 minitra ny farany be" : "Maximum 60 minutes";
-    }
-    return null;
-  }, [lang]);
-
-  const handleStillEnRoute = async () => {
-    if (!etaAdjustment) {
-      setEtaAdjustmentError(lang === 'mg' 
-        ? "Ampidiro ny fotoana fanampiny" 
-        : "Entrez le temps supplémentaire");
-      return;
-    }
-    
-    const error = validateEtaAdjustment(etaAdjustment);
-    if (error) {
-      setEtaAdjustmentError(error);
-      return;
-    }
-
-    await extendEta.mutateAsync(parseInt(etaAdjustment));
-    setEtaAdjustment('');
-    setEtaAdjustmentError(null);
-    refresh();
-  };
 
   const handleArrived = async () => {
     if (!activeRide) return;
@@ -335,22 +269,16 @@ export default function DriverHome() {
     }
   
     try {
-      toast({
-        title: lang === 'mg' ? "Fanombohana..." : "Démarrage...",
-      });
-  
       await updateRideStatus.mutateAsync('DRIVER_EN_ROUTE');
-  
       setTimerStarted(true);
       setStartTime(Date.now());
       await refresh();
   
       toast({
-        title: lang === 'mg' ? "makanesa!" : "C'est parti!",
+        title: lang === 'mg' ? "Mandehana!" : "C'est parti!",
       });
     } catch (error: any) {
       console.error("ERROR in handleStartJourney:", error);
-  
       setTimerStarted(false);
       setStartTime(null);
   
@@ -696,54 +624,49 @@ export default function DriverHome() {
                   </h3>
                 </div>
                 <div className="text-right">
-                  {timerStarted || activeRide.status !== 'ASSIGNED' ? (
-                    <motion.div
-                      key={timeRemaining}
-                      initial={{ scale: 1.1, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ duration: 0.2 }}
-                      className="text-3xl font-bold font-mono text-primary"
-                    >
-                      {String(timeRemaining).padStart(2, '0')}:{String(timeRemainingSeconds).padStart(2, '0')}
-                    </motion.div>
-                  ) : (
-                    <div className="text-3xl font-bold font-mono text-primary">
-                      {String(activeRide.etaMinutes).padStart(2, '0')}:00
-                    </div>
-                  )}
+                  <div className="text-3xl font-bold font-mono text-primary">
+                    {String(activeRide.etaMinutes).padStart(2, '0')}:00
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {lang === 'mg' ? 'sisa' : 'restant'}
                   </p>
                 </div>
               </div>
 
-              {/* Barre de progression - seulement si timer démarré */}
-              {timerStarted && (
-                <Progress 
-                  value={(timeElapsed / activeRide.etaMinutes) * 100} 
-                  className="h-2 mb-4"
-                />
-              )}
-
-              {/* Infos passager */}
+              {/* Infos passager avec bouton chat */}
               <div className="bg-secondary/50 rounded-2xl p-4 mb-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-primary" />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                      <User className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-bold">{activeRide.passengerName}</p>
+                      <a 
+                        href={`tel:${activeRide.passengerPhone}`}
+                        className="text-xs text-primary flex items-center gap-1"
+                      >
+                        <Phone className="w-3 h-3" />
+                        {activeRide.passengerPhone}
+                      </a>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className="font-bold">{activeRide.passengerName}</p>
-                    <a 
-                      href={`tel:${activeRide.passengerPhone}`}
-                      className="text-xs text-primary flex items-center gap-1"
-                    >
-                      <Phone className="w-3 h-3" />
-                      {activeRide.passengerPhone}
-                    </a>
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setOtherUserName(activeRide.passengerName);
+                      setOtherUserId(activeRide.passengerId);
+                      setShowChat(true);
+                    }}
+                    className="rounded-full"
+                  >
+                    <MessageCircle className="w-4 h-4 mr-1" />
+                    {lang === 'mg' ? 'Hiresaka' : 'Chat'}
+                  </Button>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 mt-3">
                   <p className="text-xs flex items-start gap-2">
                     <MapPin className="w-3 h-3 text-green-500 mt-0.5 shrink-0" />
                     <span className="text-muted-foreground line-clamp-2">{activeRide.pickupAddress}</span>
@@ -755,9 +678,9 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* Actions selon le statut */}
+              {/* Actions selon le statut - SIMPLIFIÉES */}
               <div className="space-y-3">
-                {activeRide.status === 'ASSIGNED' && !timerStarted && (
+                {activeRide.status === 'ASSIGNED' && (
                   <Button 
                     onClick={handleStartJourney}
                     className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700 animate-pulse"
@@ -768,81 +691,37 @@ export default function DriverHome() {
                     ) : (
                       <Play className="w-4 h-4 mr-2" />
                     )}
-                    {lang === 'mg' ? 'makanesa' : 'Venir'}
+                    {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
                   </Button>
                 )}
 
                 {activeRide.status === 'DRIVER_EN_ROUTE' && (
-                  <>
-                    <Button 
-                      onClick={() => setShowArrivalConfirm(true)}
-                      className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
-                      disabled={updateRideStatus.isPending}
-                    >
-                      <MapPinCheck className="w-4 h-4 mr-2" />
-                      {lang === 'mg' ? 'Tonga' : 'Arrivé'}
-                    </Button>
-
-                    <div className="flex gap-2">
-                      <Input
-                        type="text"
-                        value={etaAdjustment}
-                        onChange={(e) => {
-                          setEtaAdjustment(e.target.value);
-                          setEtaAdjustmentError(null);
-                        }}
-                        placeholder={lang === 'mg' ? '5 min' : '5 min'}
-                        className={`flex-1 h-12 text-center ${etaAdjustmentError ? 'border-destructive' : ''}`}
-                        inputMode="numeric"
-                      />
-                      <Button
-                        onClick={handleStillEnRoute}
-                        variant="outline"
-                        className="h-12 px-6"
-                        disabled={extendEta.isPending}
-                      >
-                        {extendEta.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Clock className="w-4 h-4 mr-2" />
-                        )}
-                        {lang === 'mg' ? 'Mbola an-dalana' : 'Encore en route'}
-                      </Button>
-                    </div>
-                    {etaAdjustmentError && (
-                      <p className="text-xs text-destructive">{etaAdjustmentError}</p>
-                    )}
-                  </>
+                  <Button 
+                    onClick={() => setShowArrivalConfirm(true)}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-blue-600 hover:bg-blue-700"
+                    disabled={updateRideStatus.isPending}
+                  >
+                    <MapPinCheck className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Tonga amin\'ny toerana' : 'Arrivé au point de prise'}
+                  </Button>
                 )}
 
                 {activeRide.status === 'DRIVER_ARRIVED' && (
-                  <>
-                    <Button 
-                      onClick={handleStartRide}
-                      className="w-full h-12 text-base font-bold rounded-xl bg-blue-600 hover:bg-blue-700"
-                      disabled={updateRideStatus.isPending}
-                    >
-                      <Flag className="w-4 h-4 mr-2" />
-                      {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
-                    </Button>
-                    
-                    <p className="text-xs text-center text-muted-foreground">
-                      {lang === 'mg' 
-                        ? 'Afaka 5 minitra fiandrasana' 
-                        : '5 minutes d\'attente incluses'}
-                    </p>
-                  </>
+                  <Button 
+                    onClick={handleStartRide}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
+                    disabled={updateRideStatus.isPending}
+                  >
+                    <Flag className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
+                  </Button>
                 )}
 
                 {activeRide.status === 'IN_PROGRESS' && (
                   <Button 
-                    onClick={() => {
-                      if (activeRide) {
-                        setShowCompletionConfirm(true);
-                      }
-                    }}
+                    onClick={() => setShowCompletionConfirm(true)}
                     className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
-                    disabled={updateRideStatus.isPending || !activeRide}
+                    disabled={updateRideStatus.isPending}
                   >
                     <CheckCircle className="w-4 h-4 mr-2" />
                     {lang === 'mg' ? 'Vita ny dia' : 'Terminer la course'}
@@ -1162,6 +1041,18 @@ export default function DriverHome() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Chat Box */}
+      {showChat && activeRide && (
+        <ChatBox
+          rideId={activeRide.id}
+          currentUserId={profile?.userId || 0}
+          otherUserId={otherUserId}
+          otherUserName={otherUserName}
+          isOpen={showChat}
+          onClose={() => setShowChat(false)}
+        />
+      )}
     </MobileLayout>
   );
 }

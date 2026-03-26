@@ -105,11 +105,41 @@ export async function registerRoutes(
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
+        
         if (data.type === 'auth' && data.payload?.userId) {
           userId = data.payload.userId;
           clients.set(userId!, ws);
           console.log(`✅ WebSocket authenticated for user ${userId}`);
         }
+        
+        // Gestion des messages de chat
+        if (data.type === 'chat' && userId) {
+          const { toUserId, message: msg, rideId } = data.payload;
+          
+          const target = clients.get(toUserId);
+          if (target && target.readyState === WebSocket.OPEN) {
+            target.send(JSON.stringify({
+              type: 'CHAT_MESSAGE',
+              payload: {
+                from: userId,
+                fromName: data.payload.fromName,
+                message: msg,
+                rideId: rideId,
+                timestamp: new Date().toISOString()
+              }
+            }));
+          }
+          
+          // Stocker le message dans la base de données (optionnel)
+          console.log(`💬 Chat message from ${userId} to ${toUserId}: ${msg}`);
+        }
+        
+        // Gestion des notifications de lecture de messages
+        if (data.type === 'mark_read' && userId) {
+          // Ici vous pouvez implémenter la logique pour marquer les messages comme lus
+          console.log(`📖 User ${userId} marked messages as read for ride ${data.payload.rideId}`);
+        }
+        
       } catch (e) {
         console.error("❌ WS error:", e);
       }
@@ -307,6 +337,33 @@ export async function registerRoutes(
       userId: req.session?.userId,
       environment: process.env.NODE_ENV,
     });
+  });
+
+  // ==================== CHAT HISTORY ROUTES ====================
+  
+  // Table pour l'historique des messages (à ajouter dans schema.ts)
+  // Pour l'instant, on utilise un stockage en mémoire
+  const chatHistory = new Map<string, any[]>();
+  
+  app.get('/api/chat/history/:rideId', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const rideId = parseInt(req.params.rideId);
+    const key = `ride_${rideId}`;
+    const messages = chatHistory.get(key) || [];
+    
+    res.json(messages);
+  });
+  
+  app.post('/api/chat/mark-read/:rideId', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    // Ici, vous pouvez implémenter la logique pour marquer les messages comme lus
+    res.json({ success: true });
   });
 
   // ==================== ADVERTISEMENT ROUTES ====================

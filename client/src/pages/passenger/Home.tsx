@@ -141,7 +141,7 @@ export default function PassengerHome() {
   const pickupDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropoffDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 🔥 Auto-refresh des données
+  // Auto-refresh des données
   const { refresh, isRefreshing } = useAutoRefresh({
     queryKeys: [
       ['/api/places'],
@@ -161,7 +161,7 @@ export default function PassengerHome() {
     staleTime: 60000,
   });
 
-  // 🔥 Vérifier s'il y a une course active
+  // Vérifier s'il y a une course active
   const { data: activeRide } = useQuery({
     queryKey: ['/api/rides/active'],
     queryFn: async () => {
@@ -172,7 +172,7 @@ export default function PassengerHome() {
     refetchInterval: 10000,
   });
 
-  // 🔥 WebSocket events
+  // WebSocket events
   useWebSocketEvents(activeRide?.passengerId);
 
   useEffect(() => {
