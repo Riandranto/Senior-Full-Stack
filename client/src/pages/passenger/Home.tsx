@@ -182,34 +182,44 @@ export default function PassengerHome() {
       console.log('📦 Active ride data:', data);
       return data;
     },
-    refetchInterval: 3000,
+    refetchInterval: 2000, // Polling toutes les 2 secondes pour les mises à jour immédiates
     refetchIntervalInBackground: true,
+    staleTime: 0, // Toujours considérer comme stale pour forcer le refetch
   });
+
+  // Ajouter un useEffect pour forcer le refetch quand la page devient visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('📱 Page visible, refetching active ride...');
+        refetchActiveRide();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refetchActiveRide]);
 
   // Écouter les événements WebSocket pour OFFER_ACCEPTED
   useEffect(() => {
-    if (!connected) {
-      console.log('⚠️ WebSocket not connected, cannot subscribe to events');
-      return;
-    }
+    if (!connected) return;
     
-    console.log('🎧 Subscribing to OFFER_ACCEPTED');
-    
-    const unsubscribeOffer = subscribe('OFFER_ACCEPTED', (data: any) => {
-      console.log('🎉 OFFER_ACCEPTED received in PassengerHome:', data);
+    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('🎉 OFFER_ACCEPTED received:', data);
       
-      // Rafraîchir immédiatement
+      // Forcer le refetch immédiat
       refetchActiveRide();
       queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+      queryClient.refetchQueries({ queryKey: ['/api/rides/active'] });
       
       // Ouvrir le chat immédiatement
-      console.log('📱 Opening chat window for accepted offer');
       setOtherUserName(data.driverName || 'Chauffeur');
       setOtherUserId(data.driverId);
       setActiveRideId(data.rideId);
       setShowChat(true);
       setHasActiveRide(true);
       
+      // Notification
       toast({
         title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
         description: lang === 'mg' 
@@ -218,9 +228,7 @@ export default function PassengerHome() {
       });
     });
     
-    return () => {
-      unsubscribeOffer();
-    };
+    return () => unsubscribe();
   }, [connected, refetchActiveRide, queryClient, toast, lang]);
 
   useEffect(() => {
@@ -246,6 +254,15 @@ export default function PassengerHome() {
       setActiveRideId(null);
     }
   }, [activeRide, setLocation]);
+
+  useEffect(() => {
+    if (activeRide && activeRide.status !== 'PENDING' && activeRide.status !== 'BIDDING' && activeRide.status !== 'REQUESTED') {
+      // Ouvrir le chat automatiquement
+      setShowChat(true);
+      setOtherUserName(activeRide.driver?.name || 'Chauffeur');
+      setOtherUserId(activeRide.driverId);
+    }
+  }, [activeRide]);
 
   const searchLocalPlaces = useCallback((query: string) => {
     const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -487,19 +504,29 @@ export default function PassengerHome() {
   if (hasActiveRide) {
     return (
       <MobileLayout role="passenger">
+        {/* Indicateur de connexion WebSocket pour le débogage */}
+        <div className="absolute top-16 left-4 z-50">
+          <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
+            {connected ? '● Connecté' : '○ Déconnecté'}
+          </div>
+        </div>
+        
         <div className="flex h-screen items-center justify-center">
           <LoadingAnimation />
         </div>
+        
         {/* Chat Box - s'ouvre automatiquement */}
         {showChat && activeRideId && (
-          <ChatBox
-            rideId={activeRideId}
-            currentUserId={currentUser?.id || 0}
-            otherUserId={otherUserId}
-            otherUserName={otherUserName}
-            isOpen={showChat}
-            onClose={() => setShowChat(false)}
-          />
+          <div className="fixed bottom-0 left-0 right-0 z-50">
+            <ChatBox
+              rideId={activeRideId}
+              currentUserId={currentUser?.id || 0}
+              otherUserId={otherUserId}
+              otherUserName={otherUserName}
+              isOpen={showChat}
+              onClose={() => setShowChat(false)}
+            />
+          </div>
         )}
       </MobileLayout>
     );
@@ -515,8 +542,10 @@ export default function PassengerHome() {
       </div>
 
       {/* Publicité en haut */}
-      <div className="absolute top-16 left-0 right-0 z-20 px-3">
-        <AdBanner position="HOME_TOP" />
+      <div className="absolute top-14 left-0 right-0 z-20 px-3 pointer-events-none">
+        <div className="pointer-events-auto">
+          <AdBanner position="HOME_TOP" />
+        </div>
       </div>
       
       <div className="absolute inset-0 z-0 pt-14">

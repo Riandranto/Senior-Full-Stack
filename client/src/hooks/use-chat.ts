@@ -1,4 +1,4 @@
-// src/hooks/use-chat.ts
+// src/hooks/use-chat.ts - Version finale
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './use-websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -22,7 +22,6 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
   const { toast } = useToast();
   const { lang } = useTranslation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -60,29 +59,25 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
   // Envoyer un message
   const sendChatMessage = useCallback((message: string) => {
     if (!message.trim()) {
-      console.warn('Message vide, non envoyé');
       return false;
     }
     
     if (!connected) {
-      console.warn('WebSocket non connecté, impossible d\'envoyer le message');
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy mifandray" : "Déconnecté",
         description: lang === 'mg' 
-          ? "Tsy afaka mandefa hafatra, hamafiso ny tambajotra"
-          : "Impossible d'envoyer le message, vérifiez votre connexion",
+          ? "Tsy afaka mandefa hafatra"
+          : "Impossible d'envoyer le message",
       });
       return false;
     }
 
     if (isSending) {
-      console.warn('Message already sending');
       return false;
     }
 
     setIsSending(true);
-    console.log('📤 Sending chat message:', { rideId, message });
     
     const tempId = Date.now().toString();
     const tempMessage: ChatMessage = {
@@ -98,45 +93,40 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     setMessages(prev => [...prev, tempMessage]);
     scrollToBottom();
 
-    try {
-      const success = sendMessage({
-        type: 'CHAT_MESSAGE',
-        payload: {
-          rideId,
-          message: message.trim(),
-          fromName: otherUserName || 'Utilisateur',
-          from: currentUserId
-        }
-      });
-
-      if (!success) {
-        console.error('Échec d\'envoi du message');
-        setMessages(prev => prev.filter(msg => msg.id !== tempId));
-        toast({
-          variant: "destructive",
-          title: lang === 'mg' ? "Tsy nety" : "Erreur",
-          description: lang === 'mg' 
-            ? "Tsy afaka nandefa hafatra"
-            : "Impossible d'envoyer le message",
-        });
-        return false;
+    const success = sendMessage({
+      type: 'CHAT_MESSAGE',
+      payload: {
+        rideId,
+        message: message.trim(),
+        fromName: otherUserName || 'Utilisateur',
+        from: currentUserId,
+        toUserId: 0
       }
-    } finally {
-      setTimeout(() => setIsSending(false), 500);
+    });
+
+    if (!success) {
+      setMessages(prev => prev.filter(msg => msg.id !== tempId));
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' 
+          ? "Tsy afaka nandefa hafatra"
+          : "Impossible d'envoyer le message",
+      });
+      setIsSending(false);
+      return false;
     }
 
+    setTimeout(() => setIsSending(false), 500);
     return true;
   }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang, isSending]);
 
-  // Écouter les messages entrants via WebSocket
+  // Écouter les messages entrants
   useEffect(() => {
     const unsubscribe = subscribe('CHAT_MESSAGE', (payload: any) => {
-      console.log('📨 Chat message received:', payload);
-      
       if (payload.rideId === rideId) {
         const isOwn = payload.from === currentUserId;
         
-        // Vérifier si le message existe déjà
         const exists = messages.some(m => 
           m.from === payload.from && 
           m.message === payload.message && 
@@ -164,23 +154,18 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
         });
         
         scrollToBottom();
-        
-        // Recharger l'historique pour être sûr
-        if (!isOwn) {
-          loadHistory();
-        }
       }
     });
     
     return () => unsubscribe();
-  }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom, loadHistory]);
+  }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom]);
 
   // Charger l'historique au montage
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
-  // Scroll automatique quand de nouveaux messages arrivent
+  // Scroll automatique
   useEffect(() => {
     if (messages.length > previousMessagesLength.current) {
       scrollToBottom();
@@ -197,21 +182,15 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
           credentials: 'include'
         });
         setUnreadCount(0);
-        
-        sendMessage({
-          type: 'MARK_READ',
-          payload: { rideId }
-        });
       } catch (error) {
         console.error('Failed to mark messages as read:', error);
       }
     }
-  }, [rideId, unreadCount, sendMessage]);
+  }, [rideId, unreadCount]);
 
   return {
     messages,
     sendMessage: sendChatMessage,
-    isTyping,
     unreadCount,
     markAsRead,
     messagesEndRef,

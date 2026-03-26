@@ -113,13 +113,10 @@ export function useAuth() {
       // Stocker l'utilisateur dans localStorage pour WebSocket
       localStorage.setItem('user', JSON.stringify(data.user));
       
-      // Mettre à jour le cache immédiatement
+      // Mettre à jour le cache
       queryClient.setQueryData([api.auth.me.path], data.user);
       
-      // Attendre un peu pour que la session soit bien établie
       await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Rafraîchir pour s'assurer que la session est valide
       await refetch();
       
       toast({
@@ -129,7 +126,7 @@ export function useAuth() {
           : "Bienvenue sur Farady",
       });
     
-      // Redirection basée sur le rôle
+      // Redirection
       if (data.user.role === 'ADMIN') {
         window.location.href = '/admin';
       } else if (data.user.role === 'DRIVER') {
