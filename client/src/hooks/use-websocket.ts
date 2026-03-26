@@ -13,17 +13,26 @@ export function useWebSocket() {
   const handlersRef = useRef<Map<string, Set<(data: any) => void>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<NodeJS.Timeout>();
-  const queryClient = useQueryClient(); // <-- C'est important de déclarer ici
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const { lang } = useTranslation();
 
   const getWebSocketUrl = useCallback(() => {
-    if (import.meta.env.PROD) {
+    // Utiliser l'URL de production en production, sinon localhost
+    const isProduction = window.location.hostname !== 'localhost' && 
+                         window.location.hostname !== '127.0.0.1';
+    
+    if (isProduction) {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.host;
-      return `${protocol}//${host}/ws`;
+      const wsUrl = `${protocol}//${host}/ws`;
+      console.log(`🌐 Production WebSocket URL: ${wsUrl}`);
+      return wsUrl;
     }
-    return 'ws://localhost:5000/ws';
+    
+    const wsUrl = 'ws://localhost:5000/ws';
+    console.log(`🔧 Development WebSocket URL: ${wsUrl}`);
+    return wsUrl;
   }, []);
 
   const connect = useCallback(() => {
@@ -46,7 +55,7 @@ export function useWebSocket() {
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
-      // Récupérer l'utilisateur depuis localStorage ou session
+      // Récupérer l'utilisateur depuis localStorage
       const storedUser = localStorage.getItem('user');
       let userId = null;
       try {
@@ -57,11 +66,14 @@ export function useWebSocket() {
       } catch (e) {}
       
       if (userId) {
-        wsRef.current?.send(JSON.stringify({
+        const authMessage = JSON.stringify({
           type: 'auth',
           payload: { userId }
-        }));
+        });
+        wsRef.current?.send(authMessage);
         console.log(`🔐 Authenticated as user: ${userId}`);
+      } else {
+        console.warn('⚠️ No user ID found for WebSocket authentication');
       }
     };
 
@@ -96,13 +108,11 @@ export function useWebSocket() {
         const msg = JSON.parse(e.data);
         console.log(`📨 WebSocket message: ${msg.type}`, msg.payload);
         
-        // Exécuter les handlers enregistrés
         const handlers = handlersRef.current.get(msg.type);
         if (handlers) {
           handlers.forEach(fn => fn(msg.payload));
         }
         
-        // Invalider les requêtes en fonction du type de message
         switch (msg.type) {
           case 'RIDE_STATUS_CHANGED':
             console.log('🔄 RIDE_STATUS_CHANGED:', msg.payload);
@@ -110,7 +120,6 @@ export function useWebSocket() {
             queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
             queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id, 'offers'] });
             break;
             
           case 'CHAT_MESSAGE':
@@ -134,13 +143,6 @@ export function useWebSocket() {
           case 'OFFER_NEW':
             console.log('🆕 OFFER_NEW:', msg.payload);
             queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId, 'offers'] });
-            break;
-            
-          case 'DRIVER_LOCATION':
-            queryClient.setQueryData(
-              ['/api/driver', msg.payload.driverId, 'location'],
-              msg.payload
-            );
             break;
         }
       } catch (err) {

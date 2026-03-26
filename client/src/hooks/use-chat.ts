@@ -60,9 +60,16 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     
     if (!connected) {
       console.warn('WebSocket non connecté, impossible d\'envoyer le message');
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy mifandray" : "Déconnecté",
+        description: lang === 'mg' 
+          ? "Tsy afaka mandefa hafatra, hamafiso ny tambajotra"
+          : "Impossible d'envoyer le message, vérifiez votre connexion",
+      });
       return false;
     }
-
+  
     console.log('📤 Sending chat message:', { rideId, message });
     
     const tempId = Date.now().toString();
@@ -75,27 +82,36 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
       timestamp: new Date().toISOString(),
       isOwn: true
     };
-
+  
     setMessages(prev => [...prev, tempMessage]);
     scrollToBottom();
-
+  
     const success = sendMessage({
       type: 'chat',
       payload: {
         rideId,
         message: message.trim(),
-        fromName: otherUserName || 'Utilisateur'
+        fromName: otherUserName || 'Utilisateur',
+        from: currentUserId
       }
     });
-
+  
     if (!success) {
       console.error('Échec d\'envoi du message');
       setMessages(prev => prev.filter(msg => msg.id !== tempId));
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' 
+          ? "Tsy afaka nandefa hafatra"
+          : "Impossible d'envoyer le message",
+      });
       return false;
     }
-
+  
     return true;
-  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName]);
+  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang]);
+  
 
   // Écouter les messages entrants via WebSocket
   useEffect(() => {

@@ -110,6 +110,9 @@ export function useAuth() {
     onSuccess: async (data) => {
       console.log('✅ Login successful, user:', data.user);
       
+      // Stocker l'utilisateur dans localStorage pour WebSocket
+      localStorage.setItem('user', JSON.stringify(data.user));
+      
       // Mettre à jour le cache immédiatement
       queryClient.setQueryData([api.auth.me.path], data.user);
       
@@ -125,7 +128,7 @@ export function useAuth() {
           ? "Tonga soa eto Farady"
           : "Bienvenue sur Farady",
       });
-
+    
       // Redirection basée sur le rôle
       if (data.user.role === 'ADMIN') {
         window.location.href = '/admin';

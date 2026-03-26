@@ -193,7 +193,7 @@ export default function PassengerHome() {
       return;
     }
     
-    console.log('🎧 Subscribing to OFFER_ACCEPTED and RIDE_STATUS_CHANGED events');
+    console.log('🎧 Subscribing to OFFER_ACCEPTED');
     
     const unsubscribeOffer = subscribe('OFFER_ACCEPTED', (data: any) => {
       console.log('🎉 OFFER_ACCEPTED received in PassengerHome:', data);
@@ -202,12 +202,13 @@ export default function PassengerHome() {
       refetchActiveRide();
       queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       
-      // Ouvrir le chat
-      console.log('📱 Opening chat window');
+      // Ouvrir le chat immédiatement
+      console.log('📱 Opening chat window for accepted offer');
       setOtherUserName(data.driverName || 'Chauffeur');
       setOtherUserId(data.driverId);
       setActiveRideId(data.rideId);
       setShowChat(true);
+      setHasActiveRide(true);
       
       toast({
         title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
@@ -217,28 +218,10 @@ export default function PassengerHome() {
       });
     });
     
-    const unsubscribeStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
-      console.log('🔄 RIDE_STATUS_CHANGED in PassengerHome:', data);
-      
-      if (data.id === activeRide?.id) {
-        refetchActiveRide();
-        
-        // Ouvrir le chat quand la course est acceptée
-        if (data.status === 'ASSIGNED') {
-          console.log('📱 Opening chat for ASSIGNED status');
-          setOtherUserName(data.driverName || 'Chauffeur');
-          setOtherUserId(data.driverId);
-          setActiveRideId(data.id);
-          setShowChat(true);
-        }
-      }
-    });
-    
     return () => {
       unsubscribeOffer();
-      unsubscribeStatus();
     };
-  }, [connected, refetchActiveRide, queryClient, activeRide, toast, lang]);
+  }, [connected, refetchActiveRide, queryClient, toast, lang]);
 
   useEffect(() => {
     if (activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED') {
@@ -256,12 +239,11 @@ export default function PassengerHome() {
         setShowChat(true);
       }
       
-      // Rediriger vers la page de suivi
-      setLocation(`/passenger/ride/${activeRide.id}`);
+      // Ne pas rediriger immédiatement, laisser l'utilisateur voir le chat
+      // setLocation(`/passenger/ride/${activeRide.id}`);
     } else {
       setHasActiveRide(false);
       setActiveRideId(null);
-      // Ne pas fermer le chat immédiatement, laisser le composant gérer
     }
   }, [activeRide, setLocation]);
 
