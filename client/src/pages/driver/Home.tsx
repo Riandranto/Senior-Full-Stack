@@ -35,6 +35,7 @@ import { Progress } from '@/components/ui/progress';
 import { useWebSocket } from '@/hooks/use-websocket';
 import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
+import { useQueryClient } from '@tanstack/react-query'; // <-- AJOUTER CET IMPORT
 
 interface ActiveRide {
   id: number;
@@ -99,6 +100,7 @@ export default function DriverHome() {
   const sendOffer = useSendOffer();
   const updateLocation = useUpdateLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient(); // <-- AJOUTER CETTE LIGNE
   
   const { data: activeRide, refetch: refetchActiveRide } = useDriverActiveRide();
   const { connected, subscribe, sendMessage } = useWebSocket();
@@ -215,7 +217,7 @@ export default function DriverHome() {
       setRouteCoords(undefined);
       setPickupCoords(null);
       setDropoffCoords(null);
-      setShowChat(false); // Fermer le chat quand la course est terminée
+      setShowChat(false);
       
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
@@ -239,6 +241,7 @@ export default function DriverHome() {
     };
   }, [activeRide]);
 
+  // Écouter les événements d'acceptation d'offre
   useEffect(() => {
     if (!connected) return;
     
@@ -246,7 +249,6 @@ export default function DriverHome() {
       console.log('🎉 OFFER_ACCEPTED received in DriverHome:', data);
       
       if (data.driverId === profile?.userId) {
-        // Rafraîchir immédiatement
         refetchActiveRide();
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
@@ -628,7 +630,7 @@ export default function DriverHome() {
         </div>
       )}
 
-      {/* Fenêtre de suivi de course - SIMPLIFIÉE avec uniquement le bouton de démarrage */}
+      {/* Fenêtre de suivi de course */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
           <motion.div
@@ -639,7 +641,7 @@ export default function DriverHome() {
             className="absolute bottom-0 w-full z-20 p-4"
           >
             <Card className="p-5 rounded-3xl shadow-2xl border-0 bg-background/95 backdrop-blur-xl">
-              {/* En-tête avec timer */}
+              {/* En-tête */}
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <Badge className="mb-2" variant={
@@ -665,7 +667,7 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* Infos passager avec bouton chat */}
+              {/* Infos passager */}
               <div className="bg-secondary/50 rounded-2xl p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -710,7 +712,7 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* UNIQUEMENT LE BOUTON POUR COMMENCER LE TRAJET */}
+              {/* Bouton pour commencer le trajet */}
               <div className="space-y-3">
                 {activeRide.status === 'ASSIGNED' && (
                   <Button 
@@ -726,16 +728,11 @@ export default function DriverHome() {
                     {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
                   </Button>
                 )}
-
-                {/* Supprimé les autres boutons: "Arrivé", "Commencer la course", "Terminer" etc. */}
               </div>
             </Card>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Dialog de confirmation d'arrivée - SUPPRIMÉ car plus utilisé */}
-      {/* Dialog de confirmation de fin de course - SUPPRIMÉ car plus utilisé */}
 
       {/* Liste des demandes */}
       <AnimatePresence>
@@ -953,7 +950,7 @@ export default function DriverHome() {
         </DialogContent>
       </Dialog>
 
-      {/* Chat Box - S'ouvre automatiquement quand la course est acceptée */}
+      {/* Chat Box */}
       {showChat && activeRide && (
         <ChatBox
           rideId={activeRide.id}
