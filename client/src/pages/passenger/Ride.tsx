@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRoute } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, DriverMarkerInfo, fetchOSRMRoute } from '@/components/Map';
@@ -9,12 +9,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Clock, Navigation2, CheckCircle2, User, Phone, XCircle, Star, ShieldAlert, Share2, MapPin, Route, Eye, Car, Bike } from 'lucide-react';
+import { Clock, Navigation2, CheckCircle2, User, Phone, XCircle, Star, ShieldAlert, Share2, MapPin, Route, Eye, Car, Bike, X, MessageCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AdBanner } from '@/components/AdBanner';
+import ChatBox from '@/components/ChatBox';
 
 export default function PassengerRide() {
   const [, params] = useRoute('/passenger/ride/:id');
@@ -22,13 +23,21 @@ export default function PassengerRide() {
   const { t, lang } = useTranslation();
   
   const { toast } = useToast();
-  const { data: ride } = useRide(rideId);
+  const { data: ride, refetch: refetchRide } = useRide(rideId);
   const { data: offers = [] } = useRideOffers(rideId);
   const acceptOffer = useAcceptOffer(rideId!);
   const cancelRide = useCancelRide(rideId!);
   const rateRide = useRateRide(rideId!);
-  const { subscribe } = useWebSocket();
+  const { connected, subscribe, sendMessage } = useWebSocket();
 
+  // Chat states
+  const [showChat, setShowChat] = useState(false);
+  const [otherUserName, setOtherUserName] = useState('');
+  const [otherUserId, setOtherUserId] = useState(0);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  
+  // Ad banner states
+  const [showAdBanner, setShowAdBanner] = useState(true);
   const [selectedRating, setSelectedRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
   const [ratingComment, setRatingComment] = useState('');
@@ -36,6 +45,25 @@ export default function PassengerRide() {
   const [showSOS, setShowSOS] = useState(false);
   const [assignedDriverLoc, setAssignedDriverLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
+
+  // Récupérer l'utilisateur courant
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        setCurrentUser(JSON.parse(storedUser));
+      } catch (e) {}
+    }
+  }, []);
+
+  // Ouvrir le chat automatiquement quand la course est assignée
+  useEffect(() => {
+    if (ride && (ride.status === 'ASSIGNED' || ride.status === 'DRIVER_EN_ROUTE' || ride.status === 'DRIVER_ARRIVED' || ride.status === 'IN_PROGRESS')) {
+      setOtherUserName(ride.driver?.name || 'Chauffeur');
+      setOtherUserId(ride.driverId);
+      setShowChat(true);
+    }
+  }, [ride]);
 
   useEffect(() => {
     if (ride?.pickupLat && ride?.dropLat) {
@@ -74,13 +102,23 @@ export default function PassengerRide() {
   }, [driverLocData]);
 
   useEffect(() => {
-    const unsub = subscribe('DRIVER_LOCATION' as any, (data: any) => {
+    const unsub = subscribe('DRIVER_LOCATION', (data: any) => {
       if (data.rideId === rideId) {
         setAssignedDriverLoc({ lat: data.lat, lng: data.lng });
       }
     });
     return unsub;
   }, [subscribe, rideId]);
+
+  // Écouter les événements de statut de course
+  useEffect(() => {
+    const unsub = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+      if (data.id === rideId) {
+        refetchRide();
+      }
+    });
+    return unsub;
+  }, [subscribe, rideId, refetchRide]);
 
   const handleSubmitRating = () => {
     if (selectedRating === 0) return;
@@ -148,12 +186,30 @@ export default function PassengerRide() {
 
   return (
     <MobileLayout role="passenger">
-      {/* Publicité dans l'écran de course */}
-      {isActive && (
-        <div className="absolute bottom-[calc(100%-180px)] left-0 right-0 z-20 px-3">
-          <AdBanner position="RIDE_SCREEN" />
+      {/* Indicateur de connexion WebSocket */}
+      <div className="absolute top-16 left-4 z-30">
+        <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
+          {connected ? '● Connecté' : '○ Déconnecté'}
+        </div>
+      </div>
+
+      {/* Publicité fermable */}
+      {isActive && showAdBanner && (
+        <div className="absolute top-14 left-0 right-0 z-20 px-3">
+          <div className="relative bg-background/95 backdrop-blur-xl rounded-xl shadow-lg border">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-background shadow-md z-10"
+              onClick={() => setShowAdBanner(false)}
+            >
+              <X className="w-3 h-3" />
+            </Button>
+            <AdBanner position="RIDE_SCREEN" />
+          </div>
         </div>
       )}
+      
       <div className="absolute inset-0 z-0 pt-14">
         <MapView 
           center={pickupCoords}
@@ -398,6 +454,15 @@ export default function PassengerRide() {
                   >
                     <Phone className="w-4 h-4" />
                   </Button>
+                  <Button 
+                    size="icon" 
+                    variant="outline"
+                    className="rounded-full w-9 h-9"
+                    onClick={() => setShowChat(!showChat)}
+                    data-testid="button-chat"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                  </Button>
                 </div>
               </div>
 
@@ -493,6 +558,18 @@ export default function PassengerRide() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Chat Box */}
+      {showChat && rideId && currentUser && (
+        <ChatBox
+          rideId={rideId}
+          currentUserId={currentUser.id}
+          otherUserId={otherUserId}
+          otherUserName={otherUserName}
+          isOpen={showChat}
+          onClose={() => setShowChat(false)}
+        />
+      )}
 
       <Dialog open={showSOS} onOpenChange={setShowSOS}>
         <DialogContent className="rounded-3xl sm:rounded-3xl border-0 shadow-2xl max-w-sm mx-auto">

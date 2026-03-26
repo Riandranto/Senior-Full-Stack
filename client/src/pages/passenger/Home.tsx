@@ -16,7 +16,6 @@ import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdBanner } from '@/components/AdBanner';
-import ChatBox from '@/components/ChatBox';
 import { useWebSocket } from '@/hooks/use-websocket';
 
 interface NominatimResult {
@@ -216,7 +215,6 @@ export default function PassengerHome() {
       setOtherUserName(data.driverName || 'Chauffeur');
       setOtherUserId(data.driverId);
       setActiveRideId(data.rideId);
-      setShowChat(true);
       setHasActiveRide(true);
       
       // Notification
@@ -258,7 +256,6 @@ export default function PassengerHome() {
   useEffect(() => {
     if (activeRide && activeRide.status !== 'PENDING' && activeRide.status !== 'BIDDING' && activeRide.status !== 'REQUESTED') {
       // Ouvrir le chat automatiquement
-      setShowChat(true);
       setOtherUserName(activeRide.driver?.name || 'Chauffeur');
       setOtherUserId(activeRide.driverId);
     }
@@ -515,19 +512,6 @@ export default function PassengerHome() {
           <LoadingAnimation />
         </div>
         
-        {/* Chat Box - s'ouvre automatiquement */}
-        {showChat && activeRideId && (
-          <div className="fixed bottom-0 left-0 right-0 z-50">
-            <ChatBox
-              rideId={activeRideId}
-              currentUserId={currentUser?.id || 0}
-              otherUserId={otherUserId}
-              otherUserName={otherUserName}
-              isOpen={showChat}
-              onClose={() => setShowChat(false)}
-            />
-          </div>
-        )}
       </MobileLayout>
     );
   }

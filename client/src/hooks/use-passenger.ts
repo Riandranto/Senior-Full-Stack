@@ -89,33 +89,34 @@ export function useRide(id: number | null) {
           return null;
         }
         const error = await res.json();
-        throw new Error(error.message || "Failed to apiFetch ride");
+        throw new Error(error.message || "Failed to fetch ride");
       }
       
       return res.json();
     },
     enabled: !!id,
-    // Polling intelligent basé sur le statut
-    reapiFetchInterval: (query) => {
+    refetchInterval: (query) => {
       const status = query.state.data?.status;
       
-      if (!status) return false;
+      if (!status) return 3000;
       
+      // Polling plus agressif pendant les phases actives
       switch (status) {
         case 'REQUESTED':
         case 'BIDDING':
-          return 3000; // 3 secondes - recherche d'offres
+          return 2000; // 2 secondes pour les offres
         case 'ASSIGNED':
         case 'DRIVER_EN_ROUTE':
         case 'DRIVER_ARRIVED':
         case 'IN_PROGRESS':
-          return 5000; // 5 secondes - suivi de course
+          return 3000; // 3 secondes pour le suivi
         default:
-          return false; // Arrêter le polling pour COMPLETED, CANCELED
+          return false;
       }
     },
+    refetchIntervalInBackground: true,
+    staleTime: 0,
     retry: 2,
-    staleTime: 2000, // 2 secondes
     onError: (error: Error) => {
       toast({
         variant: "destructive",
