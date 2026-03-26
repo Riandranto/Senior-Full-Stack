@@ -24,18 +24,17 @@ import { Input } from '@/components/ui/input';
 import { 
   MapPin, Navigation, Clock, Send, CheckCircle, Route, Phone, 
   Loader2, AlertCircle, User, Bike, Car, Wifi, WifiOff,
-  Play, MapPinCheck, Flag, XCircle, MessageCircle
+  Play, XCircle, MessageCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { useWebSocket } from '@/hooks/use-websocket';
 import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
-import { useQueryClient } from '@tanstack/react-query'; // <-- AJOUTER CET IMPORT
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ActiveRide {
   id: number;
@@ -100,7 +99,7 @@ export default function DriverHome() {
   const sendOffer = useSendOffer();
   const updateLocation = useUpdateLocation();
   const { toast } = useToast();
-  const queryClient = useQueryClient(); // <-- AJOUTER CETTE LIGNE
+  const queryClient = useQueryClient();
   
   const { data: activeRide, refetch: refetchActiveRide } = useDriverActiveRide();
   const { connected, subscribe, sendMessage } = useWebSocket();
@@ -135,7 +134,6 @@ export default function DriverHome() {
   const [locationError, setLocationError] = useState<string | null>(null);
   
   const [showRideTracking, setShowRideTracking] = useState(false);
-  const [showArrivalConfirm, setShowArrivalConfirm] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [timerStarted, setTimerStarted] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -156,7 +154,7 @@ export default function DriverHome() {
 
   // Afficher la fenêtre de suivi quand une course est active
   useEffect(() => {
-    if (activeRide && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status)) {
+    if (activeRide && ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'].includes(activeRide.status)) {
       setShowRideTracking(true);
 
       if (activeRide.pickupLat && activeRide.pickupLng) {
@@ -190,21 +188,7 @@ export default function DriverHome() {
         });
       }
       
-      if (activeRide.status === 'ASSIGNED') {
-        setTimerStarted(false);
-        setStartTime(null);
-        
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = undefined;
-        }
-        if (secondsIntervalRef.current) {
-          clearInterval(secondsIntervalRef.current);
-          secondsIntervalRef.current = undefined;
-        }
-      } 
-      
-      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING')
+      // Ouvrir automatiquement le chat quand la course est acceptée
       if (activeRide.status !== 'PENDING' && activeRide.status !== 'OFFER_SENT') {
         setOtherUserName(activeRide.passengerName);
         setOtherUserId(activeRide.passengerId);
@@ -271,7 +255,7 @@ export default function DriverHome() {
       lng: parseFloat(r.pickupLng as any),
     }));
     
-    if (activeRide && ['DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(activeRide.status) && activeRide.pickupLat) {
+    if (activeRide && ['IN_PROGRESS'].includes(activeRide.status) && activeRide.pickupLat) {
       markers.push({
         lat: parseFloat(activeRide.pickupLat as any),
         lng: parseFloat(activeRide.pickupLng as any),
@@ -280,16 +264,6 @@ export default function DriverHome() {
   
     return markers;
   }, [requests, activeRide]);
-
-  const handleArrived = async () => {
-    if (!activeRide) return;
-    
-    try {
-      await updateRideStatus.mutateAsync('DRIVER_ARRIVED');
-      setShowArrivalConfirm(false);
-      refresh();
-    } catch (error) {}
-  };
 
   const handleStartJourney = async () => {
     if (!activeRide) {
@@ -303,7 +277,8 @@ export default function DriverHome() {
     }
   
     try {
-      await updateRideStatus.mutateAsync('DRIVER_EN_ROUTE');
+      // Passer directement de ASSIGNED à IN_PROGRESS (démarrage du trajet)
+      await updateRideStatus.mutateAsync('IN_PROGRESS');
       setTimerStarted(true);
       setStartTime(Date.now());
       await refresh();
@@ -324,15 +299,6 @@ export default function DriverHome() {
     }
   };
 
-  const handleStartRide = async () => {
-    if (!activeRide) return;
-    
-    try {
-      await updateRideStatus.mutateAsync('IN_PROGRESS');
-      refresh();
-    } catch (error) {}
-  };
-
   const handleCompleteRide = async () => {
     if (!activeRide) return;
     
@@ -342,6 +308,13 @@ export default function DriverHome() {
       setTimerStarted(false);
       setStartTime(null);
       refresh();
+      
+      toast({
+        title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
+        description: lang === 'mg' 
+          ? `Voaray ${formattedPrice} Ar`
+          : `${formattedPrice} Ar reçus`,
+      });
     } catch (error) {}
   };
 
@@ -630,7 +603,7 @@ export default function DriverHome() {
         </div>
       )}
 
-      {/* Fenêtre de suivi de course */}
+      {/* Fenêtre de suivi de course - FLUX ULTRA SIMPLE */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
           <motion.div
@@ -645,13 +618,11 @@ export default function DriverHome() {
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <Badge className="mb-2" variant={
-                    activeRide.status === 'DRIVER_ARRIVED' ? 'default' :
-                    activeRide.status === 'IN_PROGRESS' ? 'secondary' : 'outline'
+                    activeRide.status === 'IN_PROGRESS' ? 'default' : 'outline'
                   }>
                     {activeRide.status === 'ASSIGNED' && (lang === 'mg' ? 'Voatendry' : 'Assigné')}
-                    {activeRide.status === 'DRIVER_EN_ROUTE' && (lang === 'mg' ? 'Eny an-dalana' : 'En route')}
-                    {activeRide.status === 'DRIVER_ARRIVED' && (lang === 'mg' ? 'Tonga' : 'Arrivé')}
                     {activeRide.status === 'IN_PROGRESS' && (lang === 'mg' ? 'An-dalana' : 'En cours')}
+                    {activeRide.status === 'COMPLETED' && (lang === 'mg' ? 'Vita' : 'Terminé')}
                   </Badge>
                   <h3 className="font-display font-bold text-xl">
                     {formattedPrice} Ar
@@ -712,8 +683,9 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* Bouton pour commencer le trajet */}
+              {/* Boutons d'action - FLUX ULTRA SIMPLE */}
               <div className="space-y-3">
+                {/* Bouton pour commencer le trajet (ASSIGNED) */}
                 {activeRide.status === 'ASSIGNED' && (
                   <Button 
                     onClick={handleStartJourney}
@@ -728,11 +700,81 @@ export default function DriverHome() {
                     {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
                   </Button>
                 )}
+
+                {/* Bouton pour terminer la course (IN_PROGRESS) */}
+                {activeRide.status === 'IN_PROGRESS' && (
+                  <Button 
+                    onClick={() => setShowCompletionConfirm(true)}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
+                    disabled={updateRideStatus.isPending}
+                  >
+                    {updateRideStatus.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                    )}
+                    {lang === 'mg' ? 'Vita ny dia' : 'Terminer la course'}
+                  </Button>
+                )}
+
+                {/* Bouton d'annulation */}
+                {activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED' && (
+                  <Button
+                    onClick={handleCancelRide}
+                    variant="ghost"
+                    className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <XCircle className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Mamafa ny dia' : 'Annuler la course'}
+                  </Button>
+                )}
               </div>
             </Card>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Dialog de confirmation de fin de course */}
+      <Dialog open={showCompletionConfirm} onOpenChange={setShowCompletionConfirm}>
+        <DialogContent className="rounded-3xl max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="text-center font-display text-xl">
+              {lang === 'mg' ? 'Vita ve ny dia?' : 'Course terminée?'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 text-center">
+            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-3" />
+            <p className="text-lg font-bold text-primary mb-1">
+              {formattedPrice} Ar
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {lang === 'mg' 
+                ? 'Tafiditra ao ny vola voaray'
+                : 'Ce montant sera crédité sur votre compte'}
+            </p>
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowCompletionConfirm(false)}
+              className="flex-1"
+            >
+              {lang === 'mg' ? 'Hiverina' : 'Retour'}
+            </Button>
+            <Button
+              onClick={handleCompleteRide}
+              className="flex-1 bg-green-600 hover:bg-green-700"
+              disabled={updateRideStatus.isPending}
+            >
+              {updateRideStatus.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                lang === 'mg' ? 'Eny, vita' : 'Oui, terminé'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Liste des demandes */}
       <AnimatePresence>

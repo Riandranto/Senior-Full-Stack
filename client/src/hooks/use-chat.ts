@@ -1,4 +1,4 @@
-// src/hooks/use-chat.ts - Version finale
+// src/hooks/use-chat.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './use-websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -121,12 +121,15 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     return true;
   }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang, isSending]);
 
-  // Écouter les messages entrants
+  // Écouter les messages entrants via WebSocket
   useEffect(() => {
     const unsubscribe = subscribe('CHAT_MESSAGE', (payload: any) => {
+      console.log('📨 Chat message received:', payload);
+      
       if (payload.rideId === rideId) {
         const isOwn = payload.from === currentUserId;
         
+        // Vérifier si le message existe déjà
         const exists = messages.some(m => 
           m.from === payload.from && 
           m.message === payload.message && 
@@ -160,9 +163,16 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     return () => unsubscribe();
   }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom]);
 
-  // Charger l'historique au montage
+  // Charger l'historique au montage et périodiquement
   useEffect(() => {
     loadHistory();
+    
+    // Polling toutes les 3 secondes pour les mises à jour
+    const interval = setInterval(() => {
+      loadHistory();
+    }, 3000);
+    
+    return () => clearInterval(interval);
   }, [loadHistory]);
 
   // Scroll automatique
@@ -195,6 +205,7 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     markAsRead,
     messagesEndRef,
     connected,
-    isSending
+    isSending,
+    loadHistory
   };
 }

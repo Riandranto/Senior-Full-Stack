@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AdBanner } from '@/components/AdBanner';
 import ChatBox from '@/components/ChatBox';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function PassengerRide() {
   const [, params] = useRoute('/passenger/ride/:id');
@@ -29,6 +30,9 @@ export default function PassengerRide() {
   const cancelRide = useCancelRide(rideId!);
   const rateRide = useRateRide(rideId!);
   const { connected, subscribe, sendMessage } = useWebSocket();
+  
+const queryClient = useQueryClient();
+
 
   // Chat states
   const [showChat, setShowChat] = useState(false);
@@ -64,6 +68,29 @@ export default function PassengerRide() {
       setShowChat(true);
     }
   }, [ride]);
+
+  // useEffect pour le polling actif
+useEffect(() => {
+  if (!rideId) return;
+  
+  // Polling toutes les 3 secondes pour les mises à jour
+  const interval = setInterval(() => {
+    refetchRide();
+  }, 3000);
+  
+  return () => clearInterval(interval);
+}, [rideId, refetchRide]);
+
+//un effet pour recharger les offres périodiquement
+useEffect(() => {
+  if (!rideId || !isBidding) return;
+  
+  const interval = setInterval(() => {
+    queryClient.invalidateQueries({ queryKey: [api.passenger.getOffers.path, rideId] });
+  }, 3000);
+  
+  return () => clearInterval(interval);
+}, [rideId, isBidding, queryClient]);
 
   useEffect(() => {
     if (ride?.pickupLat && ride?.dropLat) {
