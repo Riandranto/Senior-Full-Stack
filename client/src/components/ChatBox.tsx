@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useChat, ChatMessage } from '@/hooks/use-chat';
 import { useTranslation } from '@/lib/i18n';
 import { formatDistanceToNow } from 'date-fns';
-import { fr, mg } from 'date-fns/locale';
+import { fr } from 'date-fns/locale';
 
 interface ChatBoxProps {
   rideId: number;
@@ -40,12 +40,39 @@ export default function ChatBox({
   const [isTyping, setIsTyping] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
-  const dateLocale = lang === 'mg' ? mg : fr;
+  // Utiliser la locale française par défaut, et une locale personnalisée pour le malgache
+  const getLocale = () => {
+    if (lang === 'fr') {
+      return fr;
+    }
+    // Pour le malgache, on utilise fr avec un format personnalisé
+    return fr;
+  };
 
-  // Formater l'heure
+  // Formater l'heure avec gestion personnalisée pour le malgache
   const formatTime = (timestamp: string) => {
     try {
-      return formatDistanceToNow(new Date(timestamp), { addSuffix: true, locale: dateLocale });
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+      
+      if (lang === 'mg') {
+        if (diffInSeconds < 60) {
+          return 'vao izao';
+        }
+        if (diffInSeconds < 3600) {
+          const minutes = Math.floor(diffInSeconds / 60);
+          return `${minutes} minitra lasa`;
+        }
+        if (diffInSeconds < 86400) {
+          const hours = Math.floor(diffInSeconds / 3600);
+          return `${hours} ora lasa`;
+        }
+        const days = Math.floor(diffInSeconds / 86400);
+        return `${days} andro lasa`;
+      }
+      
+      return formatDistanceToNow(date, { addSuffix: true, locale: getLocale() });
     } catch {
       return '';
     }
