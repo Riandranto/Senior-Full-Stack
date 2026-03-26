@@ -1,8 +1,8 @@
+// src/hooks/use-websocket.ts
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
-import { api } from "@shared/routes";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_RECONNECT_DELAY = 1000;
@@ -46,12 +46,22 @@ export function useWebSocket() {
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
-      const user = queryClient.getQueryData([api.auth.me.path]) as any;
-      if (user?.id) {
+      // Récupérer l'utilisateur depuis localStorage ou session
+      const storedUser = localStorage.getItem('user');
+      let userId = null;
+      try {
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          userId = user.id;
+        }
+      } catch (e) {}
+      
+      if (userId) {
         wsRef.current?.send(JSON.stringify({
           type: 'auth',
-          payload: { userId: user.id }
+          payload: { userId }
         }));
+        console.log(`🔐 Authenticated as user: ${userId}`);
       }
     };
 
@@ -86,6 +96,7 @@ export function useWebSocket() {
         const msg = JSON.parse(e.data);
         console.log(`📨 WebSocket message: ${msg.type}`, msg.payload);
         
+        // Exécuter les handlers enregistrés
         const handlers = handlersRef.current.get(msg.type);
         if (handlers) {
           handlers.forEach(fn => fn(msg.payload));
@@ -94,29 +105,46 @@ export function useWebSocket() {
         // Invalider les requêtes en fonction du type de message
         switch (msg.type) {
           case 'RIDE_STATUS_CHANGED':
-            console.log('🔄 Ride status changed:', msg.payload);
+            console.log('🔄 RIDE_STATUS_CHANGED:', msg.payload);
+            // Invalider toutes les requêtes liées aux courses
             queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
             queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id] });
+            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id, 'offers'] });
             break;
             
           case 'CHAT_MESSAGE':
-            console.log('💬 Chat message received:', msg.payload);
+            console.log('💬 CHAT_MESSAGE:', msg.payload);
             queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
             break;
             
           case 'OFFER_ACCEPTED':
-            console.log('✅ Offer accepted:', msg.payload);
+            console.log('✅ OFFER_ACCEPTED:', msg.payload);
+            // Invalider immédiatement toutes les requêtes
             queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
             queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId] });
+            
+            // Forcer le refetch
+            setTimeout(() => {
+              queryClient.refetchQueries({ queryKey: ['/api/rides/active'] });
+              queryClient.refetchQueries({ queryKey: ['/api/driver/active-ride'] });
+            }, 100);
             break;
             
           case 'OFFER_NEW':
-            console.log('🆕 New offer:', msg.payload);
+            console.log('🆕 OFFER_NEW:', msg.payload);
             queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId, 'offers'] });
+            break;
+            
+          case 'DRIVER_LOCATION':
+            // Mettre à jour la position du driver sans invalidation
+            queryClient.setQueryData(
+              ['/api/driver', msg.payload.driverId, 'location'],
+              msg.payload
+            );
             break;
         }
       } catch (err) {
@@ -143,15 +171,18 @@ export function useWebSocket() {
       handlersRef.current.set(event, new Set());
     }
     handlersRef.current.get(event)!.add(handler);
+    console.log(`📡 Subscribed to event: ${event}`);
 
     return () => {
       handlersRef.current.get(event)?.delete(handler);
+      console.log(`📡 Unsubscribed from event: ${event}`);
     };
   }, []);
 
   const sendMessage = useCallback((message: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
+      console.log(`📤 Sent message: ${message.type}`, message.payload);
       return true;
     } else {
       console.warn("WebSocket not connected, message not sent:", message.type);

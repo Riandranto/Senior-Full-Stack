@@ -98,10 +98,10 @@ export default function DriverHome() {
   const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useDriverRequests();
   const sendOffer = useSendOffer();
   const updateLocation = useUpdateLocation();
-  const { connected, subscribe } = useWebSocket();
   const { toast } = useToast();
   
   const { data: activeRide, refetch: refetchActiveRide } = useDriverActiveRide();
+  const { connected, subscribe, sendMessage } = useWebSocket();
   const updateRideStatus = useUpdateRideStatus(activeRide?.id || 0);
   const extendEta = useExtendEta(activeRide?.id || 0);
 
@@ -238,6 +238,30 @@ export default function DriverHome() {
       }
     };
   }, [activeRide]);
+
+  useEffect(() => {
+    if (!connected) return;
+    
+    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('🎉 OFFER_ACCEPTED received in DriverHome:', data);
+      
+      if (data.driverId === profile?.userId) {
+        // Rafraîchir immédiatement
+        refetchActiveRide();
+        queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+        
+        toast({
+          title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
+          description: lang === 'mg' 
+            ? "Mandehana any amin'ny toerana fiaingana"
+            : "Rendez-vous au point de départ",
+        });
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [connected, profile?.userId, refetchActiveRide, queryClient, toast, lang]);
 
   const pickupMarkers = useMemo(() => {
     const markers = requests.map((r: any) => ({

@@ -4,7 +4,6 @@ import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
 import { useCreateRide } from '@/hooks/use-passenger';
 import { useWebSocketEvents } from '@/hooks/use-websocket-events';
-import { useAutoRefresh } from '@/hooks/use-auto-refresh';
 import { RefreshIndicator } from '@/components/RefreshIndicator';
 import { LoadingAnimation } from '@/components/LoadingAnimation';
 import { useTranslation } from '@/lib/i18n';
@@ -122,7 +121,7 @@ export default function PassengerHome() {
   const createRide = useCreateRide();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { connected, subscribe } = useWebSocket();
+  const { connected, subscribe, sendMessage } = useWebSocket();
   
   const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
@@ -140,6 +139,7 @@ export default function PassengerHome() {
   const [otherUserName, setOtherUserName] = useState('');
   const [otherUserId, setOtherUserId] = useState(0);
   const [activeRideId, setActiveRideId] = useState<number | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [pickupSuggestions, setPickupSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
@@ -160,60 +160,72 @@ export default function PassengerHome() {
     staleTime: 60000,
   });
 
-  // Vérifier s'il y a une course active avec polling actif
+  // Récupérer l'utilisateur courant
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        setCurrentUser(JSON.parse(storedUser));
+      } catch (e) {}
+    }
+  }, []);
+
+  // Vérifier s'il y a une course active avec polling
   const { data: activeRide, refetch: refetchActiveRide } = useQuery({
     queryKey: ['/api/rides/active'],
     queryFn: async () => {
+      console.log('🔄 Fetching active ride...');
       const res = await fetch('/api/rides/active', { credentials: 'include' });
       if (res.status === 404) return null;
       if (!res.ok) return null;
-      return res.json();
+      const data = await res.json();
+      console.log('📦 Active ride data:', data);
+      return data;
     },
-    refetchInterval: 3000, // Polling toutes les 3 secondes pour les mises à jour
+    refetchInterval: 3000,
     refetchIntervalInBackground: true,
   });
 
-  // WebSocket events
-  useWebSocketEvents(activeRide?.passengerId);
-
-  // Écouter les événements d'acceptation d'offre via WebSocket
+  // Écouter les événements WebSocket pour OFFER_ACCEPTED
   useEffect(() => {
-    if (!connected) return;
+    if (!connected) {
+      console.log('⚠️ WebSocket not connected, cannot subscribe to events');
+      return;
+    }
     
-    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
-      console.log('📢 OFFER_ACCEPTED received in PassengerHome:', data);
+    console.log('🎧 Subscribing to OFFER_ACCEPTED and RIDE_STATUS_CHANGED events');
+    
+    const unsubscribeOffer = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('🎉 OFFER_ACCEPTED received in PassengerHome:', data);
       
-      // Rafraîchir immédiatement les données
+      // Rafraîchir immédiatement
       refetchActiveRide();
       queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       
-      // Si c'est notre course, ouvrir le chat
-      if (data.passengerId === activeRide?.passengerId || data.rideId === activeRide?.id) {
-        console.log('🎉 Opening chat for accepted ride');
-        setOtherUserName(data.driverName || 'Chauffeur');
-        setOtherUserId(data.driverId);
-        setActiveRideId(data.rideId);
-        setShowChat(true);
-      }
+      // Ouvrir le chat
+      console.log('📱 Opening chat window');
+      setOtherUserName(data.driverName || 'Chauffeur');
+      setOtherUserId(data.driverId);
+      setActiveRideId(data.rideId);
+      setShowChat(true);
+      
+      toast({
+        title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
+        description: lang === 'mg' 
+          ? `Ny mpamily ${data.driverName} dia ho tonga`
+          : `Le chauffeur ${data.driverName} va arriver`,
+      });
     });
     
-    return () => unsubscribe();
-  }, [connected, subscribe, activeRide, refetchActiveRide, queryClient]);
-
-  // Écouter les changements de statut de course
-  useEffect(() => {
-    if (!connected) return;
-    
-    const unsubscribe = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+    const unsubscribeStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
       console.log('🔄 RIDE_STATUS_CHANGED in PassengerHome:', data);
       
       if (data.id === activeRide?.id) {
         refetchActiveRide();
-        queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
         
-        // Ouvrir le chat quand la course est acceptée (status !== 'PENDING' et !== 'BIDDING')
-        if (data.status !== 'PENDING' && data.status !== 'BIDDING' && data.status !== 'REQUESTED') {
-          console.log('🎉 Opening chat for ride status:', data.status);
+        // Ouvrir le chat quand la course est acceptée
+        if (data.status === 'ASSIGNED') {
+          console.log('📱 Opening chat for ASSIGNED status');
           setOtherUserName(data.driverName || 'Chauffeur');
           setOtherUserId(data.driverId);
           setActiveRideId(data.id);
@@ -222,27 +234,34 @@ export default function PassengerHome() {
       }
     });
     
-    return () => unsubscribe();
-  }, [connected, subscribe, activeRide, refetchActiveRide, queryClient]);
+    return () => {
+      unsubscribeOffer();
+      unsubscribeStatus();
+    };
+  }, [connected, refetchActiveRide, queryClient, activeRide, toast, lang]);
 
   useEffect(() => {
     if (activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED') {
       setHasActiveRide(true);
       setActiveRideId(activeRide.id);
       
-      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING' et !== 'BIDDING')
-      if (activeRide.status !== 'PENDING' && activeRide.status !== 'BIDDING' && activeRide.status !== 'REQUESTED') {
-        console.log('🎉 Opening chat for active ride:', activeRide.status);
+      // Ouvrir le chat si la course est assignée ou en cours
+      if (activeRide.status === 'ASSIGNED' || 
+          activeRide.status === 'DRIVER_EN_ROUTE' || 
+          activeRide.status === 'DRIVER_ARRIVED' || 
+          activeRide.status === 'IN_PROGRESS') {
+        console.log('📱 Opening chat for status:', activeRide.status);
         setOtherUserName(activeRide.driver?.name || 'Chauffeur');
         setOtherUserId(activeRide.driverId);
         setShowChat(true);
       }
       
+      // Rediriger vers la page de suivi
       setLocation(`/passenger/ride/${activeRide.id}`);
     } else {
       setHasActiveRide(false);
       setActiveRideId(null);
-      setShowChat(false);
+      // Ne pas fermer le chat immédiatement, laisser le composant gérer
     }
   }, [activeRide, setLocation]);
 
@@ -482,17 +501,18 @@ export default function PassengerHome() {
     : null);
   const etaMin = osrmDuration ?? (distanceKm ? Math.max(1, Math.ceil(distanceKm / 25 * 60)) : null);
 
+  // Si une course est active, afficher l'écran de chargement avec le chat
   if (hasActiveRide) {
     return (
       <MobileLayout role="passenger">
         <div className="flex h-screen items-center justify-center">
           <LoadingAnimation />
         </div>
-        {/* Chat Box qui s'ouvre automatiquement */}
+        {/* Chat Box - s'ouvre automatiquement */}
         {showChat && activeRideId && (
           <ChatBox
             rideId={activeRideId}
-            currentUserId={activeRide?.passengerId || 0}
+            currentUserId={currentUser?.id || 0}
             otherUserId={otherUserId}
             otherUserName={otherUserName}
             isOpen={showChat}
