@@ -1,4 +1,3 @@
-// src/hooks/use-websocket.ts
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./use-toast";
@@ -13,7 +12,7 @@ export function useWebSocket() {
   const handlersRef = useRef<Map<string, Set<(data: any) => void>>>(new Map());
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<NodeJS.Timeout>();
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient(); // <-- IMPORTANT: this must be here
   const { toast } = useToast();
   const { lang } = useTranslation();
 
@@ -46,7 +45,7 @@ export function useWebSocket() {
       setConnected(true);
       reconnectAttemptsRef.current = 0;
       
-      // Récupérer l'utilisateur depuis localStorage ou session
+      // Récupérer l'utilisateur depuis localStorage
       const storedUser = localStorage.getItem('user');
       let userId = null;
       try {
@@ -106,45 +105,51 @@ export function useWebSocket() {
         switch (msg.type) {
           case 'RIDE_STATUS_CHANGED':
             console.log('🔄 RIDE_STATUS_CHANGED:', msg.payload);
-            // Invalider toutes les requêtes liées aux courses
-            queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id, 'offers'] });
+            if (queryClient) {
+              queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id] });
+              queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.id, 'offers'] });
+            }
             break;
             
           case 'CHAT_MESSAGE':
             console.log('💬 CHAT_MESSAGE:', msg.payload);
-            queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
+            if (queryClient) {
+              queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
+            }
             break;
             
           case 'OFFER_ACCEPTED':
             console.log('✅ OFFER_ACCEPTED:', msg.payload);
-            // Invalider immédiatement toutes les requêtes
-            queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId] });
-            
-            // Forcer le refetch
-            setTimeout(() => {
-              queryClient.refetchQueries({ queryKey: ['/api/rides/active'] });
-              queryClient.refetchQueries({ queryKey: ['/api/driver/active-ride'] });
-            }, 100);
+            if (queryClient) {
+              queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId] });
+              
+              setTimeout(() => {
+                queryClient.refetchQueries({ queryKey: ['/api/rides/active'] });
+                queryClient.refetchQueries({ queryKey: ['/api/driver/active-ride'] });
+              }, 100);
+            }
             break;
             
           case 'OFFER_NEW':
             console.log('🆕 OFFER_NEW:', msg.payload);
-            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId, 'offers'] });
+            if (queryClient) {
+              queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId, 'offers'] });
+            }
             break;
             
           case 'DRIVER_LOCATION':
-            // Mettre à jour la position du driver sans invalidation
-            queryClient.setQueryData(
-              ['/api/driver', msg.payload.driverId, 'location'],
-              msg.payload
-            );
+            if (queryClient) {
+              queryClient.setQueryData(
+                ['/api/driver', msg.payload.driverId, 'location'],
+                msg.payload
+              );
+            }
             break;
         }
       } catch (err) {
