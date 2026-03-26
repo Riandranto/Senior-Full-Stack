@@ -1,6 +1,4 @@
-// src/hooks/use-websocket.ts
 import { useState, useRef, useEffect, useCallback } from "react";
-import { type WsMessage, WS_EVENTS } from "@shared/schema";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
@@ -85,7 +83,7 @@ export function useWebSocket() {
 
     wsRef.current.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data) as WsMessage;
+        const msg = JSON.parse(e.data);
         console.log(`📨 WebSocket message: ${msg.type}`, msg.payload);
         
         const handlers = handlersRef.current.get(msg.type);
@@ -93,6 +91,7 @@ export function useWebSocket() {
           handlers.forEach(fn => fn(msg.payload));
         }
         
+        // Invalider les requêtes en fonction du type de message
         switch (msg.type) {
           case 'RIDE_STATUS_CHANGED':
             console.log('🔄 Ride status changed:', msg.payload);
@@ -104,15 +103,15 @@ export function useWebSocket() {
             
           case 'CHAT_MESSAGE':
             console.log('💬 Chat message received:', msg.payload);
-            // Forcer l'invalidation du cache du chat
             queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
             break;
             
           case 'OFFER_ACCEPTED':
             console.log('✅ Offer accepted:', msg.payload);
             queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
             queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/rides', msg.payload.rideId] });
             break;
             
           case 'OFFER_NEW':

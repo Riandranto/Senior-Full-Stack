@@ -11,13 +11,14 @@ import { useTranslation } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, Route, RefreshCw } from 'lucide-react';
+import { MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, Route } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdBanner } from '@/components/AdBanner';
 import ChatBox from '@/components/ChatBox';
+import { useWebSocket } from '@/hooks/use-websocket';
 
 interface NominatimResult {
   place_id: number;
@@ -121,6 +122,7 @@ export default function PassengerHome() {
   const createRide = useCreateRide();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { connected, subscribe } = useWebSocket();
   
   const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
@@ -148,16 +150,6 @@ export default function PassengerHome() {
   const pickupDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropoffDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-refresh des données
-  const { refresh, isRefreshing } = useAutoRefresh({
-    queryKeys: [
-      ['/api/places'],
-      ['/api/rides/active']
-    ],
-    interval: 10000,
-    enabled: !hasActiveRide
-  });
-
   const { data: dbPlaces = [] } = useQuery<any[]>({
     queryKey: ['/api/places'],
     queryFn: async () => {
@@ -168,27 +160,79 @@ export default function PassengerHome() {
     staleTime: 60000,
   });
 
-  // Vérifier s'il y a une course active
-  const { data: activeRide } = useQuery({
+  // Vérifier s'il y a une course active avec polling actif
+  const { data: activeRide, refetch: refetchActiveRide } = useQuery({
     queryKey: ['/api/rides/active'],
     queryFn: async () => {
       const res = await fetch('/api/rides/active', { credentials: 'include' });
+      if (res.status === 404) return null;
       if (!res.ok) return null;
       return res.json();
     },
-    refetchInterval: 10000,
+    refetchInterval: 3000, // Polling toutes les 3 secondes pour les mises à jour
+    refetchIntervalInBackground: true,
   });
 
   // WebSocket events
   useWebSocketEvents(activeRide?.passengerId);
+
+  // Écouter les événements d'acceptation d'offre via WebSocket
+  useEffect(() => {
+    if (!connected) return;
+    
+    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('📢 OFFER_ACCEPTED received in PassengerHome:', data);
+      
+      // Rafraîchir immédiatement les données
+      refetchActiveRide();
+      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+      
+      // Si c'est notre course, ouvrir le chat
+      if (data.passengerId === activeRide?.passengerId || data.rideId === activeRide?.id) {
+        console.log('🎉 Opening chat for accepted ride');
+        setOtherUserName(data.driverName || 'Chauffeur');
+        setOtherUserId(data.driverId);
+        setActiveRideId(data.rideId);
+        setShowChat(true);
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [connected, subscribe, activeRide, refetchActiveRide, queryClient]);
+
+  // Écouter les changements de statut de course
+  useEffect(() => {
+    if (!connected) return;
+    
+    const unsubscribe = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+      console.log('🔄 RIDE_STATUS_CHANGED in PassengerHome:', data);
+      
+      if (data.id === activeRide?.id) {
+        refetchActiveRide();
+        queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+        
+        // Ouvrir le chat quand la course est acceptée (status !== 'PENDING' et !== 'BIDDING')
+        if (data.status !== 'PENDING' && data.status !== 'BIDDING' && data.status !== 'REQUESTED') {
+          console.log('🎉 Opening chat for ride status:', data.status);
+          setOtherUserName(data.driverName || 'Chauffeur');
+          setOtherUserId(data.driverId);
+          setActiveRideId(data.id);
+          setShowChat(true);
+        }
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [connected, subscribe, activeRide, refetchActiveRide, queryClient]);
 
   useEffect(() => {
     if (activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED') {
       setHasActiveRide(true);
       setActiveRideId(activeRide.id);
       
-      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING')
-      if (activeRide.status !== 'PENDING' && activeRide.status !== 'OFFER_SENT') {
+      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING' et !== 'BIDDING')
+      if (activeRide.status !== 'PENDING' && activeRide.status !== 'BIDDING' && activeRide.status !== 'REQUESTED') {
+        console.log('🎉 Opening chat for active ride:', activeRide.status);
         setOtherUserName(activeRide.driver?.name || 'Chauffeur');
         setOtherUserId(activeRide.driverId);
         setShowChat(true);
@@ -198,7 +242,7 @@ export default function PassengerHome() {
     } else {
       setHasActiveRide(false);
       setActiveRideId(null);
-      setShowChat(false); // Fermer le chat quand la course est terminée
+      setShowChat(false);
     }
   }, [activeRide, setLocation]);
 
@@ -461,7 +505,12 @@ export default function PassengerHome() {
 
   return (
     <MobileLayout role="passenger">
-      <RefreshIndicator isRefreshing={isRefreshing} />
+      {/* Indicateur de connexion WebSocket */}
+      <div className="absolute top-16 left-4 z-20">
+        <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
+          {connected ? '● Connecté' : '○ Déconnecté'}
+        </div>
+      </div>
 
       {/* Publicité en haut */}
       <div className="absolute top-16 left-0 right-0 z-20 px-3">
