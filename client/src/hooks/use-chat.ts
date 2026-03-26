@@ -1,6 +1,9 @@
+// src/hooks/use-chat.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './use-websocket';
 import { useQueryClient } from '@tanstack/react-query';
+import { useToast } from './use-toast';
+import { useTranslation } from '@/lib/i18n';
 
 export interface ChatMessage {
   id?: string;
@@ -16,9 +19,12 @@ export interface ChatMessage {
 export function useChat(rideId: number, currentUserId: number, otherUserName?: string) {
   const { sendMessage, subscribe, connected } = useWebSocket();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { lang } = useTranslation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const previousMessagesLength = useRef(0);
 
@@ -69,7 +75,13 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
       });
       return false;
     }
-  
+
+    if (isSending) {
+      console.warn('Message already sending');
+      return false;
+    }
+
+    setIsSending(true);
     console.log('📤 Sending chat message:', { rideId, message });
     
     const tempId = Date.now().toString();
@@ -82,36 +94,39 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
       timestamp: new Date().toISOString(),
       isOwn: true
     };
-  
+
     setMessages(prev => [...prev, tempMessage]);
     scrollToBottom();
-  
-    const success = sendMessage({
-      type: 'chat',
-      payload: {
-        rideId,
-        message: message.trim(),
-        fromName: otherUserName || 'Utilisateur',
-        from: currentUserId
-      }
-    });
-  
-    if (!success) {
-      console.error('Échec d\'envoi du message');
-      setMessages(prev => prev.filter(msg => msg.id !== tempId));
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: lang === 'mg' 
-          ? "Tsy afaka nandefa hafatra"
-          : "Impossible d'envoyer le message",
+
+    try {
+      const success = sendMessage({
+        type: 'CHAT_MESSAGE',
+        payload: {
+          rideId,
+          message: message.trim(),
+          fromName: otherUserName || 'Utilisateur',
+          from: currentUserId
+        }
       });
-      return false;
+
+      if (!success) {
+        console.error('Échec d\'envoi du message');
+        setMessages(prev => prev.filter(msg => msg.id !== tempId));
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy nety" : "Erreur",
+          description: lang === 'mg' 
+            ? "Tsy afaka nandefa hafatra"
+            : "Impossible d'envoyer le message",
+        });
+        return false;
+      }
+    } finally {
+      setTimeout(() => setIsSending(false), 500);
     }
-  
+
     return true;
-  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang]);
-  
+  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang, isSending]);
 
   // Écouter les messages entrants via WebSocket
   useEffect(() => {
@@ -184,7 +199,7 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
         setUnreadCount(0);
         
         sendMessage({
-          type: 'mark_read',
+          type: 'MARK_READ',
           payload: { rideId }
         });
       } catch (error) {
@@ -200,6 +215,7 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     unreadCount,
     markAsRead,
     messagesEndRef,
-    connected
+    connected,
+    isSending
   };
 }
