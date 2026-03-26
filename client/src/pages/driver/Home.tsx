@@ -201,6 +201,13 @@ export default function DriverHome() {
           secondsIntervalRef.current = undefined;
         }
       } 
+      
+      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING')
+      if (activeRide.status !== 'PENDING' && activeRide.status !== 'OFFER_SENT') {
+        setOtherUserName(activeRide.passengerName);
+        setOtherUserId(activeRide.passengerId);
+        setShowChat(true);
+      }
     } else {
       setShowRideTracking(false);
       setTimerStarted(false);
@@ -208,6 +215,7 @@ export default function DriverHome() {
       setRouteCoords(undefined);
       setPickupCoords(null);
       setDropoffCoords(null);
+      setShowChat(false); // Fermer le chat quand la course est terminée
       
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
@@ -596,7 +604,7 @@ export default function DriverHome() {
         </div>
       )}
 
-      {/* Fenêtre de suivi de course */}
+      {/* Fenêtre de suivi de course - SIMPLIFIÉE avec uniquement le bouton de démarrage */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
           <motion.div
@@ -678,7 +686,7 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* Actions selon le statut - SIMPLIFIÉES */}
+              {/* UNIQUEMENT LE BOUTON POUR COMMENCER LE TRAJET */}
               <div className="space-y-3">
                 {activeRide.status === 'ASSIGNED' && (
                   <Button 
@@ -695,136 +703,15 @@ export default function DriverHome() {
                   </Button>
                 )}
 
-                {activeRide.status === 'DRIVER_EN_ROUTE' && (
-                  <Button 
-                    onClick={() => setShowArrivalConfirm(true)}
-                    className="w-full h-12 text-base font-bold rounded-xl bg-blue-600 hover:bg-blue-700"
-                    disabled={updateRideStatus.isPending}
-                  >
-                    <MapPinCheck className="w-4 h-4 mr-2" />
-                    {lang === 'mg' ? 'Tonga amin\'ny toerana' : 'Arrivé au point de prise'}
-                  </Button>
-                )}
-
-                {activeRide.status === 'DRIVER_ARRIVED' && (
-                  <Button 
-                    onClick={handleStartRide}
-                    className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
-                    disabled={updateRideStatus.isPending}
-                  >
-                    <Flag className="w-4 h-4 mr-2" />
-                    {lang === 'mg' ? 'Manomboka ny dia' : 'Commencer la course'}
-                  </Button>
-                )}
-
-                {activeRide.status === 'IN_PROGRESS' && (
-                  <Button 
-                    onClick={() => setShowCompletionConfirm(true)}
-                    className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
-                    disabled={updateRideStatus.isPending}
-                  >
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    {lang === 'mg' ? 'Vita ny dia' : 'Terminer la course'}
-                  </Button>
-                )}
-
-                {/* Bouton d'annulation */}
-                {activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED' && (
-                  <Button
-                    onClick={handleCancelRide}
-                    variant="ghost"
-                    className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
-                  >
-                    <XCircle className="w-4 h-4 mr-2" />
-                    {lang === 'mg' ? 'Mamafa ny dia' : 'Annuler la course'}
-                  </Button>
-                )}
+                {/* Supprimé les autres boutons: "Arrivé", "Commencer la course", "Terminer" etc. */}
               </div>
             </Card>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Dialog de confirmation d'arrivée */}
-      <Dialog open={showArrivalConfirm} onOpenChange={setShowArrivalConfirm}>
-        <DialogContent className="rounded-3xl max-w-sm mx-auto">
-          <DialogHeader>
-            <DialogTitle className="text-center font-display text-xl">
-              {lang === 'mg' ? 'Tonga ve ianao?' : 'Êtes-vous arrivé?'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="py-4 text-center">
-            <MapPinCheck className="w-16 h-16 text-green-500 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">
-              {lang === 'mg' 
-                ? 'Rehefa manamafy ianao dia hisy 5 minitra fiandrasana ny mpandeha.'
-                : 'En confirmant, vous aurez 5 minutes d\'attente pour le passager.'}
-            </p>
-          </div>
-          <DialogFooter className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowArrivalConfirm(false)}
-              className="flex-1"
-            >
-              {lang === 'mg' ? 'Tsy mbola' : 'Pas encore'}
-            </Button>
-            <Button
-              onClick={handleArrived}
-              className="flex-1 bg-green-600 hover:bg-green-700"
-              disabled={updateRideStatus.isPending}
-            >
-              {updateRideStatus.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                lang === 'mg' ? 'Eny, tonga' : 'Oui, arrivé'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog de confirmation de fin de course */}
-      <Dialog open={showCompletionConfirm && activeRide !== null} onOpenChange={setShowCompletionConfirm}>
-        <DialogContent className="rounded-3xl max-w-sm mx-auto">
-          <DialogHeader>
-            <DialogTitle className="text-center font-display text-xl">
-              {lang === 'mg' ? 'Vita ve ny dia?' : 'Course terminée?'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="py-4 text-center">
-            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-3" />
-            <p className="text-lg font-bold text-primary mb-1">
-              {formattedPrice} Ar
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {lang === 'mg' 
-                ? 'Tafiditra ao ny vola voaray'
-                : 'Ce montant sera crédité sur votre compte'}
-            </p>
-          </div>
-          <DialogFooter className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowCompletionConfirm(false)}
-              className="flex-1"
-            >
-              {lang === 'mg' ? 'Hiverina' : 'Retour'}
-            </Button>
-            <Button
-              onClick={handleCompleteRide}
-              className="flex-1 bg-green-600 hover:bg-green-700"
-              disabled={updateRideStatus.isPending}
-            >
-              {updateRideStatus.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                lang === 'mg' ? 'Eny, vita' : 'Oui, terminé'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Dialog de confirmation d'arrivée - SUPPRIMÉ car plus utilisé */}
+      {/* Dialog de confirmation de fin de course - SUPPRIMÉ car plus utilisé */}
 
       {/* Liste des demandes */}
       <AnimatePresence>
@@ -1042,7 +929,7 @@ export default function DriverHome() {
         </DialogContent>
       </Dialog>
 
-      {/* Chat Box */}
+      {/* Chat Box - S'ouvre automatiquement quand la course est acceptée */}
       {showChat && activeRide && (
         <ChatBox
           rideId={activeRide.id}

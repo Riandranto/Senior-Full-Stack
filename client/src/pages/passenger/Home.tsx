@@ -17,6 +17,7 @@ import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdBanner } from '@/components/AdBanner';
+import ChatBox from '@/components/ChatBox';
 
 interface NominatimResult {
   place_id: number;
@@ -132,6 +133,12 @@ export default function PassengerHome() {
   const [flyTrigger, setFlyTrigger] = useState(0);
   const [hasActiveRide, setHasActiveRide] = useState(false);
 
+  // Chat states
+  const [showChat, setShowChat] = useState(false);
+  const [otherUserName, setOtherUserName] = useState('');
+  const [otherUserId, setOtherUserId] = useState(0);
+  const [activeRideId, setActiveRideId] = useState<number | null>(null);
+
   const [pickupSuggestions, setPickupSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState<(NominatimResult | { isLocal: true; name: string; lat: string; lon: string; display_name: string; place_id: number })[]>([]);
   const [isSearchingPickup, setIsSearchingPickup] = useState(false);
@@ -178,9 +185,20 @@ export default function PassengerHome() {
   useEffect(() => {
     if (activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED') {
       setHasActiveRide(true);
+      setActiveRideId(activeRide.id);
+      
+      // Ouvrir automatiquement le chat quand la course est acceptée (status !== 'PENDING')
+      if (activeRide.status !== 'PENDING' && activeRide.status !== 'OFFER_SENT') {
+        setOtherUserName(activeRide.driver?.name || 'Chauffeur');
+        setOtherUserId(activeRide.driverId);
+        setShowChat(true);
+      }
+      
       setLocation(`/passenger/ride/${activeRide.id}`);
     } else {
       setHasActiveRide(false);
+      setActiveRideId(null);
+      setShowChat(false); // Fermer le chat quand la course est terminée
     }
   }, [activeRide, setLocation]);
 
@@ -426,6 +444,17 @@ export default function PassengerHome() {
         <div className="flex h-screen items-center justify-center">
           <LoadingAnimation />
         </div>
+        {/* Chat Box qui s'ouvre automatiquement quand la course est acceptée */}
+        {showChat && activeRideId && (
+          <ChatBox
+            rideId={activeRideId}
+            currentUserId={activeRide?.passengerId || 0}
+            otherUserId={otherUserId}
+            otherUserName={otherUserName}
+            isOpen={showChat}
+            onClose={() => setShowChat(false)}
+          />
+        )}
       </MobileLayout>
     );
   }
