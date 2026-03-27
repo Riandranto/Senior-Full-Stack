@@ -31,7 +31,6 @@ export function useCreateRide() {
       const result = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // Message spécifique pour hors zone
         if (result.message?.includes("faritra")) {
           throw new Error(lang === 'mg'
             ? "Tsy ao anatin'ny faritry Fort-Dauphin"
@@ -66,7 +65,7 @@ export function useCreateRide() {
   });
 }
 
-// Détails d'une course avec polling intelligent
+// Détails d'une course avec polling intelligent - FIXED
 export function useRide(id: number | null) {
   const { toast } = useToast();
   const { lang } = useTranslation();
@@ -88,7 +87,6 @@ export function useRide(id: number | null) {
         if (res.status === 404) {
           return null;
         }
-        // Don't throw on 500 errors, just return null
         if (res.status === 500) {
           console.warn('Server error fetching ride, returning null');
           return null;
@@ -100,32 +98,14 @@ export function useRide(id: number | null) {
       return res.json();
     },
     enabled: !!id,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      
-      if (!status) return 5000;
-      
-      // Polling plus agressif pendant les phases actives
-      switch (status) {
-        case 'REQUESTED':
-        case 'BIDDING':
-          return 3000; // 3 secondes pour les offres
-        case 'ASSIGNED':
-        case 'DRIVER_EN_ROUTE':
-        case 'DRIVER_ARRIVED':
-        case 'IN_PROGRESS':
-          return 4000; // 4 secondes pour le suivi
-        default:
-          return false;
-      }
-    },
+    // FIX: Use a simple number for refetchInterval instead of a function
+    refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 0,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
     onError: (error: Error) => {
       console.error('Error fetching ride:', error);
-      // Don't show toast for 500 errors to avoid spam
       if (!error.message?.includes('500')) {
         toast({
           variant: "destructive",
@@ -153,14 +133,13 @@ export function useRideOffers(rideId: number | null) {
       });
       
       if (!res.ok) {
-        // Silently fail - retourner tableau vide
         return [];
       }
       
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 5000, // 5 secondes
+    refetchInterval: 5000,
     staleTime: 2000,
   });
 }
@@ -184,7 +163,6 @@ export function useAcceptOffer(rideId: number) {
       const result = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // Vérifier si l'offre a expiré
         if (result.message?.includes("expir")) {
           throw new Error(lang === 'mg'
             ? "Lany daty ilay tolo-bidy"
@@ -268,7 +246,6 @@ export function useRateRide(rideId: number) {
 
   return useMutation({
     mutationFn: async (data: RateRideRequest) => {
-      // Validation
       if (data.rating < 1 || data.rating > 5) {
         throw new Error(lang === 'mg'
           ? "Naoty tsy mety (1-5)"
@@ -327,11 +304,11 @@ export function useRideHistory() {
       
       return res.json();
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 }
 
-// Vue count (combien de conducteurs ont vu)
+// Vue count
 export function useRideViews(rideId: number | null) {
   return useQuery<{ viewCount: number }>({
     queryKey: ['/api/rides', rideId, 'views'],
@@ -349,6 +326,6 @@ export function useRideViews(rideId: number | null) {
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 10000, // 10 secondes
+    refetchInterval: 10000,
   });
 }
