@@ -32,8 +32,7 @@ export default function PassengerRide() {
   const rateRide = useRateRide(rideId!);
   const { connected, subscribe, sendMessage } = useWebSocket();
   
-const queryClient = useQueryClient();
-
+  const queryClient = useQueryClient();
 
   // Chat states
   const [showChat, setShowChat] = useState(false);
@@ -61,37 +60,35 @@ const queryClient = useQueryClient();
     }
   }, []);
 
-  // Ouvrir le chat automatiquement quand la course est assignée
+  // ⚠️ ATTENTION: isBidding et autres variables doivent être définies APRÈS tous les hooks
+  // mais AVANT leur utilisation dans les useEffect qui en dépendent.
+  // Nous allons les définir à partir de ride, qui est chargé asynchrone.
+
+  // useEffect pour le polling actif - FIXED
   useEffect(() => {
-    if (ride && (ride.status === 'ASSIGNED' || ride.status === 'DRIVER_EN_ROUTE' || ride.status === 'DRIVER_ARRIVED' || ride.status === 'IN_PROGRESS')) {
-      setOtherUserName(ride.driver?.name || 'Chauffeur');
-      setOtherUserId(ride.driverId);
-      setShowChat(true);
-    }
-  }, [ride]);
+    if (!rideId) return;
+    
+    const interval = setInterval(() => {
+      refetchRide();
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [rideId, refetchRide]);
 
-  // useEffect pour le polling actif
-useEffect(() => {
-  if (!rideId) return;
-  
-  // Polling toutes les 3 secondes pour les mises à jour
-  const interval = setInterval(() => {
-    refetchRide();
-  }, 3000);
-  
-  return () => clearInterval(interval);
-}, [rideId, refetchRide]);
-
-//un effet pour recharger les offres périodiquement
-useEffect(() => {
-  if (!rideId || !isBidding) return;
-  
-  const interval = setInterval(() => {
-    queryClient.invalidateQueries({ queryKey: ['/api/rides', rideId, 'offers'] });
-  }, 5000);
-  
-  return () => clearInterval(interval);
-}, [rideId, isBidding, queryClient]);
+  // useEffect pour recharger les offres périodiquement - FIXED (vérifie ride après chargement)
+  useEffect(() => {
+    if (!rideId) return;
+    if (!ride) return; // Attendre que ride soit chargé
+    
+    const isBidding = ride.status === 'REQUESTED' || ride.status === 'BIDDING';
+    if (!isBidding) return;
+    
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['/api/rides', rideId, 'offers'] });
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [rideId, ride, queryClient]);
 
   useEffect(() => {
     if (ride?.pickupLat && ride?.dropLat) {
@@ -109,7 +106,7 @@ useEffect(() => {
       const res = await fetch(`/api/rides/${rideId}/views`, { credentials: 'include' });
       return res.json();
     },
-    enabled: !!rideId && (ride?.status === 'REQUESTED' || ride?.status === 'BIDDING'),
+    enabled: !!rideId && !!ride && (ride?.status === 'REQUESTED' || ride?.status === 'BIDDING'),
     refetchInterval: 10000,
   });
 
@@ -119,7 +116,7 @@ useEffect(() => {
       const res = await fetch(`/api/driver/${ride?.driverId}/location`, { credentials: 'include' });
       return res.json();
     },
-    enabled: !!ride?.driverId && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride?.status || ''),
+    enabled: !!ride?.driverId && !!ride && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride?.status || ''),
     refetchInterval: 5000,
   });
 
@@ -148,6 +145,15 @@ useEffect(() => {
     return unsub;
   }, [subscribe, rideId, refetchRide]);
 
+  // Ouvrir le chat automatiquement quand la course est assignée
+  useEffect(() => {
+    if (ride && (ride.status === 'ASSIGNED' || ride.status === 'DRIVER_EN_ROUTE' || ride.status === 'DRIVER_ARRIVED' || ride.status === 'IN_PROGRESS')) {
+      setOtherUserName(ride.driver?.name || 'Chauffeur');
+      setOtherUserId(ride.driverId);
+      setShowChat(true);
+    }
+  }, [ride]);
+
   const handleSubmitRating = () => {
     if (selectedRating === 0) return;
     rateRide.mutate(
@@ -164,8 +170,18 @@ useEffect(() => {
     );
   };
 
-  if (!ride) return <MobileLayout role="passenger"><div className="flex h-full items-center justify-center pt-16"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div></MobileLayout>;
+  // Afficher le loader tant que ride n'est pas chargé
+  if (!ride) {
+    return (
+      <MobileLayout role="passenger">
+        <div className="flex h-full items-center justify-center pt-16">
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </MobileLayout>
+    );
+  }
 
+  // Définir les variables ici, après le return conditionnel mais avant le JSX
   const isBidding = ride.status === 'REQUESTED' || ride.status === 'BIDDING';
   const isActive = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride.status);
   const isCompleted = ride.status === 'COMPLETED';
