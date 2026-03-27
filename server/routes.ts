@@ -371,20 +371,32 @@ export async function registerRoutes(
     const rideId = parseInt(req.params.rideId);
     
     try {
+      // Utiliser senderId et receiverId
       const messages = await db.select().from(chatMessages)
-      .where(eq(chatMessages.rideId, rideId))
-      .orderBy(sql`${chatMessages.createdAt} ASC`);
+        .where(eq(chatMessages.rideId, rideId))
+        .orderBy(sql`${chatMessages.createdAt} ASC`);
       
-      // Marquer les messages non lus comme lus
+      // Marquer les messages reçus comme lus
       await db.update(chatMessages)
-      .set({ isRead: true })
-      .where(and(
-        eq(chatMessages.rideId, rideId),
-        eq(chatMessages.receiverId, req.session.userId),  // ← receiverId
-        eq(chatMessages.isRead, false)
-      ));
+        .set({ isRead: true })
+        .where(and(
+          eq(chatMessages.rideId, rideId),
+          eq(chatMessages.receiverId, req.session.userId),
+          eq(chatMessages.isRead, false)
+        ));
       
-      res.json(messages);
+      // Transformer pour le frontend (fromUserId, toUserId)
+      const formattedMessages = messages.map(msg => ({
+        id: msg.id,
+        rideId: msg.rideId,
+        from: msg.senderId,
+        to: msg.receiverId,
+        message: msg.message,
+        timestamp: msg.createdAt,
+        isRead: msg.isRead
+      }));
+      
+      res.json(formattedMessages);
     } catch (error) {
       console.error('❌ Error fetching chat history:', error);
       res.status(500).json({ message: "Erreur serveur" });
@@ -403,38 +415,37 @@ export async function registerRoutes(
     }
     
     try {
-      // Sauvegarder le message en base de données
+      // Utiliser senderId et receiverId (comme défini dans schema.ts)
       const [savedMessage] = await db.insert(chatMessages).values({
         rideId,
-        senderId: req.session.userId,    // ← au lieu de fromUserId
-        receiverId: toUserId || 0, 
+        senderId: req.session.userId,
+        receiverId: toUserId || 0,
         message: message.trim(),
         isRead: false,
       }).returning();
       
       // Envoyer via WebSocket en temps réel
-      const ride = await storage.getRide(rideId);
-      if (ride) {
-        const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
-        if (otherUserId) {
-          sendToUser(otherUserId, {
-            type: 'CHAT_MESSAGE',
-            payload: {
-              id: savedMessage.id,
-              rideId,
-              from: req.session.userId,
-              fromName: req.body.fromName || 'Utilisateur',
-              message: message.trim(),
-              timestamp: savedMessage.createdAt.toISOString()
-            }
-          });
-        }
+      if (toUserId) {
+        sendToUser(toUserId, {
+          type: 'CHAT_MESSAGE',
+          payload: {
+            id: savedMessage.id,
+            rideId,
+            from: req.session.userId,
+            fromName: req.body.fromName || 'Utilisateur',
+            message: message.trim(),
+            timestamp: savedMessage.createdAt.toISOString()
+          }
+        });
       }
       
       res.status(201).json(savedMessage);
     } catch (error) {
       console.error('❌ Error saving message:', error);
-      res.status(500).json({ message: "Erreur serveur" });
+      res.status(500).json({ 
+        message: "Erreur serveur", 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   });
   
@@ -1067,6 +1078,54 @@ export async function registerRoutes(
       res.json(ride);
     } catch (error) {
       res.status(400).json({ message: "Failed to update ETA" });
+    }
+  });
+
+  // routes.ts - Ajouter cette route si elle n'existe pas
+  app.post('/api/rides/:id/status', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const { status } = req.body;
+    
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) {
+        return res.status(404).json({ message: "Ride not found" });
+      }
+      
+      if (ride.driverId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      
+      // Transitions valides pour le conducteur
+      const validTransitions: Record<string, string[]> = {
+        'ASSIGNED': ['DRIVER_EN_ROUTE'],
+        'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED'],
+        'DRIVER_ARRIVED': ['IN_PROGRESS'],
+        'IN_PROGRESS': ['COMPLETED'],
+      };
+      
+      if (!validTransitions[ride.status]?.includes(status)) {
+        return res.status(400).json({ 
+          message: `Invalid status transition from ${ride.status} to ${status}` 
+        });
+      }
+      
+      const updatedRide = await storage.updateRideStatus(id, status);
+      
+      // Notifier le passager
+      sendToUser(ride.passengerId, {
+        type: WS_EVENTS.RIDE_STATUS_CHANGED,
+        payload: updatedRide
+      });
+      
+      res.json(updatedRide);
+    } catch (error) {
+      console.error('❌ Error updating ride status:', error);
+      res.status(500).json({ message: "Internal error" });
     }
   });
 

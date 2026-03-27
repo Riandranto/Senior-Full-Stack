@@ -266,63 +266,62 @@ export default function DriverHome() {
   }, [requests, activeRide]);
 
   
-const handleStartJourney = async () => {
-  if (!activeRide) {
-    toast({
-      variant: "destructive",
-      title: lang === 'mg' ? "Tsy nety" : "Erreur",
-      description: lang === 'mg' ? "Tsy hita ny dia" : "Course introuvable",
-    });
-    return;
-  }
-
-  try {
-    console.log('🚀 Starting journey for ride:', activeRide.id);
-    
-    // Utiliser PATCH au lieu de POST, et vérifier la route
-    const response = await fetch(`/api/rides/${activeRide.id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-      body: JSON.stringify({ status: 'IN_PROGRESS' })
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || 'Failed to update status');
+  const handleStartJourney = async () => {
+    if (!activeRide) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' ? "Tsy hita ny dia" : "Course introuvable",
+      });
+      return;
     }
-    
-    const updatedRide = await response.json();
-    console.log('✅ Ride status updated:', updatedRide);
-    
-    setTimerStarted(true);
-    setStartTime(Date.now());
-    
-    // Invalider les requêtes
-    queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-    await refetchActiveRide();
-    
-    toast({
-      title: lang === 'mg' ? "Mandehana!" : "C'est parti!",
-      description: lang === 'mg' 
-        ? "Ny dia dia efa manomboka"
-        : "La course est en cours",
-    });
-  } catch (error: any) {
-    console.error("ERROR in handleStartJourney:", error);
-    setTimerStarted(false);
-    setStartTime(null);
-
-    toast({
-      variant: "destructive",
-      title: lang === 'mg' ? "Tsy nety" : "Erreur",
-      description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
-    });
-  }
-};
+  
+    try {
+      console.log('🚀 Starting journey for ride:', activeRide.id);
+      
+      // Transition correcte: ASSIGNED → DRIVER_EN_ROUTE (pas IN_PROGRESS directement)
+      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'DRIVER_EN_ROUTE' })  // ← Changement ici
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to update status');
+      }
+      
+      const updatedRide = await response.json();
+      console.log('✅ Ride status updated:', updatedRide);
+      
+      setTimerStarted(true);
+      setStartTime(Date.now());
+      
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+      await refetchActiveRide();
+      
+      toast({
+        title: lang === 'mg' ? "Eny an-dalana!" : "En route!",
+        description: lang === 'mg' 
+          ? "Mandehana any amin'ny toerana fiaingana"
+          : "Rendez-vous au point de départ",
+      });
+    } catch (error: any) {
+      console.error("ERROR in handleStartJourney:", error);
+      setTimerStarted(false);
+      setStartTime(null);
+  
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
+      });
+    }
+  };
 
 // Même correction pour handleCompleteRide
 const handleCompleteRide = async () => {

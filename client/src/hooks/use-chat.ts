@@ -72,87 +72,48 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
 
   // Envoyer un message - AVEC SAUVEGARDE API
   const sendChatMessage = useCallback(async (message: string) => {
-    if (!message.trim()) {
-      return false;
-    }
-    
-    if (isSending) {
-      return false;
-    }
-
+    if (!message.trim()) return false;
+    if (isSending) return false;
+  
     setIsSending(true);
     
-    const now = new Date().toISOString();
-    const tempId = Date.now();
-    
-    const tempMessage: ChatMessage = {
-      id: tempId,
-      from: currentUserId,
-      fromName: 'Moi',
-      message: message.trim(),
-      rideId,
-      timestamp: now,
-      isOwn: true
-    };
-
-    // Ajouter temporairement
-    setMessages(prev => [...prev, tempMessage]);
-    scrollToBottom();
-
     try {
-      // Sauvegarder via API REST
-      const saveRes = await apiFetch(`/api/chat/send`, {
+      // 1. Sauvegarder via API REST
+      const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rideId,
           message: message.trim(),
-          from: currentUserId,
-          toUserId: 0
+          toUserId: otherUserId,
+          fromName: otherUserName
         }),
         credentials: 'include'
       });
-
-      if (saveRes.ok) {
-        const savedMsg = await saveRes.json();
-        
-        // Remplacer le message temporaire par le message sauvegardé
-        setMessages(prev => prev.map(m => 
-          m.id === tempId ? { ...savedMsg, isOwn: true, fromName: 'Moi' } : m
-        ));
-        
-        // Envoyer via WebSocket pour la livraison en temps réel
-        if (connected) {
-          sendMessage({
-            type: 'CHAT_MESSAGE',
-            payload: {
-              id: savedMsg.id,
-              rideId,
-              message: message.trim(),
-              fromName: otherUserName || 'Utilisateur',
-              from: currentUserId,
-              toUserId: 0,
-              timestamp: now
-            }
-          });
-        }
-        
-        // Recharger l'historique pour être sûr
-        setTimeout(() => loadHistory(), 500);
-      } else {
-        // Supprimer le message temporaire en cas d'échec
-        setMessages(prev => prev.filter(m => m.id !== tempId));
-        toast({
-          variant: "destructive",
-          title: lang === 'mg' ? "Tsy nety" : "Erreur",
-          description: lang === 'mg' 
-            ? "Tsy afaka nandefa hafatra"
-            : "Impossible d'envoyer le message",
-        });
+      
+      if (!response.ok) {
+        throw new Error('Failed to send message');
       }
+      
+      const savedMessage = await response.json();
+      
+      // 2. Ajouter au state local
+      const newMessage: ChatMessage = {
+        id: savedMessage.id,
+        from: currentUserId,
+        fromName: 'Moi',
+        message: message.trim(),
+        rideId,
+        timestamp: savedMessage.createdAt || new Date().toISOString(),
+        isOwn: true
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
+      scrollToBottom();
+      
+      return true;
     } catch (error) {
       console.error('Error sending message:', error);
-      setMessages(prev => prev.filter(m => m.id !== tempId));
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
@@ -160,12 +121,11 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
           ? "Tsy afaka nandefa hafatra"
           : "Impossible d'envoyer le message",
       });
+      return false;
     } finally {
       setIsSending(false);
     }
-    
-    return true;
-  }, [currentUserId, rideId, connected, sendMessage, scrollToBottom, otherUserName, toast, lang, isSending, loadHistory]);
+  }, [currentUserId, rideId, otherUserId, otherUserName, scrollToBottom, toast, lang, isSending]);
 
   // Écouter les messages entrants
   useEffect(() => {
