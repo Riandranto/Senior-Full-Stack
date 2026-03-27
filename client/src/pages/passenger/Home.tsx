@@ -170,35 +170,32 @@ export default function PassengerHome() {
   }, []);
 
   // Vérifier s'il y a une course active avec polling
-const { data: activeRide, refetch: refetchActiveRide, error: activeRideError } = useQuery({
-  queryKey: ['/api/rides/active'],
-  queryFn: async () => {
-    console.log('🔄 Fetching active ride...');
-    try {
-      const res = await fetch('/api/rides/active', { credentials: 'include' });
-      if (res.status === 404) return null;
-      if (res.status === 500) {
-        console.warn('Server error fetching active ride');
+  const { data: activeRide, refetch: refetchActiveRide, error: activeRideError } = useQuery({
+    queryKey: ['/api/rides/active'],
+    queryFn: async () => {
+      console.log('🔄 Fetching active ride...');
+      try {
+        const res = await fetch('/api/rides/active', { credentials: 'include' });
+        if (res.status === 404) return null;
+        if (res.status === 500) {
+          console.warn('Server error fetching active ride');
+          return null;
+        }
+        if (!res.ok) return null;
+        const data = await res.json();
+        console.log('📦 Active ride data:', data);
+        return data;
+      } catch (error) {
+        console.error('Error fetching active ride:', error);
         return null;
       }
-      if (!res.ok) return null;
-      const data = await res.json();
-      console.log('📦 Active ride data:', data);
-      return data;
-    } catch (error) {
-      console.error('Error fetching active ride:', error);
-      return null;
-    }
-  },
-  refetchInterval: (query) => {
-    // Stop polling if we're getting errors
-    if (activeRideError) return false;
-    return 5000; // Poll toutes les 5 secondes
-  },
-  refetchIntervalInBackground: true,
-  staleTime: 0,
-  retry: 1,
-});
+    },
+    // FIX: Use a simple number instead of a function to avoid closure issues
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+    retry: 1,
+  });
 
   // Ajouter un useEffect pour forcer le refetch quand la page devient visible
   useEffect(() => {

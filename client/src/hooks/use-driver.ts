@@ -185,7 +185,6 @@ export function useDriverRequests() {
       
       if (!res.ok) {
         if (res.status === 403) {
-          // Profil non approuvé
           return { error: 'NOT_APPROVED' };
         }
         return [];
@@ -193,13 +192,13 @@ export function useDriverRequests() {
       
       return res.json();
     },
-    reapiFetchInterval: (query) => {
+    // FIX: Change 'reapiFetchInterval' to 'refetchInterval'
+    refetchInterval: (query) => {
       const data = query.state.data;
-      // Si le conducteur n'est pas approuvé, ne pas rafraîchir
       if (data && typeof data === 'object' && 'error' in data) {
         return false;
       }
-      return 5000; // 5 secondes
+      return 5000;
     },
   });
 }
@@ -303,16 +302,17 @@ export function useUpdateLocation() {
         });
         
         if (res.status === 404) {
-          return null; // Pas de course active
+          return null;
         }
         
         if (!res.ok) {
-          throw new Error('Failed to apiFetch active ride');
+          throw new Error('Failed to fetch active ride');
         }
         
         return res.json();
       },
-      reapiFetchInterval: 10000, // Rafraîchir toutes les 10 secondes
+      // FIX: Change 'reapiFetchInterval' to 'refetchInterval'
+      refetchInterval: 10000,
     });
   }
 

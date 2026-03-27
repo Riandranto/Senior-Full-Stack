@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AdBanner } from '@/components/AdBanner';
 import ChatBox from '@/components/ChatBox';
 import { useQueryClient } from '@tanstack/react-query';
+import { api } from '@shared/routes';
 
 export default function PassengerRide() {
   const [, params] = useRoute('/passenger/ride/:id');
@@ -86,8 +87,8 @@ useEffect(() => {
   if (!rideId || !isBidding) return;
   
   const interval = setInterval(() => {
-    queryClient.invalidateQueries({ queryKey: [api.passenger.getOffers.path, rideId] });
-  }, 3000);
+    queryClient.invalidateQueries({ queryKey: ['/api/rides', rideId, 'offers'] });
+  }, 5000);
   
   return () => clearInterval(interval);
 }, [rideId, isBidding, queryClient]);
