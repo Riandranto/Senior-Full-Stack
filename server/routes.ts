@@ -5,7 +5,7 @@ import { db } from "./db";
 import { api } from "@shared/routes";
 import { 
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
-  advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS 
+  advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages 
 } from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
@@ -102,7 +102,7 @@ export async function registerRoutes(
   wss.on('connection', (ws, req) => {
     let userId: number | null = null;
     
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message.toString());
         
@@ -113,38 +113,56 @@ export async function registerRoutes(
         }
         
         // Gestion des messages de chat
-        if (data.type === 'chat' && userId) {
-          const { toUserId, message: msg, rideId } = data.payload;
+        if (data.type === 'CHAT_MESSAGE' && userId) {
+          const { rideId, message: msg, fromName, toUserId, timestamp } = data.payload;
           
-          const target = clients.get(toUserId);
-          if (target && target.readyState === WebSocket.OPEN) {
-            target.send(JSON.stringify({
-              type: 'CHAT_MESSAGE',
+          // Sauvegarder en base de données
+          try {
+            const [savedMessage] = await db.insert(chatMessages).values({
+              rideId,
+              senderId: userId,          
+              receiverId: toUserId || 0,
+              message: msg.trim(),
+              isRead: false,
+            }).returning();
+            
+            // Envoyer au destinataire
+            const target = clients.get(toUserId);
+            if (target && target.readyState === WebSocket.OPEN) {
+              target.send(JSON.stringify({
+                type: 'CHAT_MESSAGE',
+                payload: {
+                  id: savedMessage.id,
+                  rideId,
+                  from: userId,
+                  fromName: fromName || 'Utilisateur',
+                  message: msg,
+                  timestamp: savedMessage.createdAt.toISOString()
+                }
+              }));
+            }
+            
+            // Confirmer l'envoi à l'expéditeur
+            ws.send(JSON.stringify({
+              type: 'CHAT_MESSAGE_SENT',
               payload: {
-                from: userId,
-                fromName: data.payload.fromName,
-                message: msg,
-                rideId: rideId,
-                timestamp: new Date().toISOString()
+                id: savedMessage.id,
+                success: true
               }
             }));
+          } catch (error) {
+            console.error('❌ Error saving chat message:', error);
+            ws.send(JSON.stringify({
+              type: 'CHAT_MESSAGE_ERROR',
+              payload: { error: 'Failed to save message' }
+            }));
           }
-          
-          // Stocker le message dans la base de données (optionnel)
-          console.log(`💬 Chat message from ${userId} to ${toUserId}: ${msg}`);
         }
-        
-        // Gestion des notifications de lecture de messages
-        if (data.type === 'mark_read' && userId) {
-          // Ici vous pouvez implémenter la logique pour marquer les messages comme lus
-          console.log(`📖 User ${userId} marked messages as read for ride ${data.payload.rideId}`);
-        }
-        
       } catch (e) {
         console.error("❌ WS error:", e);
       }
     });
-
+  
     ws.on('close', () => {
       if (userId) {
         clients.delete(userId);
@@ -351,10 +369,73 @@ export async function registerRoutes(
     }
     
     const rideId = parseInt(req.params.rideId);
-    const key = `ride_${rideId}`;
-    const messages = chatHistory.get(key) || [];
     
-    res.json(messages);
+    try {
+      const messages = await db.select().from(chatMessages)
+      .where(eq(chatMessages.rideId, rideId))
+      .orderBy(sql`${chatMessages.createdAt} ASC`);
+      
+      // Marquer les messages non lus comme lus
+      await db.update(chatMessages)
+      .set({ isRead: true })
+      .where(and(
+        eq(chatMessages.rideId, rideId),
+        eq(chatMessages.receiverId, req.session.userId),  // ← receiverId
+        eq(chatMessages.isRead, false)
+      ));
+      
+      res.json(messages);
+    } catch (error) {
+      console.error('❌ Error fetching chat history:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  app.post('/api/chat/send', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const { rideId, message, toUserId } = req.body;
+    
+    if (!rideId || !message) {
+      return res.status(400).json({ message: "rideId et message requis" });
+    }
+    
+    try {
+      // Sauvegarder le message en base de données
+      const [savedMessage] = await db.insert(chatMessages).values({
+        rideId,
+        senderId: req.session.userId,    // ← au lieu de fromUserId
+        receiverId: toUserId || 0, 
+        message: message.trim(),
+        isRead: false,
+      }).returning();
+      
+      // Envoyer via WebSocket en temps réel
+      const ride = await storage.getRide(rideId);
+      if (ride) {
+        const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
+        if (otherUserId) {
+          sendToUser(otherUserId, {
+            type: 'CHAT_MESSAGE',
+            payload: {
+              id: savedMessage.id,
+              rideId,
+              from: req.session.userId,
+              fromName: req.body.fromName || 'Utilisateur',
+              message: message.trim(),
+              timestamp: savedMessage.createdAt.toISOString()
+            }
+          });
+        }
+      }
+      
+      res.status(201).json(savedMessage);
+    } catch (error) {
+      console.error('❌ Error saving message:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
   
   app.post('/api/chat/mark-read/:rideId', async (req, res) => {
@@ -362,8 +443,22 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Unauthorized" });
     }
     
-    // Ici, vous pouvez implémenter la logique pour marquer les messages comme lus
-    res.json({ success: true });
+    const rideId = parseInt(req.params.rideId);
+    
+    try {
+      await db.update(chatMessages)
+        .set({ isRead: true })
+        .where(and(
+          eq(chatMessages.rideId, rideId),
+          eq(chatMessages.toUserId, req.session.userId),
+          eq(chatMessages.isRead, false)
+        ));
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('❌ Error marking messages as read:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   // ==================== ADVERTISEMENT ROUTES ====================
@@ -972,6 +1067,59 @@ export async function registerRoutes(
       res.json(ride);
     } catch (error) {
       res.status(400).json({ message: "Failed to update ETA" });
+    }
+  });
+
+  app.patch('/api/rides/:id', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const { status } = req.body;
+    
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) {
+        return res.status(404).json({ message: "Ride not found" });
+      }
+      
+      // Vérifier que le conducteur est bien assigné à cette course
+      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      
+      // Transitions de statut valides
+      const validTransitions: Record<string, string[]> = {
+        'ASSIGNED': ['DRIVER_EN_ROUTE', 'CANCELED'],
+        'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED', 'CANCELED'],
+        'DRIVER_ARRIVED': ['IN_PROGRESS', 'CANCELED'],
+        'IN_PROGRESS': ['COMPLETED', 'CANCELED'],
+        'REQUESTED': ['CANCELED'],
+        'BIDDING': ['CANCELED'],
+      };
+      
+      if (status && !validTransitions[ride.status]?.includes(status)) {
+        return res.status(400).json({ 
+          message: `Invalid status transition from ${ride.status} to ${status}` 
+        });
+      }
+      
+      const updatedRide = await storage.updateRideStatus(id, status);
+      
+      // Notifier l'autre utilisateur via WebSocket
+      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
+      if (otherUserId) {
+        sendToUser(otherUserId, {
+          type: WS_EVENTS.RIDE_STATUS_CHANGED,
+          payload: updatedRide
+        });
+      }
+      
+      res.json(updatedRide);
+    } catch (error) {
+      console.error('❌ Error updating ride:', error);
+      res.status(500).json({ message: "Internal error" });
     }
   });
 

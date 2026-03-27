@@ -50,27 +50,39 @@ export function useWebSocket() {
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
     
+    // Ne pas tenter de reconnecter si déjà en train de le faire
+    if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+      console.log('WebSocket already connecting, skipping');
+      return;
+    }
+    
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       console.warn("Max WebSocket reconnection attempts reached");
       return;
     }
-
+  
     try {
       const wsUrl = getWebSocketUrl();
       console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
       
-      if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
-        return;
-      }
-      
+      // Fermer l'ancienne connexion
       if (wsRef.current) {
         wsRef.current.close();
       }
-
+  
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
-
+  
+      // Timeout pour détecter les connexions qui échouent
+      const connectionTimeout = setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.log('WebSocket connection timeout');
+          ws.close();
+        }
+      }, 5000);
+  
       ws.onopen = () => {
+        clearTimeout(connectionTimeout);
         console.log("✅ WebSocket connected");
         if (mountedRef.current) {
           setConnected(true);
@@ -78,21 +90,22 @@ export function useWebSocket() {
           sendAuth();
         }
       };
-
+  
       ws.onclose = (event) => {
+        clearTimeout(connectionTimeout);
         console.log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason || 'No reason'}`);
         if (mountedRef.current) {
           setConnected(false);
         }
         
-        // Don't reconnect on clean close
+        // Ne pas reconnecter pour les fermetures propres
         if (event.code === 1000 || event.code === 1001) {
           console.log("WebSocket closed cleanly");
           return;
         }
-
+  
         if (!mountedRef.current) return;
-
+  
         const delay = Math.min(
           BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttemptsRef.current),
           30000
@@ -105,12 +118,12 @@ export function useWebSocket() {
           connect();
         }, delay);
       };
-
+  
       ws.onerror = (error) => {
+        clearTimeout(connectionTimeout);
         console.error("WebSocket error:", error);
-        // Don't attempt to reconnect here - onclose will handle it
       };
-
+  
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
@@ -127,9 +140,10 @@ export function useWebSocket() {
             });
           }
           
-          // Invalidate queries based on message type
+          // Invalider les requêtes
           switch (msg.type) {
             case 'RIDE_STATUS_CHANGED':
+            case 'OFFER_ACCEPTED':
               queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
               queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
               queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
@@ -138,18 +152,6 @@ export function useWebSocket() {
             case 'CHAT_MESSAGE':
               if (msg.payload?.rideId) {
                 queryClient.invalidateQueries({ queryKey: ['/api/chat/history', msg.payload.rideId] });
-              }
-              break;
-              
-            case 'OFFER_ACCEPTED':
-              queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-              queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-              queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-              break;
-              
-            case 'DRIVER_LOCATION':
-              if (msg.payload?.rideId) {
-                queryClient.invalidateQueries({ queryKey: ['/api/driver', msg.payload.driverId, 'location'] });
               }
               break;
           }
@@ -161,6 +163,7 @@ export function useWebSocket() {
       console.error("Error creating WebSocket connection:", error);
     }
   }, [queryClient, getWebSocketUrl, sendAuth]);
+  
 
   useEffect(() => {
     mountedRef.current = true;

@@ -1,8 +1,9 @@
 import { db } from "./db";
 import {
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, notifications, customPlaces,
+  chatMessages,  // Ajouter cette ligne
   type User, type DriverProfile, type Ride, type Offer, type AppConfig, type Notification, type CustomPlace,
-  type InsertUser, type DriverLocation, type DriverDocument
+  type InsertUser, type DriverLocation, type DriverDocument, type ChatMessage
 } from "@shared/schema";
 import { eq, and, or, sql } from "drizzle-orm";
 

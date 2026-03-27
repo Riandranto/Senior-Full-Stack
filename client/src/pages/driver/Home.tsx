@@ -265,111 +265,111 @@ export default function DriverHome() {
     return markers;
   }, [requests, activeRide]);
 
-  const handleStartJourney = async () => {
-    if (!activeRide) {
-      console.error("No active ride");
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: lang === 'mg' ? "Tsy hita ny dia" : "Course introuvable",
-      });
-      return;
-    }
   
-    try {
-      console.log('🚀 Starting journey for ride:', activeRide.id);
-      
-      // Appeler l'API pour mettre à jour le statut
-      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ status: 'IN_PROGRESS' })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to update status');
-      }
-      
-      const updatedRide = await response.json();
-      console.log('✅ Ride status updated:', updatedRide);
-      
-      // Mettre à jour le cache
-      setTimerStarted(true);
-      setStartTime(Date.now());
-      
-      // Invalider les requêtes pour rafraîchir
-      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-      await refetchActiveRide();
-      
-      toast({
-        title: lang === 'mg' ? "Mandehana!" : "C'est parti!",
-        description: lang === 'mg' 
-          ? "Ny dia dia efa manomboka"
-          : "La course est en cours",
-      });
-    } catch (error: any) {
-      console.error("ERROR in handleStartJourney:", error);
-      setTimerStarted(false);
-      setStartTime(null);
-  
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
-      });
-    }
-  };
+const handleStartJourney = async () => {
+  if (!activeRide) {
+    toast({
+      variant: "destructive",
+      title: lang === 'mg' ? "Tsy nety" : "Erreur",
+      description: lang === 'mg' ? "Tsy hita ny dia" : "Course introuvable",
+    });
+    return;
+  }
 
-  const handleCompleteRide = async () => {
-    if (!activeRide) return;
+  try {
+    console.log('🚀 Starting journey for ride:', activeRide.id);
     
-    try {
-      console.log('🏁 Completing ride:', activeRide.id);
-      
-      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ status: 'COMPLETED' })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to complete ride');
-      }
-      
-      setShowCompletionConfirm(false);
-      setTimerStarted(false);
-      setStartTime(null);
-      
-      // Invalider les requêtes
-      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-      await refetchActiveRide();
-      
-      toast({
-        title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
-        description: lang === 'mg' 
-          ? `Voaray ${formattedPrice} Ar`
-          : `${formattedPrice} Ar reçus`,
-      });
-    } catch (error) {
-      console.error('Error completing ride:', error);
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: lang === 'mg' 
-          ? "Tsy afaka namita ny dia"
-          : "Impossible de terminer la course",
-      });
+    // Utiliser PATCH au lieu de POST, et vérifier la route
+    const response = await fetch(`/api/rides/${activeRide.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ status: 'IN_PROGRESS' })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Failed to update status');
     }
-  };
+    
+    const updatedRide = await response.json();
+    console.log('✅ Ride status updated:', updatedRide);
+    
+    setTimerStarted(true);
+    setStartTime(Date.now());
+    
+    // Invalider les requêtes
+    queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+    await refetchActiveRide();
+    
+    toast({
+      title: lang === 'mg' ? "Mandehana!" : "C'est parti!",
+      description: lang === 'mg' 
+        ? "Ny dia dia efa manomboka"
+        : "La course est en cours",
+    });
+  } catch (error: any) {
+    console.error("ERROR in handleStartJourney:", error);
+    setTimerStarted(false);
+    setStartTime(null);
+
+    toast({
+      variant: "destructive",
+      title: lang === 'mg' ? "Tsy nety" : "Erreur",
+      description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
+    });
+  }
+};
+
+// Même correction pour handleCompleteRide
+const handleCompleteRide = async () => {
+  if (!activeRide) return;
+  
+  try {
+    console.log('🏁 Completing ride:', activeRide.id);
+    
+    const response = await fetch(`/api/rides/${activeRide.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ status: 'COMPLETED' })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Failed to complete ride');
+    }
+    
+    setShowCompletionConfirm(false);
+    setTimerStarted(false);
+    setStartTime(null);
+    
+    queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+    await refetchActiveRide();
+    
+    toast({
+      title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
+      description: lang === 'mg' 
+        ? `Voaray ${formattedPrice} Ar`
+        : `${formattedPrice} Ar reçus`,
+    });
+  } catch (error) {
+    console.error('Error completing ride:', error);
+    toast({
+      variant: "destructive",
+      title: lang === 'mg' ? "Tsy nety" : "Erreur",
+      description: lang === 'mg' 
+        ? "Tsy afaka namita ny dia"
+        : "Impossible de terminer la course",
+    });
+  }
+};
 
   const handleCancelRide = async () => {
     if (!activeRide) return;
