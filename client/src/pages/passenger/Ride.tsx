@@ -60,6 +60,13 @@ export default function PassengerRide() {
     }
   }, []);
 
+  useEffect(() => {
+    // Fermer le chat quand la course est terminée ou annulée
+    if (ride && (ride.status === 'COMPLETED' || ride.status === 'CANCELED')) {
+      setShowChat(false);
+    }
+  }, [ride]);
+
   // ⚠️ ATTENTION: isBidding et autres variables doivent être définies APRÈS tous les hooks
   // mais AVANT leur utilisation dans les useEffect qui en dépendent.
   // Nous allons les définir à partir de ride, qui est chargé asynchrone.

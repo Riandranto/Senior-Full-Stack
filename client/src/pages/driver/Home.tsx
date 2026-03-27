@@ -277,14 +277,39 @@ export default function DriverHome() {
     }
   
     try {
-      // Passer directement de ASSIGNED à IN_PROGRESS (démarrage du trajet)
-      await updateRideStatus.mutateAsync('IN_PROGRESS');
+      console.log('🚀 Starting journey for ride:', activeRide.id);
+      
+      // Appeler l'API pour mettre à jour le statut
+      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'IN_PROGRESS' })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to update status');
+      }
+      
+      const updatedRide = await response.json();
+      console.log('✅ Ride status updated:', updatedRide);
+      
+      // Mettre à jour le cache
       setTimerStarted(true);
       setStartTime(Date.now());
-      await refresh();
-  
+      
+      // Invalider les requêtes pour rafraîchir
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+      await refetchActiveRide();
+      
       toast({
         title: lang === 'mg' ? "Mandehana!" : "C'est parti!",
+        description: lang === 'mg' 
+          ? "Ny dia dia efa manomboka"
+          : "La course est en cours",
       });
     } catch (error: any) {
       console.error("ERROR in handleStartJourney:", error);
@@ -294,7 +319,7 @@ export default function DriverHome() {
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka" : "Cannot start"),
+        description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
       });
     }
   };
@@ -303,11 +328,30 @@ export default function DriverHome() {
     if (!activeRide) return;
     
     try {
-      await updateRideStatus.mutateAsync('COMPLETED');
+      console.log('🏁 Completing ride:', activeRide.id);
+      
+      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'COMPLETED' })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to complete ride');
+      }
+      
       setShowCompletionConfirm(false);
       setTimerStarted(false);
       setStartTime(null);
-      refresh();
+      
+      // Invalider les requêtes
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+      await refetchActiveRide();
       
       toast({
         title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
@@ -315,7 +359,16 @@ export default function DriverHome() {
           ? `Voaray ${formattedPrice} Ar`
           : `${formattedPrice} Ar reçus`,
       });
-    } catch (error) {}
+    } catch (error) {
+      console.error('Error completing ride:', error);
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' 
+          ? "Tsy afaka namita ny dia"
+          : "Impossible de terminer la course",
+      });
+    }
   };
 
   const handleCancelRide = async () => {
@@ -483,6 +536,13 @@ export default function DriverHome() {
       }
     };
   }, [selectedRequest?.id, driverPos]);
+
+  useEffect(() => {
+    // Fermer le chat quand la course est terminée ou annulée
+    if (activeRide && (activeRide.status === 'COMPLETED' || activeRide.status === 'CANCELED')) {
+      setShowChat(false);
+    }
+  }, [activeRide]);
 
   const isOnline = profile?.online || false;
   const isPending = profile?.status === 'PENDING';

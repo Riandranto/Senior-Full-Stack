@@ -133,9 +133,9 @@ export default function ChatBox({
                   }
                 </div>
               ) : (
-                messages.map((msg, idx) => (
+                messages.map((msg) => (
                   <div
-                    key={msg.id || idx}
+                    key={msg.id || `msg-${msg.timestamp}-${msg.from}`}
                     className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
                   >
                     <div

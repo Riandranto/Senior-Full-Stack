@@ -321,28 +321,29 @@ export function useUpdateLocation() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const { lang } = useTranslation();
-
+  
     return useMutation({
       mutationFn: async (status: string) => {
-        const url = buildUrl(api.driver.updateRideStatus.path, { id: rideId });
-        const res = await apiFetch(url, {
-          method: api.driver.updateRideStatus.method,
+        console.log(`🔄 Updating ride ${rideId} status to: ${status}`);
+        
+        const res = await apiFetch(`/api/rides/${rideId}/status`, {
+          method: 'PATCH',
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status }),
           credentials: "include",
         });
-
+  
         if (!res.ok) {
-          const error = await res.json();
+          const error = await res.json().catch(() => ({}));
           throw new Error(error.message || "Failed to update ride status");
         }
-
+  
         return res.json();
       },
       onSuccess: (data) => {
-        // Invalider le cache pour forcer un reapiFetch
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-        queryClient.invalidateQueries({ queryKey: [api.driver.getRequests.path] });
+        queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
         
         const messages: Record<string, { mg: string; fr: string }> = {
           DRIVER_EN_ROUTE: { mg: "Eny an-dalana!", fr: "En route!" },
@@ -350,12 +351,20 @@ export function useUpdateLocation() {
           IN_PROGRESS: { mg: "Manomboka ny dia", fr: "Course en cours" },
           COMPLETED: { mg: "Vita ny dia", fr: "Course terminée" },
         };
-
+  
         if (messages[data.status]) {
           toast({
             title: lang === 'mg' ? messages[data.status].mg : messages[data.status].fr,
           });
         }
+      },
+      onError: (error: Error) => {
+        console.error('Error updating ride status:', error);
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy nety" : "Erreur",
+          description: error.message,
+        });
       },
     });
   }
