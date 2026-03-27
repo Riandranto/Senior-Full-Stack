@@ -88,7 +88,12 @@ export function useRide(id: number | null) {
         if (res.status === 404) {
           return null;
         }
-        const error = await res.json();
+        // Don't throw on 500 errors, just return null
+        if (res.status === 500) {
+          console.warn('Server error fetching ride, returning null');
+          return null;
+        }
+        const error = await res.json().catch(() => ({}));
         throw new Error(error.message || "Failed to fetch ride");
       }
       
@@ -98,18 +103,18 @@ export function useRide(id: number | null) {
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       
-      if (!status) return 3000;
+      if (!status) return 5000;
       
       // Polling plus agressif pendant les phases actives
       switch (status) {
         case 'REQUESTED':
         case 'BIDDING':
-          return 2000; // 2 secondes pour les offres
+          return 3000; // 3 secondes pour les offres
         case 'ASSIGNED':
         case 'DRIVER_EN_ROUTE':
         case 'DRIVER_ARRIVED':
         case 'IN_PROGRESS':
-          return 3000; // 3 secondes pour le suivi
+          return 4000; // 4 secondes pour le suivi
         default:
           return false;
       }
@@ -117,12 +122,17 @@ export function useRide(id: number | null) {
     refetchIntervalInBackground: true,
     staleTime: 0,
     retry: 2,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
     onError: (error: Error) => {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message,
-      });
+      console.error('Error fetching ride:', error);
+      // Don't show toast for 500 errors to avoid spam
+      if (!error.message?.includes('500')) {
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy nety" : "Erreur",
+          description: error.message,
+        });
+      }
     },
   });
 }
@@ -150,7 +160,7 @@ export function useRideOffers(rideId: number | null) {
       return res.json();
     },
     enabled: !!rideId,
-    reapiFetchInterval: 3000, // 3 secondes
+    refetchInterval: 5000, // 5 secondes
     staleTime: 2000,
   });
 }
@@ -189,6 +199,7 @@ export function useAcceptOffer(rideId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.passenger.getRide.path, rideId] });
       queryClient.invalidateQueries({ queryKey: [api.passenger.getOffers.path, rideId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       
       toast({
         title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
@@ -224,7 +235,7 @@ export function useCancelRide(rideId: number) {
       });
 
       if (!res.ok) {
-        const error = await res.json();
+        const error = await res.json().catch(() => ({}));
         throw new Error(error.message || "Failed to cancel ride");
       }
 
@@ -233,6 +244,7 @@ export function useCancelRide(rideId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.passenger.getRide.path, rideId] });
       queryClient.invalidateQueries({ queryKey: [api.passenger.history.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       
       toast({
         title: lang === 'mg' ? "Nofoanana" : "Annulé",
@@ -273,7 +285,7 @@ export function useRateRide(rideId: number) {
       });
 
       if (!res.ok) {
-        const error = await res.json();
+        const error = await res.json().catch(() => ({}));
         throw new Error(error.message || "Failed to rate ride");
       }
 
@@ -281,6 +293,7 @@ export function useRateRide(rideId: number) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.passenger.getRide.path, rideId] });
+      queryClient.invalidateQueries({ queryKey: [api.passenger.history.path] });
       
       toast({
         title: lang === 'mg' ? "Misaotra!" : "Merci!",
@@ -336,6 +349,6 @@ export function useRideViews(rideId: number | null) {
       return res.json();
     },
     enabled: !!rideId,
-    reapiFetchInterval: 10000, // 10 secondes
+    refetchInterval: 10000, // 10 secondes
   });
 }

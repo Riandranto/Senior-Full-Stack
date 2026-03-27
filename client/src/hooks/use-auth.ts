@@ -23,6 +23,12 @@ export function useAuth() {
           return null;
         }
         
+        if (res.status === 500) {
+          console.warn('Server error during auth check');
+          // Don't throw, just return null
+          return null;
+        }
+        
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.message || "Erreur d'authentification");
