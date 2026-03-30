@@ -1,11 +1,10 @@
-// src/hooks/use-chat.ts - Version corrigée
+// src/hooks/use-chat.ts - Version complète et fonctionnelle
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from './use-websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from './use-toast';
 import { useTranslation } from '@/lib/i18n';
-import { apiFetch } from '@/lib/api';
 
 export interface ChatMessage {
   id?: number;
@@ -18,7 +17,7 @@ export interface ChatMessage {
   isOwn?: boolean;
 }
 
-export function useChat(rideId: number, currentUserId: number, otherUserName?: string) {
+export function useChat(rideId: number, currentUserId: number, otherUserName?: string, otherUserId?: number) {
   const { sendMessage, subscribe, connected } = useWebSocket();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -28,18 +27,19 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const previousMessagesLength = useRef(0);
+  const lastRefreshRef = useRef<number>(Date.now());
 
-  // Charger l'historique des messages - AMÉLIORÉ
+  // Charger l'historique des messages
   const loadHistory = useCallback(async () => {
+    if (!rideId) return;
+    
     try {
-      console.log('📜 Loading chat history for ride:', rideId);
-      const res = await apiFetch(`/api/chat/history/${rideId}`, {
+      const res = await fetch(`/api/chat/history/${rideId}`, {
         credentials: 'include'
       });
       
       if (res.ok) {
         const history = await res.json();
-        console.log('📜 Chat history loaded:', history.length, 'messages');
         
         const formattedMessages = history.map((msg: any) => ({ 
           id: msg.id,
@@ -48,13 +48,14 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
           message: msg.message,
           rideId: msg.rideId,
           timestamp: msg.timestamp,
-          isOwn: msg.from === currentUserId
+          isOwn: msg.from === currentUserId,
+          isRead: msg.isRead
         }));
         
         setMessages(formattedMessages);
-        setUnreadCount(history.filter((msg: any) => !msg.isRead && msg.from !== currentUserId).length);
-      } else {
-        console.warn('Failed to load chat history:', res.status);
+        const unread = history.filter((msg: any) => !msg.isRead && msg.from !== currentUserId).length;
+        setUnreadCount(unread);
+        lastRefreshRef.current = Date.now();
       }
     } catch (error) {
       console.error('Failed to load chat history:', error);
@@ -70,22 +71,36 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     }, 100);
   }, []);
 
-  // Envoyer un message - AVEC SAUVEGARDE API
+  // Envoyer un message
   const sendChatMessage = useCallback(async (message: string) => {
     if (!message.trim()) return false;
     if (isSending) return false;
-  
+    
+    // Message temporaire pour l'UI
+    const tempId = Date.now();
+    const tempMessage: ChatMessage = {
+      id: tempId,
+      from: currentUserId,
+      fromName: 'Moi',
+      message: message.trim(),
+      rideId,
+      timestamp: new Date().toISOString(),
+      isOwn: true
+    };
+    
+    setMessages(prev => [...prev, tempMessage]);
+    scrollToBottom();
+    
     setIsSending(true);
     
     try {
-      // 1. Sauvegarder via API REST
       const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rideId,
           message: message.trim(),
-          toUserId: otherUserId,
+          toUserId: otherUserId || 0,
           fromName: otherUserName
         }),
         credentials: 'include'
@@ -97,23 +112,16 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
       
       const savedMessage = await response.json();
       
-      // 2. Ajouter au state local
-      const newMessage: ChatMessage = {
-        id: savedMessage.id,
-        from: currentUserId,
-        fromName: 'Moi',
-        message: message.trim(),
-        rideId,
-        timestamp: savedMessage.createdAt || new Date().toISOString(),
-        isOwn: true
-      };
-      
-      setMessages(prev => [...prev, newMessage]);
-      scrollToBottom();
+      // Remplacer le message temporaire par le vrai
+      setMessages(prev => prev.map(m => 
+        m.id === tempId ? { ...savedMessage, fromName: 'Moi', isOwn: true } : m
+      ));
       
       return true;
     } catch (error) {
       console.error('Error sending message:', error);
+      // Supprimer le message temporaire en cas d'erreur
+      setMessages(prev => prev.filter(m => m.id !== tempId));
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
@@ -130,8 +138,6 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
   // Écouter les messages entrants
   useEffect(() => {
     const unsubscribe = subscribe('CHAT_MESSAGE', (payload: any) => {
-      console.log('📨 Chat message received:', payload);
-      
       if (payload.rideId === rideId) {
         const isOwn = payload.from === currentUserId;
         
@@ -159,6 +165,13 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
         
         if (!isOwn) {
           setUnreadCount(prev => prev + 1);
+          // Notification toast pour les nouveaux messages
+          if (document.visibilityState !== 'visible') {
+            toast({
+              title: lang === 'mg' ? "Hafatra vaovao" : "Nouveau message",
+              description: `${newMessage.fromName}: ${newMessage.message.substring(0, 50)}${newMessage.message.length > 50 ? '...' : ''}`,
+            });
+          }
         }
         
         scrollToBottom();
@@ -166,25 +179,25 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     });
     
     return () => unsubscribe();
-  }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom]);
+  }, [rideId, currentUserId, otherUserName, messages, subscribe, scrollToBottom, toast, lang]);
 
   // Charger l'historique au montage
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
-  // Polling toutes les 3 secondes
+  // Polling pour les messages (fallback si WebSocket est down)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefreshRef.current > 3000) {
         loadHistory();
       }
-    }, 3000);
+    }, 5000);
     
     return () => clearInterval(interval);
   }, [loadHistory]);
 
-  // Scroll automatique
+  // Scroll automatique quand les messages changent
   useEffect(() => {
     if (messages.length > previousMessagesLength.current) {
       scrollToBottom();
@@ -195,7 +208,7 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
   const markAsRead = useCallback(async () => {
     if (unreadCount > 0) {
       try {
-        await apiFetch(`/api/chat/mark-read/${rideId}`, {
+        await fetch(`/api/chat/mark-read/${rideId}`, {
           method: 'POST',
           credentials: 'include'
         });

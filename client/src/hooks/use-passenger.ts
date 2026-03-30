@@ -225,7 +225,10 @@ export function useCancelRide(rideId: number) {
       queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       
       toast({
-        title: lang === 'mg' ? "Nofoanana" : "Annulé",
+        title: lang === 'mg' ? "Nofoanana ny dia" : "Course annulée",
+        description: lang === 'mg' 
+          ? "Voafafa soa aman-tsara ny dia"
+          : "La course a été annulée avec succès",
       });
     },
     onError: (error: Error) => {

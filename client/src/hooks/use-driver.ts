@@ -374,7 +374,7 @@ export function useUpdateLocation() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const { lang } = useTranslation();
-
+  
     return useMutation({
       mutationFn: async (additionalMinutes: number) => {
         const res = await apiFetch(`/api/rides/${rideId}/eta`, {
@@ -383,22 +383,29 @@ export function useUpdateLocation() {
           body: JSON.stringify({ additionalMinutes }),
           credentials: "include",
         });
-
+  
         if (!res.ok) {
           const error = await res.json();
           throw new Error(error.message || "Failed to extend ETA");
         }
-
+  
         return res.json();
       },
-      onSuccess: (_, additionalMinutes) => {
+      onSuccess: (data, additionalMinutes) => {
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         
         toast({
           title: lang === 'mg' ? "Fotoana fanampiny" : "Temps supplémentaire",
           description: lang === 'mg' 
-            ? `+${additionalMinutes} minitra fanampiny`
-            : `+${additionalMinutes} minutes supplémentaires`,
+            ? `+${additionalMinutes} minitra fanampiny (total: ${data.etaMinutes} min)`
+            : `+${additionalMinutes} minutes supplémentaires (total: ${data.etaMinutes} min)`,
+        });
+      },
+      onError: (error: Error) => {
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy nety" : "Erreur",
+          description: error.message,
         });
       },
     });

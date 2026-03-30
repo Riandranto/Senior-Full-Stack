@@ -233,6 +233,7 @@ export default function DriverHome() {
       console.log('🎉 OFFER_ACCEPTED received in DriverHome:', data);
       
       if (data.driverId === profile?.userId) {
+        // Forcer le refetch immédiat
         refetchActiveRide();
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
@@ -243,6 +244,11 @@ export default function DriverHome() {
             ? "Mandehana any amin'ny toerana fiaingana"
             : "Rendez-vous au point de départ",
         });
+        
+        // Ouvrir le chat automatiquement
+        setOtherUserId(data.passengerId);
+        setOtherUserName(data.passengerName || 'Passager');
+        setShowChat(true);
       }
     });
     

@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Send, X, User, ChevronUp, ChevronDown } from 'lucide-react';
+import { Send, X, User, ChevronUp, ChevronDown, Phone } from 'lucide-react';
 import { useChat } from '@/hooks/use-chat';
 import { useTranslation } from '@/lib/i18n';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,6 +13,7 @@ interface ChatBoxProps {
   currentUserId: number;
   otherUserId: number;
   otherUserName: string;
+  otherUserPhone?: string;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -22,14 +23,19 @@ export default function ChatBox({
   currentUserId,
   otherUserId,
   otherUserName,
+  otherUserPhone,
   isOpen,
   onClose,
 }: ChatBoxProps) {
   const { t, lang } = useTranslation();
   const [message, setMessage] = useState('');
   const [isMinimized, setIsMinimized] = useState(false);
-  const { messages, sendMessage, connected, isSending, loadHistory } = useChat(rideId, currentUserId, otherUserName);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { messages, sendMessage, connected, isSending, messagesEndRef } = useChat(
+    rideId, 
+    currentUserId, 
+    otherUserName,
+    otherUserId
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,29 +44,10 @@ export default function ChatBox({
     }
   }, [isOpen, isMinimized]);
 
-  useEffect(() => {
-    if (messagesEndRef.current && !isMinimized) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, isMinimized]);
-
-  // Recharger l'historique périodiquement
-  useEffect(() => {
-    if (!isOpen) return;
-    
-    const interval = setInterval(() => {
-      loadHistory();
-    }, 5000); // Rafraîchir toutes les 5 secondes
-    
-    return () => clearInterval(interval);
-  }, [isOpen, loadHistory]);
-
   const handleSend = () => {
     if (message.trim() && !isSending && connected) {
-      const success = sendMessage(message);
-      if (success) {
-        setMessage('');
-      }
+      sendMessage(message);
+      setMessage('');
     }
   };
 
@@ -102,6 +89,17 @@ export default function ChatBox({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {otherUserPhone && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => window.location.href = `tel:${otherUserPhone}`}
+                className="rounded-full w-7 h-7"
+                title={lang === 'mg' ? 'Antsoy' : 'Appeler'}
+              >
+                <Phone className="w-4 h-4 text-green-600" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -145,6 +143,11 @@ export default function ChatBox({
                           : 'bg-secondary/80 text-foreground rounded-bl-none'
                       }`}
                     >
+                      {!msg.isOwn && (
+                        <p className="text-[10px] font-semibold text-muted-foreground mb-0.5">
+                          {msg.fromName}
+                        </p>
+                      )}
                       <p className="text-sm break-words">{msg.message}</p>
                       <p className={`text-[10px] mt-0.5 ${msg.isOwn ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                         {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

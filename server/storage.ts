@@ -219,18 +219,66 @@ export class DatabaseStorage implements IStorage {
       cancelBy, 
       updatedAt: new Date() 
     }).where(eq(rides.id, id)).returning();
+    
+    // Notifier l'autre partie
+    const otherUserId = cancelBy === 'PASSENGER' ? ride.driverId : ride.passengerId;
+    if (otherUserId) {
+      await this.createNotification({
+        userId: otherUserId,
+        title: "Nofoanana ny dia",
+        message: `Ny ${cancelBy === 'PASSENGER' ? 'mpandeha' : 'mpamily'} dia nanafoana ny dia. Antony: ${reason}`,
+        type: "RIDE_CANCELED",
+        rideId: id,
+      });
+    }
+    
+    // Si c'est un conducteur qui annule, remettre la course en REQUESTED pour que d'autres conducteurs puissent offrir
+    if (cancelBy === 'DRIVER') {
+      // Optionnel: remettre la course en REQUESTED pour redistribution
+       await db.update(rides).set({ driverId: null, status: "REQUESTED" }).where(eq(rides.id, id));
+    }
+    
     return ride;
   }
 
+  
   async acceptOffer(rideId: number, offerId: number, price: number, driverId: number): Promise<Ride> {
+    // D'abord, marquer l'offre acceptée
     await db.update(offers).set({ status: "ACCEPTED" }).where(eq(offers.id, offerId));
-    await db.update(offers).set({ status: "EXPIRED" }).where(and(eq(offers.rideId, rideId), sql`${offers.id} != ${offerId}`));
+    
+    // Marquer toutes les autres offres comme expirées
+    await db.update(offers).set({ status: "EXPIRED" }).where(and(
+      eq(offers.rideId, rideId),
+      sql`${offers.id} != ${offerId}`
+    ));
+    
+    // Mettre à jour la course
     const [ride] = await db.update(rides).set({ 
       status: "ASSIGNED", 
       driverId, 
       selectedPriceAr: price, 
       updatedAt: new Date() 
     }).where(eq(rides.id, rideId)).returning();
+    
+    // Créer une notification pour le conducteur
+    const passenger = await this.getUser(ride.passengerId);
+    await this.createNotification({
+      userId: driverId,
+      title: "Tolobidy voaray!",
+      message: `${passenger?.name || 'Mpandeha'} dia nanaiky ny tolobidy Ar ${price}`,
+      type: "OFFER_ACCEPTED",
+      rideId: rideId,
+    });
+    
+    // Créer une notification pour le passager
+    await this.createNotification({
+      userId: ride.passengerId,
+      title: "Tolobidy voaray!",
+      message: `Ny mpamily ${(await this.getUser(driverId))?.name || 'Mpamily'} dia nanaiky ny tolobidy Ar ${price}`,
+      type: "OFFER_ACCEPTED",
+      rideId: rideId,
+    });
+    
     return ride;
   }
 

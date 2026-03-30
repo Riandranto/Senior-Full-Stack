@@ -870,7 +870,12 @@ export default function AdminDashboard() {
   const updateDriverStatus = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) => {
       const url = buildUrl(api.admin.updateDriverStatus.path, { id });
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }), credentials: 'include' });
+      const res = await fetch(url, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ action }), 
+        credentials: 'include' 
+      });
       if (!res.ok) throw new Error('Failed');
       return res.json();
     },
@@ -878,30 +883,35 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: [api.admin.getDrivers.path] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/stats'] });
       toast({ title: 'Statut mis à jour' });
-      setIsRefreshing(true);
-      setTimeout(() => setIsRefreshing(false), 500);
     },
-    onError: () => toast({ title: 'Erreur', description: 'Impossible de mettre à jour le statut', variant: 'destructive' }),
   });
+  
 
   const blockUser = useMutation({
     mutationFn: async ({ id, blocked }: { id: number; blocked: boolean }) => {
-      const res = await fetch(`/api/admin/users/${id}/block`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocked }), credentials: 'include' });
+      const res = await fetch(`/api/admin/users/${id}/block`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ blocked }), 
+        credentials: 'include' 
+      });
       if (!res.ok) throw new Error('Failed');
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
       toast({ title: 'Utilisateur mis à jour' });
-      setIsRefreshing(true);
-      setTimeout(() => setIsRefreshing(false), 500);
     },
-    onError: () => toast({ title: 'Erreur', description: 'Impossible de modifier l\'utilisateur', variant: 'destructive' }),
   });
 
   const adminCancelRide = useMutation({
     mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
-      const res = await fetch(`/api/admin/rides/${id}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }), credentials: 'include' });
+      const res = await fetch(`/api/admin/rides/${id}/cancel`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ reason }), 
+        credentials: 'include' 
+      });
       if (!res.ok) throw new Error('Failed');
       return res.json();
     },
@@ -911,15 +921,17 @@ export default function AdminDashboard() {
       setShowCancelDialog(false);
       setCancelReason('');
       toast({ title: 'Course annulée' });
-      setIsRefreshing(true);
-      setTimeout(() => setIsRefreshing(false), 500);
     },
-    onError: () => toast({ title: 'Erreur', description: 'Impossible d\'annuler la course', variant: 'destructive' }),
   });
 
   const updateConfig = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(api.admin.updateConfig.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), credentials: 'include' });
+      const res = await fetch(api.admin.updateConfig.path, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(data), 
+        credentials: 'include' 
+      });
       if (!res.ok) throw new Error('Failed');
       return res.json();
     },
@@ -927,7 +939,6 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: [api.admin.getConfig.path] });
       toast({ title: 'Configuration mise à jour' });
     },
-    onError: () => toast({ title: 'Erreur', description: 'Impossible de sauvegarder la configuration', variant: 'destructive' }),
   });
 
   const filteredRides = useMemo(() => {

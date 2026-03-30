@@ -365,13 +365,12 @@ export async function registerRoutes(
   
   app.get('/api/chat/history/:rideId', async (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return res.status(401).json({ message: "Non authentifié" });
     }
     
     const rideId = parseInt(req.params.rideId);
     
     try {
-      // Utiliser senderId et receiverId
       const messages = await db.select().from(chatMessages)
         .where(eq(chatMessages.rideId, rideId))
         .orderBy(sql`${chatMessages.createdAt} ASC`);
@@ -385,7 +384,7 @@ export async function registerRoutes(
           eq(chatMessages.isRead, false)
         ));
       
-      // Transformer pour le frontend (fromUserId, toUserId)
+      // Transformer pour le frontend
       const formattedMessages = messages.map(msg => ({
         id: msg.id,
         rideId: msg.rideId,
@@ -393,7 +392,8 @@ export async function registerRoutes(
         to: msg.receiverId,
         message: msg.message,
         timestamp: msg.createdAt,
-        isRead: msg.isRead
+        isRead: msg.isRead,
+        isOwn: msg.senderId === req.session.userId
       }));
       
       res.json(formattedMessages);
@@ -402,10 +402,10 @@ export async function registerRoutes(
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
-
+  
   app.post('/api/chat/send', async (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return res.status(401).json({ message: "Non authentifié" });
     }
     
     const { rideId, message, toUserId } = req.body;
@@ -415,7 +415,6 @@ export async function registerRoutes(
     }
     
     try {
-      // Utiliser senderId et receiverId (comme défini dans schema.ts)
       const [savedMessage] = await db.insert(chatMessages).values({
         rideId,
         senderId: req.session.userId,
@@ -425,21 +424,33 @@ export async function registerRoutes(
       }).returning();
       
       // Envoyer via WebSocket en temps réel
+      const sender = await storage.getUser(req.session.userId);
+      
       if (toUserId) {
-        sendToUser(toUserId, {
-          type: 'CHAT_MESSAGE',
-          payload: {
-            id: savedMessage.id,
-            rideId,
-            from: req.session.userId,
-            fromName: req.body.fromName || 'Utilisateur',
-            message: message.trim(),
-            timestamp: savedMessage.createdAt.toISOString()
-          }
-        });
+        const wsClient = clients.get(toUserId);
+        if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+          wsClient.send(JSON.stringify({
+            type: 'CHAT_MESSAGE',
+            payload: {
+              id: savedMessage.id,
+              rideId,
+              from: req.session.userId,
+              fromName: sender?.name || 'Utilisateur',
+              message: message.trim(),
+              timestamp: savedMessage.createdAt.toISOString()
+            }
+          }));
+        }
       }
       
-      res.status(201).json(savedMessage);
+      res.status(201).json({
+        id: savedMessage.id,
+        rideId,
+        from: req.session.userId,
+        message: message.trim(),
+        createdAt: savedMessage.createdAt,
+        isOwn: true
+      });
     } catch (error) {
       console.error('❌ Error saving message:', error);
       res.status(500).json({ 
@@ -451,7 +462,7 @@ export async function registerRoutes(
   
   app.post('/api/chat/mark-read/:rideId', async (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return res.status(401).json({ message: "Non authentifié" });
     }
     
     const rideId = parseInt(req.params.rideId);
@@ -461,7 +472,7 @@ export async function registerRoutes(
         .set({ isRead: true })
         .where(and(
           eq(chatMessages.rideId, rideId),
-          eq(chatMessages.toUserId, req.session.userId),
+          eq(chatMessages.receiverId, req.session.userId),
           eq(chatMessages.isRead, false)
         ));
       
@@ -474,262 +485,257 @@ export async function registerRoutes(
 
   // ==================== ADVERTISEMENT ROUTES ====================
 
-  app.get('/api/ads', async (req, res) => {
-    try {
-      const { screen, userRole } = req.query;
-      
-      let query = db.select().from(advertisements)
-        .where(eq(advertisements.isActive, true))
-        .orderBy(sql`${advertisements.priority} DESC`);
-      
-      if (screen && typeof screen === 'string') {
-        query = query.where(eq(advertisements.position, screen));
-      }
-      
-      const now = new Date();
+  // GET /api/ads - Récupérer les publicités pour les utilisateurs
+app.get('/api/ads', async (req, res) => {
+  try {
+    const { screen, userRole } = req.query;
+    
+    let query = db.select().from(advertisements)
+      .where(eq(advertisements.isActive, true))
+      .orderBy(sql`${advertisements.priority} DESC`);
+    
+    if (screen && typeof screen === 'string') {
+      query = query.where(eq(advertisements.position, screen));
+    }
+    
+    const now = new Date();
+    query = query.where(
+      or(
+        sql`${advertisements.startDate} IS NULL`,
+        sql`${advertisements.startDate} <= ${now}`
+      )
+    );
+    query = query.where(
+      or(
+        sql`${advertisements.endDate} IS NULL`,
+        sql`${advertisements.endDate} >= ${now}`
+      )
+    );
+    
+    if (userRole && typeof userRole === 'string') {
       query = query.where(
         or(
-          sql`${advertisements.startDate} IS NULL`,
-          sql`${advertisements.startDate} <= ${now}`
+          eq(advertisements.targetAudience, 'ALL'),
+          eq(advertisements.targetAudience, userRole)
         )
       );
-      query = query.where(
-        or(
-          sql`${advertisements.endDate} IS NULL`,
-          sql`${advertisements.endDate} >= ${now}`
-        )
-      );
-      
-      if (userRole && typeof userRole === 'string') {
-        query = query.where(
-          or(
-            eq(advertisements.targetAudience, 'ALL'),
-            eq(advertisements.targetAudience, userRole)
-          )
-        );
-      }
-      
-      const ads = await query;
-      
-      if (req.session.userId && ads.length > 0) {
-        for (const ad of ads) {
-          await db.insert(adStats).values({
-            adId: ad.id,
-            userId: req.session.userId,
-            action: 'IMPRESSION',
-            screen: screen as string || 'UNKNOWN',
-          });
-        }
-      }
-      
-      res.json(ads);
-    } catch (error) {
-      console.error('❌ Error fetching ads:', error);
-      res.status(500).json({ message: "Erreur lors du chargement des publicités" });
-    }
-  });
-
-  app.get('/api/admin/ads', async (req, res) => {
-    console.log('📢 Admin getAds called');
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
     }
     
-    try {
-      const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
-      res.json(ads);
-    } catch (error) {
-      console.error('❌ Error getting ads:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-
-  app.get('/api/admin/ads/:id', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
+    const ads = await query;
     
-    const id = parseInt(req.params.id);
-    try {
-      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-      if (!ad) {
-        return res.status(404).json({ message: "Publicité non trouvée" });
-      }
-      res.json(ad);
-    } catch (error) {
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-
-  app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Creating ad - body:', req.body);
-    console.log('📢 Creating ad - file:', req.file);
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    try {
-      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
-      
-      if (!title || !titleFr) {
-        return res.status(400).json({ message: "Les titres sont requis" });
-      }
-      
-      if (!req.file) {
-        return res.status(400).json({ message: "L'image est requise" });
-      }
-      
-      const imageUrl = `/uploads/${req.file.filename}`;
-      
-      const [newAd] = await db.insert(advertisements).values({
-        title,
-        titleFr,
-        description: description || null,
-        descriptionFr: descriptionFr || null,
-        imageUrl,
-        linkUrl: linkUrl || null,
-        type: type || 'BANNER',
-        position: position || 'HOME_TOP',
-        priority: parseInt(priority) || 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        isActive: true,
-        targetAudience: targetAudience || 'ALL',
-      }).returning();
-      
-      console.log('✅ Ad created:', newAd);
-      res.status(201).json(newAd);
-    } catch (error) {
-      console.error('❌ Error creating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la création" });
-    }
-  });
-
-  app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Updating ad - body:', req.body);
-    console.log('📢 Updating ad - file:', req.file);
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    
-    try {
-      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
-      
-      if (!title || !titleFr) {
-        return res.status(400).json({ message: "Les titres sont requis" });
-      }
-      
-      const updateData: any = {
-        title,
-        titleFr,
-        description: description || null,
-        descriptionFr: descriptionFr || null,
-        linkUrl: linkUrl || null,
-        type: type || 'BANNER',
-        position: position || 'HOME_TOP',
-        priority: parseInt(priority) || 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        isActive: isActive === 'true' || isActive === true,
-        targetAudience: targetAudience || 'ALL',
-        updatedAt: new Date(),
-      };
-      
-      if (req.file) {
-        updateData.imageUrl = `/uploads/${req.file.filename}`;
-      }
-      
-      const [updatedAd] = await db.update(advertisements)
-        .set(updateData)
-        .where(eq(advertisements.id, id))
-        .returning();
-      
-      console.log('✅ Ad updated:', updatedAd);
-      res.json(updatedAd);
-    } catch (error) {
-      console.error('❌ Error updating ad:', error);
-      res.status(500).json({ message: "Erreur lors de la mise à jour" });
-    }
-  });
-
-  app.delete('/api/admin/ads/:id', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    
-    const id = parseInt(req.params.id);
-    
-    try {
-      await db.delete(advertisements).where(eq(advertisements.id, id));
-      res.json({ message: "Publicité supprimée" });
-    } catch (error) {
-      console.error('❌ Error deleting ad:', error);
-      res.status(500).json({ message: "Erreur lors de la suppression" });
-    }
-  });
-
-  app.post('/api/ads/:id/click', async (req, res) => {
-    const id = parseInt(req.params.id);
-    
-    try {
-      if (req.session.userId) {
+    // Enregistrer les impressions
+    if (req.session.userId && ads.length > 0) {
+      for (const ad of ads) {
         await db.insert(adStats).values({
-          adId: id,
+          adId: ad.id,
           userId: req.session.userId,
-          action: 'CLICK',
-          screen: req.body.screen || 'UNKNOWN',
-        });
+          action: 'IMPRESSION',
+          screen: screen as string || 'UNKNOWN',
+        }).catch(e => console.error('Failed to record impression:', e));
       }
-      
-      await db.update(advertisements)
-        .set({ clickCount: sql`${advertisements.clickCount} + 1` })
-        .where(eq(advertisements.id, id));
-      
-      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-      res.json({ linkUrl: ad?.linkUrl });
-    } catch (error) {
-      console.error('❌ Error recording ad click:', error);
-      res.status(500).json({ message: "Erreur" });
     }
-  });
+    
+    res.json(ads);
+  } catch (error) {
+    console.error('❌ Error fetching ads:', error);
+    res.status(500).json({ message: "Erreur lors du chargement des publicités" });
+  }
+});
 
-  app.get('/api/admin/ads/:id/stats', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Forbidden" });
+// GET /api/admin/ads - Récupérer toutes les publicités (admin)
+app.get('/api/admin/ads', async (req, res) => {
+  if (!req.session.userId || req.session.role !== 'ADMIN') {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+  
+  try {
+    const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
+    res.json(ads);
+  } catch (error) {
+    console.error('❌ Error getting ads:', error);
+    res.status(500).json({ message: "Erreur serveur" });
+  }
+});
+
+  // POST /api/admin/ads - Créer une publicité
+app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
+  console.log('📢 Creating ad - body:', req.body);
+  console.log('📢 Creating ad - file:', req.file);
+  
+  if (!req.session.userId || req.session.role !== 'ADMIN') {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+  
+  try {
+    const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
+    
+    if (!title || !titleFr) {
+      return res.status(400).json({ message: "Les titres sont requis" });
     }
     
-    const id = parseInt(req.params.id);
-    
-    try {
-      const impressions = await db.select({ count: sql<number>`count(*)` })
-        .from(adStats)
-        .where(and(
-          eq(adStats.adId, id),
-          eq(adStats.action, 'IMPRESSION')
-        ));
-      
-      const clicks = await db.select({ count: sql<number>`count(*)` })
-        .from(adStats)
-        .where(and(
-          eq(adStats.adId, id),
-          eq(adStats.action, 'CLICK')
-        ));
-      
-      res.json({
-        impressions: Number(impressions[0]?.count || 0),
-        clicks: Number(clicks[0]?.count || 0),
-        ctr: Number(clicks[0]?.count || 0) / Number(impressions[0]?.count || 1) * 100,
-      });
-    } catch (error) {
-      console.error('❌ Error getting ad stats:', error);
-      res.status(500).json({ message: "Erreur" });
+    if (!req.file) {
+      return res.status(400).json({ message: "L'image est requise" });
     }
-  });
+    
+    const imageUrl = `/uploads/${req.file.filename}`;
+    
+    const [newAd] = await db.insert(advertisements).values({
+      title,
+      titleFr,
+      description: description || null,
+      descriptionFr: descriptionFr || null,
+      imageUrl,
+      linkUrl: linkUrl || null,
+      type: type || 'BANNER',
+      position: position || 'HOME_TOP',
+      priority: parseInt(priority) || 0,
+      startDate: startDate ? new Date(startDate) : null,
+      endDate: endDate ? new Date(endDate) : null,
+      isActive: true,
+      targetAudience: targetAudience || 'ALL',
+      impressionCount: 0,
+      clickCount: 0,
+    }).returning();
+    
+    console.log('✅ Ad created:', newAd);
+    res.status(201).json(newAd);
+  } catch (error) {
+    console.error('❌ Error creating ad:', error);
+    res.status(500).json({ message: "Erreur lors de la création" });
+  }
+});
+
+      // PUT /api/admin/ads/:id - Modifier une publicité
+app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
+  console.log('📢 Updating ad - body:', req.body);
+  console.log('📢 Updating ad - file:', req.file);
+  
+  if (!req.session.userId || req.session.role !== 'ADMIN') {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+  
+  const id = parseInt(req.params.id);
+  
+  try {
+    const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
+    
+    if (!title || !titleFr) {
+      return res.status(400).json({ message: "Les titres sont requis" });
+    }
+    
+    const updateData: any = {
+      title,
+      titleFr,
+      description: description || null,
+      descriptionFr: descriptionFr || null,
+      linkUrl: linkUrl || null,
+      type: type || 'BANNER',
+      position: position || 'HOME_TOP',
+      priority: parseInt(priority) || 0,
+      startDate: startDate ? new Date(startDate) : null,
+      endDate: endDate ? new Date(endDate) : null,
+      isActive: isActive === 'true' || isActive === true,
+      targetAudience: targetAudience || 'ALL',
+      updatedAt: new Date(),
+    };
+    
+    if (req.file) {
+      updateData.imageUrl = `/uploads/${req.file.filename}`;
+    }
+    
+    const [updatedAd] = await db.update(advertisements)
+      .set(updateData)
+      .where(eq(advertisements.id, id))
+      .returning();
+    
+    console.log('✅ Ad updated:', updatedAd);
+    res.json(updatedAd);
+  } catch (error) {
+    console.error('❌ Error updating ad:', error);
+    res.status(500).json({ message: "Erreur lors de la mise à jour" });
+  }
+});
+
+      // DELETE /api/admin/ads/:id - Supprimer une publicité
+app.delete('/api/admin/ads/:id', async (req, res) => {
+  if (!req.session.userId || req.session.role !== 'ADMIN') {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+  
+  const id = parseInt(req.params.id);
+  
+  try {
+    await db.delete(advertisements).where(eq(advertisements.id, id));
+    res.json({ message: "Publicité supprimée" });
+  } catch (error) {
+    console.error('❌ Error deleting ad:', error);
+    res.status(500).json({ message: "Erreur lors de la suppression" });
+  }
+});
+
+      // POST /api/ads/:id/click - Enregistrer un clic
+
+app.post('/api/ads/:id/click', async (req, res) => {
+  const id = parseInt(req.params.id);
+  
+  try {
+    if (req.session.userId) {
+      await db.insert(adStats).values({
+        adId: id,
+        userId: req.session.userId,
+        action: 'CLICK',
+        screen: req.body.screen || 'UNKNOWN',
+      }).catch(e => console.error('Failed to record click:', e));
+    }
+    
+    await db.update(advertisements)
+      .set({ clickCount: sql`${advertisements.clickCount} + 1` })
+      .where(eq(advertisements.id, id));
+    
+    const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
+    res.json({ linkUrl: ad?.linkUrl });
+  } catch (error) {
+    console.error('❌ Error recording ad click:', error);
+    res.status(500).json({ message: "Erreur" });
+  }
+});
+
+// GET /api/admin/ads/:id/stats - Statistiques d'une publicité
+app.get('/api/admin/ads/:id/stats', async (req, res) => {
+  if (!req.session.userId || req.session.role !== 'ADMIN') {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+  
+  const id = parseInt(req.params.id);
+  
+  try {
+    const impressions = await db.select({ count: sql<number>`count(*)` })
+      .from(adStats)
+      .where(and(
+        eq(adStats.adId, id),
+        eq(adStats.action, 'IMPRESSION')
+      ));
+    
+    const clicks = await db.select({ count: sql<number>`count(*)` })
+      .from(adStats)
+      .where(and(
+        eq(adStats.adId, id),
+        eq(adStats.action, 'CLICK')
+      ));
+    
+    const impressionsCount = Number(impressions[0]?.count || 0);
+    const clicksCount = Number(clicks[0]?.count || 0);
+    
+    res.json({
+      impressions: impressionsCount,
+      clicks: clicksCount,
+      ctr: impressionsCount > 0 ? (clicksCount / impressionsCount * 100) : 0,
+    });
+  } catch (error) {
+    console.error('❌ Error getting ad stats:', error);
+    res.status(500).json({ message: "Erreur" });
+  }
+});
 
   // ==================== PASSENGER ROUTES ====================
 
@@ -1431,6 +1437,79 @@ export async function registerRoutes(
     await storage.deleteCustomPlace(id);
     res.json({ message: "Deleted" });
   });
+  //=================== ETA ====================
+  
+  app.post('/api/rides/:id/eta', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    const { additionalMinutes } = req.body;
+    
+    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
+      return res.status(400).json({ message: "Minutes supplémentaires invalides (1-30)" });
+    }
+    
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) {
+        return res.status(404).json({ message: "Ride not found" });
+      }
+      
+      if (ride.driverId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      
+      const currentEta = ride.etaMinutes || 0;
+      const newEta = currentEta + additionalMinutes;
+      
+      const [updated] = await db.update(rides)
+        .set({ etaMinutes: newEta, updatedAt: new Date() })
+        .where(eq(rides.id, id))
+        .returning();
+      
+      // Notifier le passager
+      sendToUser(ride.passengerId, {
+        type: WS_EVENTS.RIDE_STATUS_CHANGED,
+        payload: updated
+      });
+      
+      res.json(updated);
+    } catch (error) {
+      console.error('❌ Error updating ETA:', error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // Fonction pour envoyer une notification à un utilisateur
+  async function sendNotificationToUser(userId: number, title: string, message: string, type: string, rideId?: number) {
+    // Sauvegarder en BD
+    await storage.createNotification({
+      userId,
+      title,
+      message,
+      type,
+      rideId,
+    });
+    
+    // Envoyer via WebSocket si connecté
+    const ws = clients.get(userId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'NOTIFICATION',
+        payload: {
+          id: Date.now(),
+          title,
+          message,
+          type,
+          rideId,
+          createdAt: new Date().toISOString(),
+          isRead: false,
+        }
+      }));
+    }
+  }
 
   // ==================== SEED DATABASE ====================
 
