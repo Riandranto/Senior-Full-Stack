@@ -22,9 +22,10 @@ interface Ad {
 interface AdBannerProps {
   position: 'HOME_TOP' | 'HOME_BOTTOM' | 'RIDE_SCREEN' | 'PROFILE';
   onClose?: () => void;
+  autoCloseable?: boolean;
 }
 
-export function AdBanner({ position, onClose }: AdBannerProps) {
+export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerProps) {
   const [ads, setAds] = useState<Ad[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
@@ -69,7 +70,6 @@ export function AdBanner({ position, onClose }: AdBannerProps) {
   const handleAdClick = async (ad: Ad) => {
     if (ad.linkUrl) {
       try {
-        // Enregistrer le clic
         await fetch(`/api/ads/${ad.id}/click`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -77,12 +77,16 @@ export function AdBanner({ position, onClose }: AdBannerProps) {
           credentials: 'include',
         });
         
-        // Ouvrir le lien dans un nouvel onglet
         window.open(ad.linkUrl, '_blank', 'noopener,noreferrer');
       } catch (error) {
         console.error('Error recording ad click:', error);
       }
     }
+  };
+
+  const handleClose = () => {
+    setIsVisible(false);
+    if (onClose) onClose();
   };
 
   if (isLoading || ads.length === 0 || !isVisible) return null;
@@ -129,18 +133,17 @@ export function AdBanner({ position, onClose }: AdBannerProps) {
           </div>
         </div>
         
-        {/* Bouton fermer */}
-        {onClose && (
-          <button
-            onClick={() => {
-              setIsVisible(false);
-              onClose();
-            }}
-            className="absolute top-2 right-2 w-6 h-6 bg-black/50 rounded-full flex items-center justify-center hover:bg-black/70 transition-colors"
-          >
-            <X className="w-3 h-3 text-white" />
-          </button>
-        )}
+        {/* Bouton fermer - toujours visible */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleClose();
+          }}
+          className="absolute top-2 right-2 w-6 h-6 bg-black/70 rounded-full flex items-center justify-center hover:bg-black/90 transition-colors z-10"
+          aria-label="Fermer la publicité"
+        >
+          <X className="w-3 h-3 text-white" />
+        </button>
         
         {/* Indicateurs de carousel */}
         {ads.length > 1 && (
@@ -148,7 +151,10 @@ export function AdBanner({ position, onClose }: AdBannerProps) {
             {ads.map((_, idx) => (
               <button
                 key={idx}
-                onClick={() => setCurrentIndex(idx)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCurrentIndex(idx);
+                }}
                 className={`w-1.5 h-1.5 rounded-full transition-all ${
                   idx === currentIndex 
                     ? 'w-4 bg-white' 

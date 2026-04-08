@@ -1,11 +1,13 @@
 import { db } from "./db";
 import {
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, notifications, customPlaces,
-  chatMessages,  // Ajouter cette ligne
+  chatMessages, passengerDocuments, bookings, bookingOffers,
   type User, type DriverProfile, type Ride, type Offer, type AppConfig, type Notification, type CustomPlace,
-  type InsertUser, type DriverLocation, type DriverDocument, type ChatMessage
+  type InsertUser, type DriverLocation, type DriverDocument, type ChatMessage, type PassengerDocument, 
+  type Booking, type BookingOffer
 } from "@shared/schema";
 import { eq, and, or, sql } from "drizzle-orm";
+import { isWithinRange } from "@shared/schema";
 
 export interface IStorage {
   // Auth & Users
@@ -17,9 +19,11 @@ export interface IStorage {
 
   // Drivers
   getDriverProfile(userId: number): Promise<DriverProfile | undefined>;
+  getDriverProfileById(profileId: number): Promise<DriverProfile | undefined>;
   createDriverProfile(profile: any): Promise<DriverProfile>;
   updateDriverStatus(id: number, status: string): Promise<DriverProfile>;
   updateDriverOnline(userId: number, online: boolean): Promise<DriverProfile>;
+  updateDriverOnlineByProfileId(profileId: number, online: boolean): Promise<DriverProfile>;
   getPendingDrivers(): Promise<DriverProfile[]>;
   getAllDrivers(): Promise<DriverProfile[]>;
   getAllUsers(): Promise<User[]>;
@@ -69,6 +73,24 @@ export interface IStorage {
   createDriverDocument(doc: { driverId: number; type: string; url: string }): Promise<DriverDocument>;
   getAllOffers(): Promise<Offer[]>;
 
+  // Passenger Documents
+  getPassengerDocuments(userId: number): Promise<PassengerDocument[]>;
+  createPassengerDocument(userId: number, type: string, url: string): Promise<PassengerDocument>;
+  deletePassengerDocument(id: number, userId: number): Promise<void>;
+
+  // Bookings
+  createBooking(booking: any): Promise<Booking>;
+  getBooking(id: number): Promise<Booking | undefined>;
+  getPassengerBookings(userId: number): Promise<Booking[]>;
+  getDriverBookings(driverId: number): Promise<Booking[]>;
+  getAvailableBookings(): Promise<Booking[]>;
+  getAllBookings(): Promise<Booking[]>;
+  updateBookingStatus(id: number, status: string, driverId?: number): Promise<Booking>;
+  cancelBooking(id: number, reason: string, cancelBy: string): Promise<Booking>;
+  createBookingOffer(offer: any): Promise<BookingOffer>;
+  getBookingOffers(bookingId: number): Promise<BookingOffer[]>;
+  acceptBookingOffer(bookingId: number, offerId: number): Promise<Booking>;
+
   // Custom Places
   getCustomPlaces(): Promise<CustomPlace[]>;
   createCustomPlace(place: { name: string; nameFr: string; lat: string; lng: string }): Promise<CustomPlace>;
@@ -85,7 +107,7 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  // Config
+  // ==================== CONFIG ====================
   async getConfig(): Promise<AppConfig> {
     const configs = await db.select().from(appConfig);
     if (configs.length === 0) {
@@ -112,7 +134,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  // Users
+  // ==================== USERS ====================
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -143,9 +165,14 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // Drivers
+  // ==================== DRIVERS ====================
   async getDriverProfile(userId: number): Promise<DriverProfile | undefined> {
     const [profile] = await db.select().from(driverProfiles).where(eq(driverProfiles.userId, userId));
+    return profile;
+  }
+
+  async getDriverProfileById(profileId: number): Promise<DriverProfile | undefined> {
+    const [profile] = await db.select().from(driverProfiles).where(eq(driverProfiles.id, profileId));
     return profile;
   }
 
@@ -171,6 +198,11 @@ export class DatabaseStorage implements IStorage {
     return profile;
   }
 
+  async updateDriverOnlineByProfileId(profileId: number, online: boolean): Promise<DriverProfile> {
+    const [profile] = await db.update(driverProfiles).set({ online }).where(eq(driverProfiles.id, profileId)).returning();
+    return profile;
+  }
+
   async getPendingDrivers(): Promise<DriverProfile[]> {
     return await db.select().from(driverProfiles).where(eq(driverProfiles.status, "PENDING"));
   }
@@ -183,7 +215,7 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users);
   }
 
-  // Rides
+  // ==================== RIDES ====================
   async createRide(ride: any): Promise<Ride> {
     const [newRide] = await db.insert(rides).values({
       passengerId: ride.passengerId,
@@ -220,7 +252,6 @@ export class DatabaseStorage implements IStorage {
       updatedAt: new Date() 
     }).where(eq(rides.id, id)).returning();
     
-    // Notifier l'autre partie
     const otherUserId = cancelBy === 'PASSENGER' ? ride.driverId : ride.passengerId;
     if (otherUserId) {
       await this.createNotification({
@@ -232,27 +263,21 @@ export class DatabaseStorage implements IStorage {
       });
     }
     
-    // Si c'est un conducteur qui annule, remettre la course en REQUESTED pour que d'autres conducteurs puissent offrir
     if (cancelBy === 'DRIVER') {
-      // Optionnel: remettre la course en REQUESTED pour redistribution
-       await db.update(rides).set({ driverId: null, status: "REQUESTED" }).where(eq(rides.id, id));
+      await db.update(rides).set({ driverId: null, status: "REQUESTED" }).where(eq(rides.id, id));
     }
     
     return ride;
   }
 
-  
   async acceptOffer(rideId: number, offerId: number, price: number, driverId: number): Promise<Ride> {
-    // D'abord, marquer l'offre acceptée
     await db.update(offers).set({ status: "ACCEPTED" }).where(eq(offers.id, offerId));
     
-    // Marquer toutes les autres offres comme expirées
     await db.update(offers).set({ status: "EXPIRED" }).where(and(
       eq(offers.rideId, rideId),
       sql`${offers.id} != ${offerId}`
     ));
     
-    // Mettre à jour la course
     const [ride] = await db.update(rides).set({ 
       status: "ASSIGNED", 
       driverId, 
@@ -260,7 +285,6 @@ export class DatabaseStorage implements IStorage {
       updatedAt: new Date() 
     }).where(eq(rides.id, rideId)).returning();
     
-    // Créer une notification pour le conducteur
     const passenger = await this.getUser(ride.passengerId);
     await this.createNotification({
       userId: driverId,
@@ -270,7 +294,6 @@ export class DatabaseStorage implements IStorage {
       rideId: rideId,
     });
     
-    // Créer une notification pour le passager
     await this.createNotification({
       userId: ride.passengerId,
       title: "Tolobidy voaray!",
@@ -287,14 +310,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRideHistory(userId: number): Promise<Ride[]> {
-    return await db.select().from(rides).where(or(eq(rides.passengerId, userId), eq(rides.driverId, userId))).orderBy(sql`${rides.createdAt} DESC`);
+    try {
+      return await db.select().from(rides)
+        .where(or(eq(rides.passengerId, userId), eq(rides.driverId, userId)))
+        .orderBy(sql`${rides.createdAt} DESC`);
+    } catch (error) {
+      console.error('Error in getRideHistory:', error);
+      return [];
+    }
   }
 
   async getNearbyRequests(lat?: number, lng?: number): Promise<Ride[]> {
     const allRequests = await db.select().from(rides).where(or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING"))).orderBy(sql`${rides.createdAt} DESC`);
-    if (lat !== undefined && lng !== undefined) {
+    /*if (lat !== undefined && lng !== undefined) {
       return allRequests.filter(r => isWithinRange(Number(r.pickupLat), Number(r.pickupLng)));
-    }
+    }*/
     return allRequests;
   }
 
@@ -302,7 +332,7 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(rides).orderBy(sql`${rides.createdAt} DESC`);
   }
 
-  // Offers
+  // ==================== OFFERS ====================
   async createOffer(offer: any): Promise<Offer> {
     const [newOffer] = await db.insert(offers).values({
       rideId: offer.rideId,
@@ -320,6 +350,7 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(offers).where(and(eq(offers.rideId, rideId), or(eq(offers.status, "SENT"), eq(offers.status, "ACCEPTED"))));
   }
 
+  // ==================== NOTIFICATIONS ====================
   async createNotification(notif: { userId: number; title: string; message: string; type?: string; rideId?: number }): Promise<Notification> {
     const [n] = await db.insert(notifications).values({
       userId: notif.userId,
@@ -348,6 +379,7 @@ export class DatabaseStorage implements IStorage {
     await db.update(notifications).set({ isRead: true }).where(eq(notifications.userId, userId));
   }
 
+  // ==================== ADMIN STATS ====================
   async getAdminStats() {
     const [userCount] = await db.select({ count: sql<number>`count(*)` }).from(users);
     const [driverCount] = await db.select({ count: sql<number>`count(*)` }).from(driverProfiles);
@@ -376,24 +408,68 @@ export class DatabaseStorage implements IStorage {
 
   async getRidesWithDetails(): Promise<any[]> {
     const allRides = await db.select().from(rides).orderBy(sql`${rides.createdAt} DESC`).limit(200);
-    return await Promise.all(allRides.map(async (r) => {
-      const passenger = await this.getUser(r.passengerId);
-      const driver = r.driverId ? await this.getUser(r.driverId) : null;
-      const rideOffers = await db.select().from(offers).where(eq(offers.rideId, r.id));
-      return { ...r, passenger, driver, offers: rideOffers };
-    }));
+    const results = [];
+    
+    for (const r of allRides) {
+      try {
+        const passenger = await this.getUser(r.passengerId);
+        const driver = r.driverId ? await this.getUser(r.driverId) : null;
+        const rideOffers = await db.select().from(offers).where(eq(offers.rideId, r.id));
+        results.push({ ...r, passenger, driver, offers: rideOffers });
+      } catch (err) {
+        console.error(`Error processing ride ${r.id}:`, err);
+        results.push({ ...r, passenger: null, driver: null, offers: [] });
+      }
+    }
+    
+    return results;
   }
 
   async getDriversWithDetails(): Promise<any[]> {
-    const allProfiles = await db.select().from(driverProfiles);
-    return await Promise.all(allProfiles.map(async (p) => {
-      const user = await this.getUser(p.userId);
-      const docs = await db.select().from(driverDocuments).where(eq(driverDocuments.driverId, p.id));
-      const driverRides = await db.select().from(rides).where(eq(rides.driverId, p.userId));
-      const completedRides = driverRides.filter(r => r.status === "COMPLETED");
-      const totalEarnings = completedRides.reduce((sum, r) => sum + (r.selectedPriceAr || 0), 0);
-      return { ...user, profile: p, documents: docs, totalRides: driverRides.length, completedRides: completedRides.length, totalEarnings };
-    }));
+    try {
+      console.log('🔍 Fetching drivers with details...');
+      
+      const allProfiles = await db.select().from(driverProfiles);
+      console.log(`📋 Found ${allProfiles.length} driver profiles`);
+      
+      const results = [];
+      
+      for (const p of allProfiles) {
+        try {
+          const user = await this.getUser(p.userId);
+          if (!user) {
+            console.warn(`⚠️ User not found for driver profile ${p.id} (userId: ${p.userId})`);
+            continue;
+          }
+          
+          const docs = await db.select().from(driverDocuments)
+            .where(eq(driverDocuments.driverId, p.id));
+          
+          const driverRides = await db.select().from(rides)
+            .where(eq(rides.driverId, p.userId));
+          
+          const completedRides = driverRides.filter(r => r.status === "COMPLETED");
+          const totalEarnings = completedRides.reduce((sum, r) => sum + (r.selectedPriceAr || 0), 0);
+          
+          results.push({ 
+            ...user, 
+            profile: p, 
+            documents: docs, 
+            totalRides: driverRides.length, 
+            completedRides: completedRides.length, 
+            totalEarnings 
+          });
+        } catch (err) {
+          console.error(`❌ Error processing driver profile ${p.id}:`, err);
+        }
+      }
+      
+      console.log(`✅ Total drivers with details: ${results.length}`);
+      return results;
+    } catch (error) {
+      console.error('❌ Error in getDriversWithDetails:', error);
+      return [];
+    }
   }
 
   async blockUser(id: number, blocked: boolean): Promise<User> {
@@ -412,7 +488,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDriverDocuments(driverId: number): Promise<DriverDocument[]> {
-    return await db.select().from(driverDocuments).where(eq(driverDocuments.driverId, driverId));
+    try {
+      return await db.select().from(driverDocuments).where(eq(driverDocuments.driverId, driverId));
+    } catch (error) {
+      console.error('Error in getDriverDocuments:', error);
+      return [];
+    }
   }
 
   async createDriverDocument(doc: { driverId: number; type: string; url: string }): Promise<DriverDocument> {
@@ -440,6 +521,152 @@ export class DatabaseStorage implements IStorage {
     }).where(eq(driverProfiles.userId, driverUserId));
   }
 
+  // ==================== PASSENGER DOCUMENTS ====================
+  async getPassengerDocuments(userId: number): Promise<PassengerDocument[]> {
+    return await db.select().from(passengerDocuments)
+      .where(eq(passengerDocuments.userId, userId))
+      .orderBy(sql`${passengerDocuments.uploadedAt} DESC`);
+  }
+
+  async createPassengerDocument(userId: number, type: string, url: string): Promise<PassengerDocument> {
+    const [doc] = await db.insert(passengerDocuments).values({
+      userId,
+      type,
+      url,
+    }).returning();
+    return doc;
+  }
+
+  async deletePassengerDocument(id: number, userId: number): Promise<void> {
+    await db.delete(passengerDocuments)
+      .where(and(
+        eq(passengerDocuments.id, id),
+        eq(passengerDocuments.userId, userId)
+      ));
+  }
+
+  // ==================== BOOKINGS ====================
+  async createBooking(booking: any): Promise<Booking> {
+    const [newBooking] = await db.insert(bookings).values({
+      passengerId: booking.passengerId,
+      status: booking.status || "PENDING",
+      pickupLat: booking.pickupLat,
+      pickupLng: booking.pickupLng,
+      pickupAddress: booking.pickupAddress,
+      dropLat: booking.dropLat,
+      dropLng: booking.dropLng,
+      dropAddress: booking.dropAddress,
+      vehicleType: booking.vehicleType,
+      scheduledFor: booking.scheduledFor,
+      note: booking.note,
+      distanceKm: booking.distanceKm,
+      etaMinutes: booking.etaMinutes,
+      estimatedPriceAr: booking.estimatedPriceAr,
+    }).returning();
+    return newBooking;
+  }
+
+  async getBooking(id: number): Promise<Booking | undefined> {
+    const [booking] = await db.select().from(bookings).where(eq(bookings.id, id));
+    return booking;
+  }
+
+  async getPassengerBookings(userId: number): Promise<Booking[]> {
+    return await db.select().from(bookings)
+      .where(eq(bookings.passengerId, userId))
+      .orderBy(sql`${bookings.scheduledFor} DESC`);
+  }
+
+  async getDriverBookings(driverId: number): Promise<Booking[]> {
+    return await db.select().from(bookings)
+      .where(eq(bookings.driverId, driverId))
+      .orderBy(sql`${bookings.scheduledFor} ASC`);
+  }
+
+  async getAvailableBookings(): Promise<Booking[]> {
+    return await db.select().from(bookings)
+      .where(and(
+        eq(bookings.status, 'PENDING'),
+        sql`${bookings.scheduledFor} > NOW()`
+      ))
+      .orderBy(sql`${bookings.scheduledFor} ASC`);
+  }
+
+  async getAllBookings(): Promise<Booking[]> {
+    return await db.select().from(bookings)
+      .orderBy(sql`${bookings.scheduledFor} DESC`);
+  }
+
+  async updateBookingStatus(id: number, status: string, driverId?: number): Promise<Booking> {
+    const updateData: any = { status, updatedAt: new Date() };
+    if (driverId !== undefined) updateData.driverId = driverId;
+    
+    const [booking] = await db.update(bookings)
+      .set(updateData)
+      .where(eq(bookings.id, id))
+      .returning();
+    return booking;
+  }
+
+  async cancelBooking(id: number, reason: string, cancelBy: string): Promise<Booking> {
+    const [booking] = await db.update(bookings)
+      .set({
+        status: 'CANCELED',
+        cancelReason: reason,
+        cancelBy,
+        updatedAt: new Date()
+      })
+      .where(eq(bookings.id, id))
+      .returning();
+    return booking;
+  }
+
+  async createBookingOffer(offer: any): Promise<BookingOffer> {
+    const [newOffer] = await db.insert(bookingOffers).values({
+      bookingId: offer.bookingId,
+      driverId: offer.driverId,
+      priceAr: offer.priceAr,
+      etaMinutes: offer.etaMinutes,
+      message: offer.message,
+      expiresAt: offer.expiresAt,
+    }).returning();
+    return newOffer;
+  }
+
+  async getBookingOffers(bookingId: number): Promise<BookingOffer[]> {
+    return await db.select().from(bookingOffers)
+      .where(eq(bookingOffers.bookingId, bookingId))
+      .orderBy(sql`${bookingOffers.createdAt} DESC`);
+  }
+
+  async acceptBookingOffer(bookingId: number, offerId: number): Promise<Booking> {
+    await db.update(bookingOffers)
+      .set({ status: 'ACCEPTED' })
+      .where(eq(bookingOffers.id, offerId));
+    
+    await db.update(bookingOffers)
+      .set({ status: 'EXPIRED' })
+      .where(and(
+        eq(bookingOffers.bookingId, bookingId),
+        sql`${bookingOffers.id} != ${offerId}`
+      ));
+    
+    const [offer] = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId));
+    
+    const [booking] = await db.update(bookings)
+      .set({
+        status: 'CONFIRMED',
+        driverId: offer.driverId,
+        finalPriceAr: offer.priceAr,
+        updatedAt: new Date()
+      })
+      .where(eq(bookings.id, bookingId))
+      .returning();
+    
+    return booking;
+  }
+
+  // ==================== CUSTOM PLACES ====================
   async getCustomPlaces(): Promise<CustomPlace[]> {
     return await db.select().from(customPlaces).orderBy(sql`${customPlaces.name} ASC`);
   }
@@ -458,6 +685,37 @@ export class DatabaseStorage implements IStorage {
     await db.delete(customPlaces).where(eq(customPlaces.id, id));
   }
 
+  async createRideFromBooking(bookingId: number, driverId: number): Promise<Ride> {
+    // Récupérer la réservation
+    const booking = await this.getBooking(bookingId);
+    if (!booking) {
+      throw new Error("Booking not found");
+    }
+    
+    // Créer la course
+    const [ride] = await db.insert(rides).values({
+      passengerId: booking.passengerId,
+      driverId: driverId,
+      status: "ASSIGNED",
+      pickupLat: booking.pickupLat,
+      pickupLng: booking.pickupLng,
+      pickupAddress: booking.pickupAddress,
+      dropLat: booking.dropLat,
+      dropLng: booking.dropLng,
+      dropAddress: booking.dropAddress,
+      vehicleType: booking.vehicleType,
+      distanceKm: booking.distanceKm,
+      etaMinutes: booking.etaMinutes,
+      selectedPriceAr: booking.finalPriceAr || booking.estimatedPriceAr,
+      isBooking: true,
+      bookingId: booking.id,
+      note: booking.note,
+    }).returning();
+    
+    return ride;
+  }
+
+  // ==================== ADDITIONAL ====================
   async getDriverActiveRide(driverId: number): Promise<Ride | undefined> {
     const [ride] = await db.select().from(rides)
       .where(and(

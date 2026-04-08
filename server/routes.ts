@@ -5,7 +5,8 @@ import { db } from "./db";
 import { api } from "@shared/routes";
 import { 
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
-  advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages 
+  advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages,
+  passengerDocuments, bookings, bookingOffers
 } from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
@@ -359,16 +360,15 @@ export async function registerRoutes(
 
   // ==================== CHAT HISTORY ROUTES ====================
   
-  // Table pour l'historique des messages (à ajouter dans schema.ts)
-  // Pour l'instant, on utilise un stockage en mémoire
-  const chatHistory = new Map<string, any[]>();
-  
   app.get('/api/chat/history/:rideId', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
     }
     
     const rideId = parseInt(req.params.rideId);
+    if (isNaN(rideId)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
     
     try {
       const messages = await db.select().from(chatMessages)
@@ -466,6 +466,9 @@ export async function registerRoutes(
     }
     
     const rideId = parseInt(req.params.rideId);
+    if (isNaN(rideId)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
     
     try {
       await db.update(chatMessages)
@@ -486,256 +489,267 @@ export async function registerRoutes(
   // ==================== ADVERTISEMENT ROUTES ====================
 
   // GET /api/ads - Récupérer les publicités pour les utilisateurs
-app.get('/api/ads', async (req, res) => {
-  try {
-    const { screen, userRole } = req.query;
-    
-    let query = db.select().from(advertisements)
-      .where(eq(advertisements.isActive, true))
-      .orderBy(sql`${advertisements.priority} DESC`);
-    
-    if (screen && typeof screen === 'string') {
-      query = query.where(eq(advertisements.position, screen));
-    }
-    
-    const now = new Date();
-    query = query.where(
-      or(
-        sql`${advertisements.startDate} IS NULL`,
-        sql`${advertisements.startDate} <= ${now}`
-      )
-    );
-    query = query.where(
-      or(
-        sql`${advertisements.endDate} IS NULL`,
-        sql`${advertisements.endDate} >= ${now}`
-      )
-    );
-    
-    if (userRole && typeof userRole === 'string') {
+  app.get('/api/ads', async (req, res) => {
+    try {
+      const { screen, userRole } = req.query;
+      
+      let query = db.select().from(advertisements)
+        .where(eq(advertisements.isActive, true))
+        .orderBy(sql`${advertisements.priority} DESC`);
+      
+      if (screen && typeof screen === 'string') {
+        query = query.where(eq(advertisements.position, screen));
+      }
+      
+      const now = new Date();
       query = query.where(
         or(
-          eq(advertisements.targetAudience, 'ALL'),
-          eq(advertisements.targetAudience, userRole)
+          sql`${advertisements.startDate} IS NULL`,
+          sql`${advertisements.startDate} <= ${now}`
         )
       );
-    }
-    
-    const ads = await query;
-    
-    // Enregistrer les impressions
-    if (req.session.userId && ads.length > 0) {
-      for (const ad of ads) {
-        await db.insert(adStats).values({
-          adId: ad.id,
-          userId: req.session.userId,
-          action: 'IMPRESSION',
-          screen: screen as string || 'UNKNOWN',
-        }).catch(e => console.error('Failed to record impression:', e));
+      query = query.where(
+        or(
+          sql`${advertisements.endDate} IS NULL`,
+          sql`${advertisements.endDate} >= ${now}`
+        )
+      );
+      
+      if (userRole && typeof userRole === 'string') {
+        query = query.where(
+          or(
+            eq(advertisements.targetAudience, 'ALL'),
+            eq(advertisements.targetAudience, userRole)
+          )
+        );
       }
+      
+      const ads = await query;
+      
+      // Enregistrer les impressions
+      if (req.session.userId && ads.length > 0) {
+        for (const ad of ads) {
+          await db.insert(adStats).values({
+            adId: ad.id,
+            userId: req.session.userId,
+            action: 'IMPRESSION',
+            screen: screen as string || 'UNKNOWN',
+          }).catch(e => console.error('Failed to record impression:', e));
+        }
+      }
+      
+      res.json(ads);
+    } catch (error) {
+      console.error('❌ Error fetching ads:', error);
+      res.status(500).json({ message: "Erreur lors du chargement des publicités" });
+    }
+  });
+
+  // GET /api/admin/ads - Récupérer toutes les publicités (admin)
+  app.get('/api/admin/ads', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
     }
     
-    res.json(ads);
-  } catch (error) {
-    console.error('❌ Error fetching ads:', error);
-    res.status(500).json({ message: "Erreur lors du chargement des publicités" });
-  }
-});
-
-// GET /api/admin/ads - Récupérer toutes les publicités (admin)
-app.get('/api/admin/ads', async (req, res) => {
-  if (!req.session.userId || req.session.role !== 'ADMIN') {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-  
-  try {
-    const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
-    res.json(ads);
-  } catch (error) {
-    console.error('❌ Error getting ads:', error);
-    res.status(500).json({ message: "Erreur serveur" });
-  }
-});
+    try {
+      const ads = await db.select().from(advertisements).orderBy(sql`${advertisements.createdAt} DESC`);
+      res.json(ads);
+    } catch (error) {
+      console.error('❌ Error getting ads:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
 
   // POST /api/admin/ads - Créer une publicité
-app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
-  console.log('📢 Creating ad - body:', req.body);
-  console.log('📢 Creating ad - file:', req.file);
-  
-  if (!req.session.userId || req.session.role !== 'ADMIN') {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-  
-  try {
-    const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
+  app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Creating ad - body:', req.body);
+    console.log('📢 Creating ad - file:', req.file);
     
-    if (!title || !titleFr) {
-      return res.status(400).json({ message: "Les titres sont requis" });
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
     }
     
-    if (!req.file) {
-      return res.status(400).json({ message: "L'image est requise" });
+    try {
+      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, targetAudience } = req.body;
+      
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "L'image est requise" });
+      }
+      
+      const imageUrl = `/uploads/${req.file.filename}`;
+      
+      const [newAd] = await db.insert(advertisements).values({
+        title,
+        titleFr,
+        description: description || null,
+        descriptionFr: descriptionFr || null,
+        imageUrl,
+        linkUrl: linkUrl || null,
+        type: type || 'BANNER',
+        position: position || 'HOME_TOP',
+        priority: parseInt(priority) || 0,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        isActive: true,
+        targetAudience: targetAudience || 'ALL',
+        impressionCount: 0,
+        clickCount: 0,
+      }).returning();
+      
+      console.log('✅ Ad created:', newAd);
+      res.status(201).json(newAd);
+    } catch (error) {
+      console.error('❌ Error creating ad:', error);
+      res.status(500).json({ message: "Erreur lors de la création" });
+    }
+  });
+
+  // PUT /api/admin/ads/:id - Modifier une publicité
+  app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
+    console.log('📢 Updating ad - body:', req.body);
+    console.log('📢 Updating ad - file:', req.file);
+    
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
     }
     
-    const imageUrl = `/uploads/${req.file.filename}`;
-    
-    const [newAd] = await db.insert(advertisements).values({
-      title,
-      titleFr,
-      description: description || null,
-      descriptionFr: descriptionFr || null,
-      imageUrl,
-      linkUrl: linkUrl || null,
-      type: type || 'BANNER',
-      position: position || 'HOME_TOP',
-      priority: parseInt(priority) || 0,
-      startDate: startDate ? new Date(startDate) : null,
-      endDate: endDate ? new Date(endDate) : null,
-      isActive: true,
-      targetAudience: targetAudience || 'ALL',
-      impressionCount: 0,
-      clickCount: 0,
-    }).returning();
-    
-    console.log('✅ Ad created:', newAd);
-    res.status(201).json(newAd);
-  } catch (error) {
-    console.error('❌ Error creating ad:', error);
-    res.status(500).json({ message: "Erreur lors de la création" });
-  }
-});
-
-      // PUT /api/admin/ads/:id - Modifier une publicité
-app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
-  console.log('📢 Updating ad - body:', req.body);
-  console.log('📢 Updating ad - file:', req.file);
-  
-  if (!req.session.userId || req.session.role !== 'ADMIN') {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-  
-  const id = parseInt(req.params.id);
-  
-  try {
-    const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
-    
-    if (!title || !titleFr) {
-      return res.status(400).json({ message: "Les titres sont requis" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID invalide" });
     }
     
-    const updateData: any = {
-      title,
-      titleFr,
-      description: description || null,
-      descriptionFr: descriptionFr || null,
-      linkUrl: linkUrl || null,
-      type: type || 'BANNER',
-      position: position || 'HOME_TOP',
-      priority: parseInt(priority) || 0,
-      startDate: startDate ? new Date(startDate) : null,
-      endDate: endDate ? new Date(endDate) : null,
-      isActive: isActive === 'true' || isActive === true,
-      targetAudience: targetAudience || 'ALL',
-      updatedAt: new Date(),
-    };
-    
-    if (req.file) {
-      updateData.imageUrl = `/uploads/${req.file.filename}`;
+    try {
+      const { title, titleFr, description, descriptionFr, linkUrl, type, position, priority, startDate, endDate, isActive, targetAudience } = req.body;
+      
+      if (!title || !titleFr) {
+        return res.status(400).json({ message: "Les titres sont requis" });
+      }
+      
+      const updateData: any = {
+        title,
+        titleFr,
+        description: description || null,
+        descriptionFr: descriptionFr || null,
+        linkUrl: linkUrl || null,
+        type: type || 'BANNER',
+        position: position || 'HOME_TOP',
+        priority: parseInt(priority) || 0,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        isActive: isActive === 'true' || isActive === true,
+        targetAudience: targetAudience || 'ALL',
+        updatedAt: new Date(),
+      };
+      
+      if (req.file) {
+        updateData.imageUrl = `/uploads/${req.file.filename}`;
+      }
+      
+      const [updatedAd] = await db.update(advertisements)
+        .set(updateData)
+        .where(eq(advertisements.id, id))
+        .returning();
+      
+      console.log('✅ Ad updated:', updatedAd);
+      res.json(updatedAd);
+    } catch (error) {
+      console.error('❌ Error updating ad:', error);
+      res.status(500).json({ message: "Erreur lors de la mise à jour" });
+    }
+  });
+
+  // DELETE /api/admin/ads/:id - Supprimer une publicité
+  app.delete('/api/admin/ads/:id', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
     }
     
-    const [updatedAd] = await db.update(advertisements)
-      .set(updateData)
-      .where(eq(advertisements.id, id))
-      .returning();
-    
-    console.log('✅ Ad updated:', updatedAd);
-    res.json(updatedAd);
-  } catch (error) {
-    console.error('❌ Error updating ad:', error);
-    res.status(500).json({ message: "Erreur lors de la mise à jour" });
-  }
-});
-
-      // DELETE /api/admin/ads/:id - Supprimer une publicité
-app.delete('/api/admin/ads/:id', async (req, res) => {
-  if (!req.session.userId || req.session.role !== 'ADMIN') {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-  
-  const id = parseInt(req.params.id);
-  
-  try {
-    await db.delete(advertisements).where(eq(advertisements.id, id));
-    res.json({ message: "Publicité supprimée" });
-  } catch (error) {
-    console.error('❌ Error deleting ad:', error);
-    res.status(500).json({ message: "Erreur lors de la suppression" });
-  }
-});
-
-      // POST /api/ads/:id/click - Enregistrer un clic
-
-app.post('/api/ads/:id/click', async (req, res) => {
-  const id = parseInt(req.params.id);
-  
-  try {
-    if (req.session.userId) {
-      await db.insert(adStats).values({
-        adId: id,
-        userId: req.session.userId,
-        action: 'CLICK',
-        screen: req.body.screen || 'UNKNOWN',
-      }).catch(e => console.error('Failed to record click:', e));
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID invalide" });
     }
     
-    await db.update(advertisements)
-      .set({ clickCount: sql`${advertisements.clickCount} + 1` })
-      .where(eq(advertisements.id, id));
-    
-    const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
-    res.json({ linkUrl: ad?.linkUrl });
-  } catch (error) {
-    console.error('❌ Error recording ad click:', error);
-    res.status(500).json({ message: "Erreur" });
-  }
-});
+    try {
+      await db.delete(advertisements).where(eq(advertisements.id, id));
+      res.json({ message: "Publicité supprimée" });
+    } catch (error) {
+      console.error('❌ Error deleting ad:', error);
+      res.status(500).json({ message: "Erreur lors de la suppression" });
+    }
+  });
 
-// GET /api/admin/ads/:id/stats - Statistiques d'une publicité
-app.get('/api/admin/ads/:id/stats', async (req, res) => {
-  if (!req.session.userId || req.session.role !== 'ADMIN') {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-  
-  const id = parseInt(req.params.id);
-  
-  try {
-    const impressions = await db.select({ count: sql<number>`count(*)` })
-      .from(adStats)
-      .where(and(
-        eq(adStats.adId, id),
-        eq(adStats.action, 'IMPRESSION')
-      ));
+  // POST /api/ads/:id/click - Enregistrer un clic
+  app.post('/api/ads/:id/click', async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID invalide" });
+    }
     
-    const clicks = await db.select({ count: sql<number>`count(*)` })
-      .from(adStats)
-      .where(and(
-        eq(adStats.adId, id),
-        eq(adStats.action, 'CLICK')
-      ));
+    try {
+      if (req.session.userId) {
+        await db.insert(adStats).values({
+          adId: id,
+          userId: req.session.userId,
+          action: 'CLICK',
+          screen: req.body.screen || 'UNKNOWN',
+        }).catch(e => console.error('Failed to record click:', e));
+      }
+      
+      await db.update(advertisements)
+        .set({ clickCount: sql`${advertisements.clickCount} + 1` })
+        .where(eq(advertisements.id, id));
+      
+      const [ad] = await db.select().from(advertisements).where(eq(advertisements.id, id));
+      res.json({ linkUrl: ad?.linkUrl });
+    } catch (error) {
+      console.error('❌ Error recording ad click:', error);
+      res.status(500).json({ message: "Erreur" });
+    }
+  });
+
+  // GET /api/admin/ads/:id/stats - Statistiques d'une publicité
+  app.get('/api/admin/ads/:id/stats', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
     
-    const impressionsCount = Number(impressions[0]?.count || 0);
-    const clicksCount = Number(clicks[0]?.count || 0);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID invalide" });
+    }
     
-    res.json({
-      impressions: impressionsCount,
-      clicks: clicksCount,
-      ctr: impressionsCount > 0 ? (clicksCount / impressionsCount * 100) : 0,
-    });
-  } catch (error) {
-    console.error('❌ Error getting ad stats:', error);
-    res.status(500).json({ message: "Erreur" });
-  }
-});
+    try {
+      const impressions = await db.select({ count: sql<number>`count(*)` })
+        .from(adStats)
+        .where(and(
+          eq(adStats.adId, id),
+          eq(adStats.action, 'IMPRESSION')
+        ));
+      
+      const clicks = await db.select({ count: sql<number>`count(*)` })
+        .from(adStats)
+        .where(and(
+          eq(adStats.adId, id),
+          eq(adStats.action, 'CLICK')
+        ));
+      
+      const impressionsCount = Number(impressions[0]?.count || 0);
+      const clicksCount = Number(clicks[0]?.count || 0);
+      
+      res.json({
+        impressions: impressionsCount,
+        clicks: clicksCount,
+        ctr: impressionsCount > 0 ? (clicksCount / impressionsCount * 100) : 0,
+      });
+    } catch (error) {
+      console.error('❌ Error getting ad stats:', error);
+      res.status(500).json({ message: "Erreur" });
+    }
+  });
 
   // ==================== PASSENGER ROUTES ====================
 
@@ -783,6 +797,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
 
   app.get(api.passenger.getRide.path, async (req, res) => {
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     const ride = await storage.getRide(id);
     if (!ride) return res.status(404).json({ message: "Not found" });
     
@@ -803,6 +821,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.post(api.passenger.cancelRide.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     try {
       const input = api.passenger.cancelRide.input.parse(req.body);
       const ride = await storage.cancelRide(id, input.reason, req.session.role || "PASSENGER");
@@ -817,6 +839,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
 
   app.get(api.passenger.getOffers.path, async (req, res) => {
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     const rideOffers = await storage.getOffersForRide(id);
     
     const enrichedOffers = await Promise.all(rideOffers.map(async o => {
@@ -840,9 +866,73 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     res.json({ viewCount: count });
   });
 
+  // ==================== ROUTE /api/rides/active CORRIGÉE ====================
+  app.get('/api/rides/active', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    try {
+      console.log(`🔍 Fetching active ride for user ${req.session.userId}`);
+      
+      // Récupérer toutes les courses de l'utilisateur
+      const allRides = await storage.getRideHistory(req.session.userId);
+      console.log(`📋 Found ${allRides.length} rides total`);
+      
+      // Filtrer les courses actives (non terminées et non annulées)
+      const activeRide = allRides.find(r => 
+        r.status !== 'COMPLETED' && 
+        r.status !== 'CANCELED'
+      );
+      
+      if (!activeRide) {
+        console.log(`ℹ️ No active ride for user ${req.session.userId}`);
+        return res.status(404).json({ message: "Aucune course active" });
+      }
+      
+      console.log(`✅ Found active ride ${activeRide.id} with status ${activeRide.status}`);
+      
+      // Ajouter les détails du conducteur/passager
+      let otherUser = null;
+      try {
+        if (activeRide.driverId === req.session.userId) {
+          otherUser = await storage.getUser(activeRide.passengerId);
+          console.log(`👤 Passenger: ${otherUser?.name}`);
+        } else if (activeRide.driverId) {
+          otherUser = await storage.getUser(activeRide.driverId);
+          console.log(`👤 Driver: ${otherUser?.name}`);
+        }
+      } catch (err) {
+        console.error('Error fetching other user:', err);
+      }
+      
+      const response = {
+        ...activeRide,
+        otherUser: otherUser || null,
+        isDriver: activeRide.driverId === req.session.userId,
+        passengerName: activeRide.driverId === req.session.userId ? otherUser?.name : undefined,
+        passengerPhone: activeRide.driverId === req.session.userId ? otherUser?.phone : undefined,
+        driverName: activeRide.driverId !== req.session.userId ? otherUser?.name : undefined,
+        driverPhone: activeRide.driverId !== req.session.userId ? otherUser?.phone : undefined,
+      };
+      
+      res.json(response);
+    } catch (error) {
+      console.error('❌ Error fetching active ride:', error);
+      res.status(500).json({ 
+        message: "Erreur interne",
+        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
+      });
+    }
+  });
+
   app.get('/api/driver/:id/location', async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const driverId = parseInt(req.params.id);
+    if (isNaN(driverId)) {
+      return res.status(400).json({ message: "ID de conducteur invalide" });
+    }
+    
     const locResult = await db.select().from(driverLocations)
       .where(eq(driverLocations.driverId, driverId))
       .orderBy(sql`timestamp DESC`)
@@ -854,9 +944,100 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     }
   });
 
+  app.get('/api/driver/documents', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    try {
+      console.log('📄 Fetching driver documents for user:', req.session.userId);
+      
+      const profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        console.log('ℹ️ No driver profile found for user:', req.session.userId);
+        return res.json([]);
+      }
+      
+      const docs = await storage.getDriverDocuments(profile.id);
+      console.log(`✅ Found ${docs.length} driver documents`);
+      res.json(docs);
+    } catch (error) {
+      console.error('❌ Error fetching driver documents:', error);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+  
+
+  // POST /api/driver/register - Enregistrer un conducteur
+  app.post('/api/driver/register', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    try {
+      const { vehicleType, vehicleNumber, licenseNumber } = req.body;
+      
+      // Vérifier si l'utilisateur a déjà un profil conducteur
+      let existingProfile = await storage.getDriverProfile(req.session.userId);
+      
+      if (existingProfile) {
+        // Mettre à jour le profil existant
+        await storage.updateDriverStatus(existingProfile.id, "PENDING");
+        await storage.updateDriverOnline(req.session.userId, false);
+        
+        // Mettre à jour les informations du véhicule
+        await db.update(driverProfiles)
+          .set({
+            vehicleNumber: vehicleNumber || existingProfile.vehicleNumber,
+            licenseNumber: licenseNumber || existingProfile.licenseNumber,
+            vehicleType: vehicleType || existingProfile.vehicleType,
+            status: "PENDING"
+          })
+          .where(eq(driverProfiles.id, existingProfile.id));
+        
+        const updatedProfile = await storage.getDriverProfile(req.session.userId);
+        return res.json(updatedProfile);
+      }
+      
+      // Mettre à jour le rôle de l'utilisateur
+      await storage.updateUserRole(req.session.userId, "DRIVER");
+      
+      // Créer le profil conducteur
+      const profile = await storage.createDriverProfile({
+        userId: req.session.userId,
+        vehicleType: vehicleType || "TAXI",
+        vehicleNumber: vehicleNumber || "",
+        licenseNumber: licenseNumber || "",
+        status: "PENDING",
+        online: false,
+      });
+      
+      // Mettre à jour la session
+      req.session.role = "DRIVER";
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve(null);
+        });
+      });
+      
+      res.status(201).json(profile);
+    } catch (error) {
+      console.error('❌ Error registering driver:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
   app.post(api.passenger.acceptOffer.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     try {
       const input = api.passenger.acceptOffer.input.parse(req.body);
       const offer = (await storage.getOffersForRide(id)).find(o => o.id === input.offerId);
@@ -884,6 +1065,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.post(api.passenger.rateRide.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     try {
       const input = api.passenger.rateRide.input.parse(req.body);
       const ride = await storage.getRide(id);
@@ -921,12 +1106,25 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     }
   });
 
-  app.get(api.driver.getProfile.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+ app.get(api.driver.getProfile.path, async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  
+  try {
     const profile = await storage.getDriverProfile(req.session.userId);
-    if (!profile) return res.status(404).json({ message: "Profile not found" });
-    res.json({ ...profile, documents: [] });
-  });
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+    
+    const docs = await storage.getDriverDocuments(profile.id);
+    res.json({ ...profile, documents: docs });
+  } catch (error) {
+    console.error('❌ Error fetching driver profile:', error);
+    res.status(500).json({ message: "Erreur serveur" });
+  }
+});
+
 
   app.get(api.driver.getRequests.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
@@ -977,6 +1175,9 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     }
     
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
     
     try {
       const input = api.driver.updateRideStatus.input.parse(req.body);
@@ -1069,32 +1270,124 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
         passengerPhone: passenger?.phone,
       });
     } catch (error) {
+      console.error('Error fetching driver active ride:', error);
       res.status(500).json({ message: "Internal error" });
     }
   });
 
-  app.post('/api/rides/:id/eta', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    
-    const id = parseInt(req.params.id);
-    const { additionalMinutes } = req.body;
-    
-    try {
-      const ride = await storage.updateRideEta(id, additionalMinutes);
-      res.json(ride);
-    } catch (error) {
-      res.status(400).json({ message: "Failed to update ETA" });
-    }
-  });
-
-  // routes.ts - Ajouter cette route si elle n'existe pas
-  app.post('/api/rides/:id/status', async (req, res) => {
+  // ==================== RIDE STATUS UPDATE (UNIFIED) ====================
+  app.patch('/api/rides/:id/status', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     const { status } = req.body;
+    
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) {
+        return res.status(404).json({ message: "Ride not found" });
+      }
+      
+      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      
+      const validTransitions: Record<string, Record<string, string[]>> = {
+        'PASSENGER': {
+          'REQUESTED': ['CANCELED'],
+          'BIDDING': ['CANCELED'],
+          'ASSIGNED': ['CANCELED'],
+        },
+        'DRIVER': {
+          'ASSIGNED': ['DRIVER_EN_ROUTE', 'CANCELED'],
+          'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED', 'CANCELED'],
+          'DRIVER_ARRIVED': ['IN_PROGRESS', 'CANCELED'],
+          'IN_PROGRESS': ['COMPLETED', 'CANCELED'],
+        }
+      };
+      
+      const userRole = req.session.role || (ride.driverId === req.session.userId ? 'DRIVER' : 'PASSENGER');
+      const allowedTransitions = validTransitions[userRole]?.[ride.status] || [];
+      
+      if (status && !allowedTransitions.includes(status)) {
+        return res.status(400).json({ 
+          message: `Invalid status transition from ${ride.status} to ${status} for ${userRole}` 
+        });
+      }
+      
+      const updatedRide = await storage.updateRideStatus(id, status);
+      
+      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
+      if (otherUserId) {
+        sendToUser(otherUserId, {
+          type: WS_EVENTS.RIDE_STATUS_CHANGED,
+          payload: updatedRide
+        });
+      }
+      
+      res.json(updatedRide);
+    } catch (error) {
+      console.error('❌ Error updating ride status:', error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const docType = req.body.type || 'PHOTO';
+    
+    try {
+      let profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        await storage.updateUserRole(req.session.userId, "DRIVER");
+        profile = await storage.createDriverProfile({
+          userId: req.session.userId,
+          vehicleType: req.body.vehicleType || "TAXI",
+          status: "PENDING",
+          vehicleNumber: req.body.vehicleNumber || "",
+          licenseNumber: req.body.licenseNumber || ""
+        });
+      }
+      
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
+      const doc = await storage.createDriverDocument({
+        driverId: profile.id,
+        type: docType,
+        url: fileUrl,
+      });
+      
+      res.status(201).json(doc);
+    } catch (error) {
+      console.error('❌ Error uploading driver document:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  // ==================== ETA UPDATE (UNIFIED) ====================
+  app.post('/api/rides/:id/eta', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
+    const { additionalMinutes } = req.body;
+    
+    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
+      return res.status(400).json({ message: "Minutes supplémentaires invalides (1-30)" });
+    }
     
     try {
       const ride = await storage.getRide(id);
@@ -1106,112 +1399,24 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
         return res.status(403).json({ message: "Forbidden - not your ride" });
       }
       
-      // Transitions valides pour le conducteur
-      const validTransitions: Record<string, string[]> = {
-        'ASSIGNED': ['DRIVER_EN_ROUTE'],
-        'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED'],
-        'DRIVER_ARRIVED': ['IN_PROGRESS'],
-        'IN_PROGRESS': ['COMPLETED'],
-      };
+      const currentEta = ride.etaMinutes || 0;
+      const newEta = currentEta + additionalMinutes;
       
-      if (!validTransitions[ride.status]?.includes(status)) {
-        return res.status(400).json({ 
-          message: `Invalid status transition from ${ride.status} to ${status}` 
-        });
-      }
+      const [updated] = await db.update(rides)
+        .set({ etaMinutes: newEta, updatedAt: new Date() })
+        .where(eq(rides.id, id))
+        .returning();
       
-      const updatedRide = await storage.updateRideStatus(id, status);
-      
-      // Notifier le passager
       sendToUser(ride.passengerId, {
         type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: updatedRide
+        payload: updated
       });
       
-      res.json(updatedRide);
+      res.json(updated);
     } catch (error) {
-      console.error('❌ Error updating ride status:', error);
+      console.error('❌ Error updating ETA:', error);
       res.status(500).json({ message: "Internal error" });
     }
-  });
-
-  app.patch('/api/rides/:id', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    const id = parseInt(req.params.id);
-    const { status } = req.body;
-    
-    try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      
-      // Vérifier que le conducteur est bien assigné à cette course
-      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      
-      // Transitions de statut valides
-      const validTransitions: Record<string, string[]> = {
-        'ASSIGNED': ['DRIVER_EN_ROUTE', 'CANCELED'],
-        'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED', 'CANCELED'],
-        'DRIVER_ARRIVED': ['IN_PROGRESS', 'CANCELED'],
-        'IN_PROGRESS': ['COMPLETED', 'CANCELED'],
-        'REQUESTED': ['CANCELED'],
-        'BIDDING': ['CANCELED'],
-      };
-      
-      if (status && !validTransitions[ride.status]?.includes(status)) {
-        return res.status(400).json({ 
-          message: `Invalid status transition from ${ride.status} to ${status}` 
-        });
-      }
-      
-      const updatedRide = await storage.updateRideStatus(id, status);
-      
-      // Notifier l'autre utilisateur via WebSocket
-      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
-      if (otherUserId) {
-        sendToUser(otherUserId, {
-          type: WS_EVENTS.RIDE_STATUS_CHANGED,
-          payload: updatedRide
-        });
-      }
-      
-      res.json(updatedRide);
-    } catch (error) {
-      console.error('❌ Error updating ride:', error);
-      res.status(500).json({ message: "Internal error" });
-    }
-  });
-
-  app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const docType = req.body.type || 'PHOTO';
-
-    let profile = await storage.getDriverProfile(req.session.userId);
-    if (!profile) {
-      await storage.updateUserRole(req.session.userId, "DRIVER");
-      profile = await storage.createDriverProfile({
-        userId: req.session.userId,
-        vehicleType: req.body.vehicleType || "TAXI",
-        status: "PENDING",
-        vehicleNumber: req.body.vehicleNumber || "",
-        licenseNumber: req.body.licenseNumber || ""
-      });
-    }
-
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
-    const doc = await storage.createDriverDocument({
-      driverId: profile.id,
-      type: docType,
-      url: fileUrl,
-    });
-
-    res.status(201).json(doc);
   });
 
   // ==================== ADMIN ROUTES ====================
@@ -1239,33 +1444,109 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     }
   });
 
-  app.get(api.admin.getDrivers.path, async (req, res) => {
-    console.log('👥 Admin getDrivers called');
-    
-    if (!req.session.userId || req.session.role !== 'ADMIN') {
-      console.log('❌ Forbidden - not admin');
-      return res.status(403).json({ message: "Forbidden" });
+  // GET /api/driver/documents - Récupérer les documents du conducteur
+  app.get('/api/driver/documents', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
     }
     
     try {
+      const profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        return res.json([]);
+      }
+      
+      const docs = await storage.getDriverDocuments(profile.id);
+      res.json(docs);
+    } catch (error) {
+      console.error('❌ Error fetching driver documents:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  app.get(api.admin.getDrivers.path, async (req, res) => {
+    console.log('👥 Admin getDrivers called');
+    console.log('📋 Session:', {
+      userId: req.session?.userId,
+      role: req.session?.role,
+      sessionId: req.sessionID
+    });
+    
+    if (!req.session.userId) {
+      console.log('❌ No userId in session');
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    if (req.session.role !== 'ADMIN') {
+      console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
+      return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
+    }
+    
+    try {
+      console.log('🔄 Fetching drivers from storage...');
       const drivers = await storage.getDriversWithDetails();
-      console.log(`✅ ${drivers.length} drivers retrieved`);
+      console.log(`✅ Successfully retrieved ${drivers.length} drivers`);
+      
+      if (drivers.length > 0) {
+        console.log('📊 Sample driver:', {
+          id: drivers[0].id,
+          name: drivers[0].name,
+          role: drivers[0].role,
+          profileStatus: drivers[0].profile?.status,
+          hasProfile: !!drivers[0].profile
+        });
+      } else {
+        console.log('⚠️ No drivers found in database');
+        
+        const allProfiles = await db.select().from(driverProfiles);
+        console.log(`📋 Total driver profiles in DB: ${allProfiles.length}`);
+        
+        if (allProfiles.length > 0) {
+          console.log('📋 Profiles found but users might be missing:');
+          for (const p of allProfiles) {
+            const user = await storage.getUser(p.userId);
+            console.log(`  - Profile ${p.id}: userId=${p.userId}, status=${p.status}, userExists=${!!user}`);
+          }
+        }
+      }
+      
       res.json(drivers);
     } catch (error) {
       console.error('❌ Error getting drivers:', error);
-      res.status(500).json({ message: "Erreur serveur" });
+      res.status(500).json({ 
+        message: "Erreur serveur", 
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+      });
     }
   });
 
   app.post(api.admin.updateDriverStatus.path, async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de profil invalide" });
+    }
+    
     try {
       const input = api.admin.updateDriverStatus.input.parse(req.body);
       const status = input.action === "APPROVE" ? "APPROVED" : input.action === "REJECT" ? "REJECTED" : "SUSPENDED";
       const profile = await storage.updateDriverStatus(id, status);
+      
+      if (input.action === "REJECT") {
+        const driverProfile = await storage.getDriverProfileById(id);
+        if (driverProfile) {
+          await storage.updateUserRole(driverProfile.userId, "PASSENGER");
+          console.log(`✅ User ${driverProfile.userId} reverted to PASSENGER after rejection`);
+        }
+      }
+      
+      if (input.action === "SUSPEND") {
+        await storage.updateDriverOnlineByProfileId(id, false);
+      }
+      
       res.json(profile);
     } catch (e) {
+      console.error('❌ Error updating driver status:', e);
       res.status(400).json({ message: "Invalid input" });
     }
   });
@@ -1309,6 +1590,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.post('/api/admin/users/:id/block', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID utilisateur invalide" });
+    }
+    
     const { blocked } = req.body;
     const user = await storage.blockUser(id, blocked);
     res.json(user);
@@ -1317,6 +1602,10 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.post('/api/admin/rides/:id/cancel', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    
     const { reason } = req.body;
     const ride = await storage.adminCancelRide(id, reason || "Cancelled by admin");
     res.json(ride);
@@ -1382,7 +1671,11 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
 
   app.post('/api/notifications/:id/read', async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    await storage.markAsRead(parseInt(req.params.id), req.session.userId);
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de notification invalide" });
+    }
+    await storage.markAsRead(id, req.session.userId);
     res.json({ message: "ok" });
   });
 
@@ -1399,6 +1692,543 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
     const { name } = req.body;
     const user = await storage.updateUser(req.session.userId, { name });
     res.json(user);
+  });
+
+  // ==================== PASSENGER DOCUMENTS ROUTES ====================
+
+  app.get('/api/passenger/documents', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    try {
+      console.log('📄 Fetching passenger documents for user:', req.session.userId);
+      
+      const docs = await db.select().from(passengerDocuments)
+        .where(eq(passengerDocuments.userId, req.session.userId));
+      
+      console.log(`✅ Found ${docs.length} passenger documents`);
+      res.json(docs);
+    } catch (error) {
+      console.error('❌ Error fetching passenger documents:', error);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  app.post('/api/passenger/documents', upload.single('file'), async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    try {
+      const docType = req.body.type || 'CIN';
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
+      
+      console.log('📤 Uploading passenger document:', { docType, fileUrl, userId: req.session.userId });
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "Aucun fichier fourni" });
+      }
+      
+      const [doc] = await db.insert(passengerDocuments).values({
+        userId: req.session.userId,
+        type: docType,
+        url: fileUrl,
+        uploadedAt: new Date(),
+      }).returning();
+      
+      await storage.updateUser(req.session.userId, { 
+        idCardUrl: fileUrl,
+        isApproved: true
+      });
+      
+      console.log('✅ Passenger document uploaded successfully:', doc.id);
+      res.status(201).json(doc);
+    } catch (error) {
+      console.error('❌ Error uploading passenger document:', error);
+      res.status(500).json({ 
+        message: "Erreur lors de l'upload",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  app.delete('/api/passenger/documents/:id', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de document invalide" });
+    }
+    
+    try {
+      console.log('🗑️ Deleting passenger document:', id);
+      
+      await db.delete(passengerDocuments)
+        .where(and(
+          eq(passengerDocuments.id, id),
+          eq(passengerDocuments.userId, req.session.userId)
+        ));
+      
+      console.log('✅ Passenger document deleted');
+      res.json({ message: "Document supprimé" });
+    } catch (error) {
+      console.error('❌ Error deleting passenger document:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  // ==================== BOOKINGS ROUTES ====================
+
+  app.post('/api/bookings', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      console.log('📅 Creating booking with data:', req.body);
+      
+      const { 
+        pickupLat, pickupLng, pickupAddress,
+        dropLat, dropLng, dropAddress,
+        vehicleType, scheduledFor, note,
+        distanceKm, etaMinutes, estimatedPriceAr
+      } = req.body;
+      
+      if (!pickupLat || !pickupLng || !pickupAddress || 
+          !dropLat || !dropLng || !dropAddress || 
+          !vehicleType || !scheduledFor) {
+        console.log('❌ Missing required fields');
+        return res.status(400).json({ message: "Champs requis manquants" });
+      }
+      
+      if (!isWithinRange(pickupLat, pickupLng) || !isWithinRange(dropLat, dropLng)) {
+        return res.status(400).json({ 
+          message: "Miala tsiny, tsy mbola misy ny Farady amin’ity faritra ity." 
+        });
+      }
+      
+      const scheduledDate = new Date(scheduledFor);
+      if (isNaN(scheduledDate.getTime())) {
+        return res.status(400).json({ message: "Date invalide" });
+      }
+      
+      if (scheduledDate <= new Date()) {
+        return res.status(400).json({ message: "La réservation doit être dans le futur" });
+      }
+      
+      const [booking] = await db.insert(bookings).values({
+        passengerId: req.session.userId,
+        status: "PENDING",
+        pickupLat: pickupLat.toString(),
+        pickupLng: pickupLng.toString(),
+        pickupAddress,
+        dropLat: dropLat.toString(),
+        dropLng: dropLng.toString(),
+        dropAddress,
+        vehicleType,
+        scheduledFor: scheduledDate,
+        note: note || null,
+        distanceKm: distanceKm ? distanceKm.toString() : null,
+        etaMinutes: etaMinutes || null,
+        estimatedPriceAr: estimatedPriceAr || null,
+      }).returning();
+      
+      console.log('✅ Booking created:', booking.id);
+      
+      try {
+        const passenger = await storage.getUser(req.session.userId);
+        await broadcastToDrivers({
+          type: WS_EVENTS.BOOKING_NEW,
+          payload: { ...booking, passenger }
+        });
+      } catch (err) {
+        console.error('Error broadcasting to drivers:', err);
+      }
+      
+      res.status(201).json(booking);
+    } catch (error) {
+      console.error('❌ Error creating booking:', error);
+      res.status(500).json({ 
+        message: "Erreur interne",
+        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
+      });
+    }
+  });
+
+  app.get('/api/bookings', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const userBookings = await db.select().from(bookings)
+        .where(eq(bookings.passengerId, req.session.userId))
+        .orderBy(sql`${bookings.scheduledFor} DESC`);
+      
+      res.json(userBookings);
+    } catch (error) {
+      console.error('❌ Error fetching bookings:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.get('/api/bookings/:id', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      
+      if (!booking.length) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      const bookingData = booking[0];
+      
+      if (bookingData.passengerId !== req.session.userId && 
+          (!bookingData.driverId || bookingData.driverId !== req.session.userId) &&
+          req.session.role !== 'ADMIN') {
+        return res.status(403).json({ message: "Accès non autorisé" });
+      }
+      
+      let driver = null;
+      if (bookingData.driverId) {
+        driver = await storage.getUser(bookingData.driverId);
+      }
+      
+      const offers = await db.select().from(bookingOffers)
+        .where(eq(bookingOffers.bookingId, id));
+      
+      res.json({ ...bookingData, driver, offers });
+    } catch (error) {
+      console.error('❌ Error fetching booking:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.post('/api/bookings/:id/offers', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    if (req.session.role !== 'DRIVER') {
+      return res.status(403).json({ message: "Seuls les conducteurs peuvent faire des offres" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    const { priceAr, etaMinutes, message } = req.body;
+    
+    if (!priceAr || !etaMinutes) {
+      return res.status(400).json({ message: "Prix et ETA requis" });
+    }
+    
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      
+      if (!booking.length) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      const bookingData = booking[0];
+      
+      if (bookingData.status !== 'PENDING') {
+        return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+      }
+      
+      if (bookingData.driverId === req.session.userId) {
+        return res.status(400).json({ message: "Vous avez déjà accepté cette réservation" });
+      }
+      
+      const existingOffer = await db.select().from(bookingOffers)
+        .where(and(
+          eq(bookingOffers.bookingId, id),
+          eq(bookingOffers.driverId, req.session.userId),
+          eq(bookingOffers.status, 'SENT')
+        ));
+      
+      if (existingOffer.length) {
+        return res.status(400).json({ message: "Vous avez déjà envoyé une offre" });
+      }
+      
+      const [offer] = await db.insert(bookingOffers).values({
+        bookingId: id,
+        driverId: req.session.userId,
+        priceAr,
+        etaMinutes,
+        message: message || null,
+        expiresAt: new Date(Date.now() + 90000),
+      }).returning();
+      
+      const driver = await storage.getUser(req.session.userId);
+      sendToUser(bookingData.passengerId, {
+        type: WS_EVENTS.BOOKING_OFFER_NEW,
+        payload: { ...offer, driver, booking: bookingData }
+      });
+      
+      res.status(201).json(offer);
+    } catch (error) {
+      console.error('❌ Error creating booking offer:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.post('/api/bookings/:id/accept-offer', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    const { offerId } = req.body;
+    
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      
+      if (!booking.length) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      const bookingData = booking[0];
+      
+      if (bookingData.passengerId !== req.session.userId) {
+        return res.status(403).json({ message: "Non autorisé" });
+      }
+      
+      if (bookingData.status !== 'PENDING') {
+        return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+      }
+      
+      const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
+      
+      if (!offer.length || offer[0].bookingId !== id) {
+        return res.status(404).json({ message: "Offre non trouvée" });
+      }
+      
+      const offerData = offer[0];
+      
+      if (offerData.status !== 'SENT') {
+        return res.status(400).json({ message: "Cette offre n'est plus valide" });
+      }
+      
+      if (new Date() > offerData.expiresAt) {
+        await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
+        return res.status(400).json({ message: "L'offre a expiré" });
+      }
+      
+      await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
+      
+      await db.update(bookingOffers)
+        .set({ status: 'EXPIRED' })
+        .where(and(
+          eq(bookingOffers.bookingId, id),
+          sql`${bookingOffers.id} != ${offerId}`
+        ));
+      
+      const [updatedBooking] = await db.update(bookings)
+        .set({ 
+          status: 'CONFIRMED', 
+          driverId: offerData.driverId,
+          finalPriceAr: offerData.priceAr,
+          updatedAt: new Date()
+        })
+        .where(eq(bookings.id, id))
+        .returning();
+      
+      const passenger = await storage.getUser(req.session.userId);
+      sendToUser(offerData.driverId, {
+        type: WS_EVENTS.BOOKING_OFFER_ACCEPTED,
+        payload: { ...updatedBooking, passenger }
+      });
+      
+      res.json(updatedBooking);
+    } catch (error) {
+      console.error('❌ Error accepting booking offer:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.post('/api/bookings/:id/cancel', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    const { reason } = req.body;
+    
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      
+      if (!booking.length) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      const bookingData = booking[0];
+      
+      if (bookingData.passengerId !== req.session.userId && 
+          (!bookingData.driverId || bookingData.driverId !== req.session.userId) &&
+          req.session.role !== 'ADMIN') {
+        return res.status(403).json({ message: "Non autorisé" });
+      }
+      
+      if (bookingData.status === 'COMPLETED' || bookingData.status === 'CANCELED') {
+        return res.status(400).json({ message: "Impossible d'annuler cette réservation" });
+      }
+      
+      const cancelBy = req.session.role === 'ADMIN' ? 'ADMIN' : 
+                       (bookingData.driverId === req.session.userId ? 'DRIVER' : 'PASSENGER');
+      
+      const [cancelledBooking] = await db.update(bookings)
+        .set({ 
+          status: 'CANCELED',
+          cancelBy,
+          cancelReason: reason || null,
+          updatedAt: new Date()
+        })
+        .where(eq(bookings.id, id))
+        .returning();
+      
+      const otherUserId = bookingData.passengerId === req.session.userId ? bookingData.driverId : bookingData.passengerId;
+      if (otherUserId) {
+        sendToUser(otherUserId, {
+          type: WS_EVENTS.BOOKING_STATUS_CHANGED,
+          payload: cancelledBooking
+        });
+      }
+      
+      res.json(cancelledBooking);
+    } catch (error) {
+      console.error('❌ Error canceling booking:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.get('/api/driver/bookings', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'DRIVER') {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const availableBookings = await db.select().from(bookings)
+        .where(and(
+          eq(bookings.status, 'PENDING'),
+          sql`${bookings.scheduledFor} > NOW()`
+        ))
+        .orderBy(sql`${bookings.scheduledFor} ASC`);
+      
+      const enrichedBookings = await Promise.all(availableBookings.map(async b => {
+        const passenger = await storage.getUser(b.passengerId);
+        return { ...b, passenger };
+      }));
+      
+      res.json(enrichedBookings);
+    } catch (error) {
+      console.error('❌ Error fetching driver bookings:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.get('/api/driver/bookings/my', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'DRIVER') {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const myBookings = await db.select().from(bookings)
+        .where(and(
+          eq(bookings.driverId, req.session.userId),
+          sql`${bookings.status} != 'CANCELED'`
+        ))
+        .orderBy(sql`${bookings.scheduledFor} ASC`);
+      
+      const enrichedBookings = await Promise.all(myBookings.map(async b => {
+        const passenger = await storage.getUser(b.passengerId);
+        return { ...b, passenger };
+      }));
+      
+      res.json(enrichedBookings);
+    } catch (error) {
+      console.error('❌ Error fetching my driver bookings:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.get('/api/admin/bookings', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    try {
+      const allBookings = await storage.getAllBookings();
+      
+      const enrichedBookings = await Promise.all(allBookings.map(async b => {
+        const passenger = await storage.getUser(b.passengerId);
+        const driver = b.driverId ? await storage.getUser(b.driverId) : null;
+        return { ...b, passenger, driver };
+      }));
+      
+      res.json(enrichedBookings);
+    } catch (error) {
+      console.error('❌ Error fetching bookings:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  app.post('/api/admin/bookings/:id/cancel', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    const { reason } = req.body;
+    
+    try {
+      const cancelledBooking = await storage.cancelBooking(id, reason || "Annulé par l'admin", "ADMIN");
+      
+      if (cancelledBooking.passengerId) {
+        sendToUser(cancelledBooking.passengerId, {
+          type: WS_EVENTS.BOOKING_STATUS_CHANGED,
+          payload: cancelledBooking
+        });
+      }
+      if (cancelledBooking.driverId) {
+        sendToUser(cancelledBooking.driverId, {
+          type: WS_EVENTS.BOOKING_STATUS_CHANGED,
+          payload: cancelledBooking
+        });
+      }
+      
+      res.json(cancelledBooking);
+    } catch (error) {
+      console.error('❌ Error canceling booking:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
 
   // ==================== PLACES ROUTES ====================
@@ -1425,6 +2255,9 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.put('/api/admin/places/:id', async (req, res) => {
     if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de lieu invalide" });
+    }
     const { name, nameFr, lat, lng } = req.body;
     if (!name || !nameFr || !lat || !lng) return res.status(400).json({ message: "Missing fields" });
     const place = await storage.updateCustomPlace(id, { name, nameFr, lat: String(lat), lng: String(lng) });
@@ -1434,57 +2267,14 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
   app.delete('/api/admin/places/:id', async (req, res) => {
     if (!req.session.role || req.session.role !== 'ADMIN') return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de lieu invalide" });
+    }
     await storage.deleteCustomPlace(id);
     res.json({ message: "Deleted" });
   });
-  //=================== ETA ====================
-  
-  app.post('/api/rides/:id/eta', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    const id = parseInt(req.params.id);
-    const { additionalMinutes } = req.body;
-    
-    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
-      return res.status(400).json({ message: "Minutes supplémentaires invalides (1-30)" });
-    }
-    
-    try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      
-      if (ride.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      
-      const currentEta = ride.etaMinutes || 0;
-      const newEta = currentEta + additionalMinutes;
-      
-      const [updated] = await db.update(rides)
-        .set({ etaMinutes: newEta, updatedAt: new Date() })
-        .where(eq(rides.id, id))
-        .returning();
-      
-      // Notifier le passager
-      sendToUser(ride.passengerId, {
-        type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: updated
-      });
-      
-      res.json(updated);
-    } catch (error) {
-      console.error('❌ Error updating ETA:', error);
-      res.status(500).json({ message: "Internal error" });
-    }
-  });
 
-  // Fonction pour envoyer une notification à un utilisateur
   async function sendNotificationToUser(userId: number, title: string, message: string, type: string, rideId?: number) {
-    // Sauvegarder en BD
     await storage.createNotification({
       userId,
       title,
@@ -1493,7 +2283,6 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
       rideId,
     });
     
-    // Envoyer via WebSocket si connecté
     const ws = clients.get(userId);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -1510,6 +2299,100 @@ app.get('/api/admin/ads/:id/stats', async (req, res) => {
       }));
     }
   }
+
+  // ==================== BOOKING TO RIDE CONVERSION ====================
+
+  // Convertir une réservation acceptée en course
+  app.post('/api/bookings/:id/start-ride', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    if (req.session.role !== 'DRIVER') {
+      return res.status(403).json({ message: "Seuls les conducteurs peuvent démarrer une réservation" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    try {
+      // Récupérer la réservation
+      const booking = await storage.getBooking(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      // Vérifier que le conducteur est bien assigné
+      if (booking.driverId !== req.session.userId) {
+        return res.status(403).json({ message: "Vous n'êtes pas le conducteur assigné" });
+      }
+      
+      // Vérifier le statut
+      if (booking.status !== 'CONFIRMED') {
+        return res.status(400).json({ message: "La réservation n'est pas confirmée" });
+      }
+      
+      // Vérifier que la date n'est pas trop loin dans le futur
+      const scheduledFor = new Date(booking.scheduledFor);
+      const now = new Date();
+      const hoursDiff = (scheduledFor.getTime() - now.getTime()) / (1000 * 60 * 60);
+      
+      if (hoursDiff > 2) {
+        return res.status(400).json({ 
+          message: `Vous ne pouvez démarrer que 2h avant l'heure prévue (${hoursDiff.toFixed(1)}h restantes)` 
+        });
+      }
+      
+      // Créer une course à partir de la réservation
+      const ride = await storage.createRideFromBooking(booking.id, req.session.userId);
+      
+      // Mettre à jour le statut de la réservation
+      await storage.updateBookingStatus(id, 'IN_PROGRESS', booking.driverId);
+      
+      // Notifier le passager
+      sendToUser(booking.passengerId, {
+        type: WS_EVENTS.RIDE_STATUS_CHANGED,
+        payload: ride
+      });
+      
+      res.status(201).json(ride);
+    } catch (error) {
+      console.error('❌ Error starting ride from booking:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  // Récupérer les réservations du conducteur (confirmées et à venir)
+  app.get('/api/driver/bookings/upcoming', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'DRIVER') {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const bookings = await db.select().from(bookings)
+        .where(and(
+          eq(bookings.driverId, req.session.userId),
+          or(
+            eq(bookings.status, 'CONFIRMED'),
+            eq(bookings.status, 'ASSIGNED')
+          ),
+          sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
+        ))
+        .orderBy(sql`${bookings.scheduledFor} ASC`);
+      
+      const enriched = await Promise.all(bookings.map(async b => {
+        const passenger = await storage.getUser(b.passengerId);
+        return { ...b, passenger };
+      }));
+      
+      res.json(enriched);
+    } catch (error) {
+      console.error('❌ Error fetching upcoming bookings:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
 
   // ==================== SEED DATABASE ====================
 

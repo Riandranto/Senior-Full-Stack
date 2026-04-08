@@ -1,3 +1,4 @@
+// src/pages/passenger/Home.tsx
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
@@ -10,13 +11,27 @@ import { useTranslation } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, Route } from 'lucide-react';
+import { 
+  MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, 
+  Route, Calendar, Clock, Menu, Home, History, User, LogOut, 
+  BookMarked, ChevronRight, Settings, Star, MessageCircle, Bell,
+  Shield, HelpCircle, Info
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GEOCENTER, isWithinRange } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { AdBanner } from '@/components/AdBanner';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { apiFetch } from '@/lib/api';
+import { format } from 'date-fns';
+import { useAuth } from '@/hooks/use-auth';
+
+// IMPORTS MANQUANTS
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 interface NominatimResult {
   place_id: number;
@@ -38,8 +53,17 @@ interface NominatimResult {
   };
 }
 
+// Types de véhicules disponibles
+const VEHICLE_TYPES = [
+  { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, description: 'Voiture standard', descriptionMg: 'Fiara mahazatra', color: 'from-blue-500 to-blue-600' },
+  { id: 'BAJAJ', label: 'Bajaj', labelMg: 'Bajaj', icon: Bike, description: 'Tuk-tuk / 3 roues', descriptionMg: 'Tuk-tuk / 3 kodiarana', color: 'from-green-500 to-green-600' },
+  { id: 'PICKUP', label: 'Pick-up', labelMg: 'Pick-up', icon: Car, description: 'Camionnette plateau', descriptionMg: 'Camionnette misy faritra', color: 'from-orange-500 to-orange-600' },
+  { id: '4X4', label: '4x4', labelMg: '4x4', icon: Car, description: 'Tout-terrain', descriptionMg: 'Fiara 4x4', color: 'from-red-500 to-red-600' },
+  { id: 'CAMIONNETTE', label: 'Camionnette', labelMg: 'Camionnette', icon: Car, description: 'Van / Fourgon', descriptionMg: 'Van / Fourgon', color: 'from-purple-500 to-purple-600' },
+];
+
 const LOCAL_PLACES: { name: string; nameFr: string; lat: number; lng: number }[] = [
-  { name: 'Bazary Be', nameFr: 'Grand Marché', lat: -25.0320, lng: 46.9895 },
+  /*{ name: 'Bazary Be', nameFr: 'Grand Marché', lat: -25.0320, lng: 46.9895 },
   { name: 'Libanona Beach', nameFr: 'Plage Libanona', lat: -25.0368, lng: 46.9970 },
   { name: 'Tanambao', nameFr: 'Tanambao', lat: -25.0290, lng: 46.9780 },
   { name: 'Ambinanikely', nameFr: 'Ambinanikely', lat: -25.0260, lng: 46.9930 },
@@ -50,7 +74,17 @@ const LOCAL_PLACES: { name: string; nameFr: string; lat: number; lng: number }[]
   { name: 'Ankoba', nameFr: 'Ankoba', lat: -25.0240, lng: 46.9960 },
   { name: 'Amboanato', nameFr: 'Amboanato', lat: -25.0265, lng: 46.9840 },
   { name: 'Esokaka', nameFr: 'Esokaka', lat: -25.0390, lng: 46.9880 },
-  { name: 'Manambaro', nameFr: 'Manambaro', lat: -25.0230, lng: 46.9270 },
+  { name: 'Manambaro', nameFr: 'Manambaro', lat: -25.0230, lng: 46.9270 },*/
+  { name: 'Mahamasina', nameFr: 'Mahamasina', lat: -18.8945, lng: 47.5274 },
+  { name: 'Analakely', nameFr: 'Analakely', lat: -18.9045, lng: 47.5272 },
+  { name: 'Antaninarenina', nameFr: 'Antaninarenina', lat: -18.9095, lng: 47.5262 },
+  { name: 'Ambohijatovo', nameFr: 'Ambohijatovo', lat: -18.9135, lng: 47.5278 },
+  { name: '67 Ha', nameFr: '67 Ha', lat: -18.8900, lng: 47.5400 },
+  { name: 'Andraharo', nameFr: 'Andraharo', lat: -18.8800, lng: 47.5400 },
+  { name: 'Aéroport Ivato', nameFr: 'Aéroport Ivato', lat: -18.7965, lng: 47.4797 },
+  { name: 'Gare Soarano', nameFr: 'Gare Soarano', lat: -18.9070, lng: 47.5260 },
+  { name: 'Anosy', nameFr: 'Anosy', lat: -18.9170, lng: 47.5240 },
+  { name: 'Isotry', nameFr: 'Isotry', lat: -18.8950, lng: 47.5200 },
 ];
 
 function formatAddress(result: NominatimResult): string {
@@ -114,27 +148,158 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
   }
 }
 
+// Mutation pour créer une réservation
+function useCreateBooking() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { lang } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (data: any) => {
+      console.log('📅 Creating booking with data:', data);
+      const res = await apiFetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || 'Failed to create booking');
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/bookings'] });
+      toast({
+        title: lang === 'mg' ? "Reservation natao!" : "Réservation créée!",
+        description: lang === 'mg' 
+          ? `Reservation ho amin'ny ${new Date(data.scheduledFor).toLocaleDateString()}`
+          : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}`,
+      });
+    },
+    onError: (error: Error) => {
+      console.error('❌ Booking error:', error);
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: error.message,
+      });
+    },
+  });
+}
+
+// Composant Menu latéral
+function SideMenu({ isOpen, onClose, user, onLogout, lang }: any) {
+  const [, setLocation] = useLocation();
+  
+  const menuItems = [
+    { icon: Home, label: lang === 'mg' ? "Fandraisana" : "Accueil", href: '/passenger', color: 'text-blue-500' },
+    { icon: History, label: lang === 'mg' ? "Tantaran'ny dia" : "Historique", href: '/passenger/history', color: 'text-green-500' },
+    { icon: BookMarked, label: lang === 'mg' ? "Reservation" : "Réservations", href: '/passenger/bookings', color: 'text-purple-500' },
+    { icon: User, label: lang === 'mg' ? "Ny momba ahy" : "Mon profil", href: '/passenger/profile', color: 'text-amber-500' },
+    { icon: Settings, label: lang === 'mg' ? "Fandrindrana" : "Paramètres", href: '/passenger/settings', color: 'text-gray-500' },
+    { icon: HelpCircle, label: lang === 'mg' ? "Fanampiana" : "Aide", href: '/passenger/help', color: 'text-indigo-500' },
+  ];
+
+  return (
+    <Sheet open={isOpen} onOpenChange={onClose}>
+      <SheetContent side="left" className="w-[280px] p-0 rounded-r-3xl overflow-y-auto">
+        <div className="flex flex-col h-full">
+          {/* Header avec profil */}
+          <div className="bg-gradient-to-r from-primary/90 to-primary p-6 text-white">
+            <div className="flex items-center gap-3 mb-4">
+              <Avatar className="w-14 h-14 border-2 border-white/30 bg-white/20">
+                <AvatarFallback className="bg-white/20 text-white text-lg">
+                  {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <h3 className="font-bold text-lg">{user?.name || 'Utilisateur'}</h3>
+                <p className="text-xs text-white/70">{user?.phone || ''}</p>
+                <Badge className="mt-1 bg-white/20 text-white border-0 text-[10px]">
+                  {user?.role === 'PASSENGER' ? (lang === 'mg' ? 'Mpandeha' : 'Passager') : user?.role}
+                </Badge>
+              </div>
+            </div>
+          </div>
+
+          {/* Menu items */}
+          <div className="flex-1 py-4">
+            {menuItems.map((item, idx) => (
+              <motion.button
+                key={item.href}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.05 }}
+                onClick={() => {
+                  setLocation(item.href);
+                  onClose(false);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group"
+              >
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${item.color} bg-muted/50 group-hover:bg-muted transition-colors`}>
+                  <item.icon className="w-4 h-4" />
+                </div>
+                <span className="text-sm font-medium flex-1 text-left">{item.label}</span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+              </motion.button>
+            ))}
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t border-border/30">
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-sm font-medium">{lang === 'mg' ? 'Fivoahana' : 'Déconnexion'}</span>
+            </button>
+            <div className="mt-3 text-center">
+              <p className="text-[10px] text-muted-foreground">
+                Farady v1.0.0
+              </p>
+            </div>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function PassengerHome() {
   const [, setLocation] = useLocation();
   const { t, lang } = useTranslation();
   const createRide = useCreateRide();
+  const createBooking = useCreateBooking();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { connected, subscribe, sendMessage } = useWebSocket();
+  const { user, logout } = useAuth();
   
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoff, setDropoff] = useState('');
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
-  const [vehicle, setVehicle] = useState<'TAXI' | 'BAJAJ'>('TAXI');
+  const [vehicle, setVehicle] = useState<'TAXI' | 'BAJAJ' | 'PICKUP' | '4X4' | 'CAMIONNETTE'>('TAXI');
   const [selectMode, setSelectMode] = useState<'pickup' | 'dropoff' | null>(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [mapCenter, setMapCenter] = useState<LatLng>(GEOCENTER);
   const [flyTrigger, setFlyTrigger] = useState(0);
   const [hasActiveRide, setHasActiveRide] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
+
+  // États pour la réservation
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('');
+  const [bookingNote, setBookingNote] = useState('');
 
   // Chat states
   const [showChat, setShowChat] = useState(false);
+  const [showTopAd, setShowTopAd] = useState(true);
   const [otherUserName, setOtherUserName] = useState('');
   const [otherUserId, setOtherUserId] = useState(0);
   const [activeRideId, setActiveRideId] = useState<number | null>(null);
@@ -190,14 +355,13 @@ export default function PassengerHome() {
         return null;
       }
     },
-    // FIX: Use a simple number instead of a function to avoid closure issues
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 0,
-    retry: 1,
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  // Ajouter un useEffect pour forcer le refetch quand la page devient visible
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -210,25 +374,21 @@ export default function PassengerHome() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [refetchActiveRide]);
 
-  // Écouter les événements WebSocket pour OFFER_ACCEPTED
   useEffect(() => {
     if (!connected) return;
     
     const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
       console.log('🎉 OFFER_ACCEPTED received:', data);
       
-      // Forcer le refetch immédiat
       refetchActiveRide();
       queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
       queryClient.refetchQueries({ queryKey: ['/api/rides/active'] });
       
-      // Ouvrir le chat immédiatement
       setOtherUserName(data.driverName || 'Chauffeur');
       setOtherUserId(data.driverId);
       setActiveRideId(data.rideId);
       setHasActiveRide(true);
       
-      // Notification
       toast({
         title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
         description: lang === 'mg' 
@@ -245,7 +405,6 @@ export default function PassengerHome() {
       setHasActiveRide(true);
       setActiveRideId(activeRide.id);
       
-      // Ouvrir le chat si la course est assignée ou en cours
       if (activeRide.status === 'ASSIGNED' || 
           activeRide.status === 'DRIVER_EN_ROUTE' || 
           activeRide.status === 'DRIVER_ARRIVED' || 
@@ -255,9 +414,6 @@ export default function PassengerHome() {
         setOtherUserId(activeRide.driverId);
         setShowChat(true);
       }
-      
-      // Ne pas rediriger immédiatement, laisser l'utilisateur voir le chat
-      // setLocation(`/passenger/ride/${activeRide.id}`);
     } else {
       setHasActiveRide(false);
       setActiveRideId(null);
@@ -266,7 +422,6 @@ export default function PassengerHome() {
 
   useEffect(() => {
     if (activeRide && activeRide.status !== 'PENDING' && activeRide.status !== 'BIDDING' && activeRide.status !== 'REQUESTED') {
-      // Ouvrir le chat automatiquement
       setOtherUserName(activeRide.driver?.name || 'Chauffeur');
       setOtherUserId(activeRide.driverId);
     }
@@ -393,7 +548,7 @@ export default function PassengerHome() {
   }, []);
 
   const handleMapSelect = useCallback(async (loc: LatLng) => {
-    if (!isWithinRange(loc.lat, loc.lng)) {
+    /*if (!isWithinRange(loc.lat, loc.lng)) {
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy ao anatin'ny faritra" : "Hors zone",
@@ -402,7 +557,7 @@ export default function PassengerHome() {
           : "Uniquement Fort-Dauphin"
       });
       return;
-    }
+    }*/
 
     setIsGeocoding(true);
     try {
@@ -467,6 +622,62 @@ export default function PassengerHome() {
     }
   };
 
+  const handleBooking = async () => {
+    if (!pickup || !dropoff || !pickupCoords || !dropoffCoords) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy ampy ny mombamomba" : "Informations manquantes",
+        description: lang === 'mg' 
+          ? "Safidio ny fiaingana sy ny fahatongavana"
+          : "Choisissez le départ et l'arrivée"
+      });
+      return;
+    }
+    
+    if (!bookingDate || !bookingTime) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Datim-potoana tsy voafidy" : "Date/heure non sélectionnée",
+        description: lang === 'mg' 
+          ? "Safidio ny daty sy ora handehanana"
+          : "Choisissez la date et l'heure du trajet"
+      });
+      return;
+    }
+    
+    const scheduledDateTime = new Date(`${bookingDate}T${bookingTime}`);
+    if (scheduledDateTime <= new Date()) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Datim-potoana tsy azo" : "Date/heure invalide",
+        description: lang === 'mg' 
+          ? "Tsy maintsy amin'ny ho avy ny fotoana"
+          : "La date doit être dans le futur"
+      });
+      return;
+    }
+    
+    await createBooking.mutateAsync({
+      pickupLat: pickupCoords.lat,
+      pickupLng: pickupCoords.lng,
+      pickupAddress: pickup,
+      dropLat: dropoffCoords.lat,
+      dropLng: dropoffCoords.lng,
+      dropAddress: dropoff,
+      vehicleType: vehicle,
+      scheduledFor: scheduledDateTime.toISOString(),
+      note: bookingNote || undefined,
+      distanceKm: osrmDistance ?? undefined,
+      etaMinutes: osrmDuration ?? undefined,
+      estimatedPriceAr: osrmDistance ? Math.round(osrmDistance * 1500) : undefined,
+    });
+    
+    setShowBookingModal(false);
+    setBookingDate('');
+    setBookingTime('');
+    setBookingNote('');
+  };
+
   const clearSelection = (type: 'pickup' | 'dropoff') => {
     if (type === 'pickup') {
       setPickup('');
@@ -508,287 +719,465 @@ export default function PassengerHome() {
     : null);
   const etaMin = osrmDuration ?? (distanceKm ? Math.max(1, Math.ceil(distanceKm / 25 * 60)) : null);
 
-  // Si une course est active, afficher l'écran de chargement avec le chat
   if (hasActiveRide) {
     return (
       <MobileLayout role="passenger">
-        {/* Indicateur de connexion WebSocket pour le débogage */}
         <div className="absolute top-16 left-4 z-50">
           <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
             {connected ? '● Connecté' : '○ Déconnecté'}
           </div>
         </div>
-        
         <div className="flex h-screen items-center justify-center">
           <LoadingAnimation />
         </div>
-        
       </MobileLayout>
     );
   }
 
+  const getVehicleLabel = (vt: typeof VEHICLE_TYPES[0]) => {
+    return lang === 'mg' ? vt.labelMg : vt.label;
+  };
+
+  const getVehicleDescription = (vt: typeof VEHICLE_TYPES[0]) => {
+    return lang === 'mg' ? vt.descriptionMg : vt.description;
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setIsMenuOpen(false);
+  };
+
   return (
-    <MobileLayout role="passenger">
-      {/* Indicateur de connexion WebSocket */}
-      <div className="absolute top-16 left-4 z-20">
-        <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
-          {connected ? '● Connecté' : '○ Déconnecté'}
-        </div>
-      </div>
+    <>
+      {/* Menu latéral */}
+      <SideMenu 
+        isOpen={isMenuOpen} 
+        onClose={setIsMenuOpen} 
+        user={user || currentUser}
+        onLogout={handleLogout}
+        lang={lang}
+      />
 
-      {/* Publicité en haut */}
-      <div className="absolute top-14 left-0 right-0 z-20 px-3 pointer-events-none">
-        <div className="pointer-events-auto">
-          <AdBanner position="HOME_TOP" />
-        </div>
-      </div>
-      
-      <div className="absolute inset-0 z-0 pt-14">
-        <MapView 
-          center={mapCenter} 
-          zoom={15}
-          interactive={true} 
-          selectMode={selectMode}
-          pickupMarker={pickupCoords}
-          dropoffMarker={dropoffCoords}
-          onLocationSelect={handleMapSelect}
-          flyToTrigger={flyTrigger}
-          showRoute={!!(pickupCoords && dropoffCoords)}
-          routeCoordinates={routeCoords}
-        />
-      </div>
+      <MobileLayout role="passenger">
+        {/* Bouton menu */}
+        <button
+          onClick={() => setIsMenuOpen(true)}
+          className="absolute top-16 left-4 z-30 w-10 h-10 rounded-full bg-background/90 backdrop-blur-sm shadow-lg flex items-center justify-center border border-border/30"
+          data-testid="menu-button"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
 
-      {isGeocoding && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20 bg-background/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg text-sm font-medium flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          {lang === 'mg' ? 'Mitady adiresy...' : 'Recherche d\'adresse...'}
+        {/* Indicateur de connexion WebSocket */}
+        <div className="absolute top-16 left-16 z-20">
+          <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
+            {connected ? '● Connecté' : '○ Déconnecté'}
+          </div>
         </div>
-      )}
 
-      {selectMode && (
-        <div className="absolute top-20 right-4 z-20">
-          <Button 
-            variant="secondary" 
-            size="sm" 
-            className="rounded-full shadow-lg"
-            onClick={() => setSelectMode(null)}
-            data-testid="button-cancel-select"
-          >
-            <X className="w-4 h-4 mr-1" />
-            {lang === 'mg' ? 'Ajanony' : 'Annuler'}
-          </Button>
+        {/* Publicité en haut */}
+        {showTopAd && (
+          <div className="absolute top-14 left-0 right-0 z-20 px-3 pointer-events-none">
+            <div className="pointer-events-auto">
+              <AdBanner 
+                position="HOME_TOP" 
+                onClose={() => setShowTopAd(false)}
+              />
+            </div>
+          </div>
+        )}
+        
+        <div className="absolute inset-0 z-0 pt-14">
+          <MapView 
+            center={mapCenter} 
+            zoom={15}
+            interactive={true} 
+            selectMode={selectMode}
+            pickupMarker={pickupCoords}
+            dropoffMarker={dropoffCoords}
+            onLocationSelect={handleMapSelect}
+            flyToTrigger={flyTrigger}
+            showRoute={!!(pickupCoords && dropoffCoords)}
+            routeCoordinates={routeCoords}
+          />
         </div>
-      )}
 
-      <motion.div 
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        transition={{ type: "spring", damping: 25, stiffness: 200 }}
-        className="absolute bottom-0 w-full z-10 p-3 max-h-[85vh] overflow-y-auto"
-      >
-        <Card className="p-4 rounded-3xl shadow-float border-0 bg-background/95 backdrop-blur-xl">
-          <div className="w-10 h-1 bg-muted rounded-full mx-auto mb-4" />
-          
-          <div className="space-y-2.5 mb-4">
-            <div className="relative" data-testid="pickup-field">
-              <div className="relative flex items-center">
-                <div className="absolute left-3 w-3 h-3 rounded-full bg-green-500 z-10 border-2 border-white shadow" />
-                <Input 
-                  value={pickup}
-                  onChange={(e) => handlePickupInput(e.target.value)}
-                  onFocus={() => { if (pickupSuggestions.length > 0) setShowPickupSuggestions(true); }}
-                  onBlur={() => setTimeout(() => setShowPickupSuggestions(false), 200)}
-                  placeholder={lang === 'mg' ? 'Aiza ny fiaingana?' : 'Point de départ'}
-                  className="pl-10 pr-20 h-11 bg-secondary/50 border-none rounded-xl text-sm font-medium"
-                  data-testid="input-pickup"
-                />
-                <div className="absolute right-1.5 flex items-center gap-0.5">
-                  {isSearchingPickup && <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />}
-                  {pickup && (
-                    <button onClick={() => { clearSelection('pickup'); setShowPickupSuggestions(false); setPickupSuggestions([]); }} className="p-1.5 hover:bg-muted rounded-full" data-testid="clear-pickup">
-                      <X className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
-                  )}
-                  <button onClick={useMyLocation} className="p-1.5 hover:bg-muted rounded-full" data-testid="button-my-location" title={lang === 'mg' ? 'Toeranako' : 'Ma position'}>
-                    <LocateFixed className="w-3.5 h-3.5 text-blue-500" />
-                  </button>
-                  <button onClick={() => setSelectMode('pickup')} className="p-1.5 hover:bg-muted rounded-full" data-testid="select-pickup-map">
-                    <Crosshair className={`w-3.5 h-3.5 ${selectMode === 'pickup' ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
-                  </button>
-                </div>
-              </div>
-              <AnimatePresence>
-                {showPickupSuggestions && (pickupSuggestions.length > 0 || pickupNoResults) && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
-                    data-testid="pickup-suggestions"
-                  >
-                    {pickupSuggestions.map((result: any) => (
-                      <button
-                        key={result.place_id}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectSuggestion('pickup', result)}
-                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
-                        data-testid={`pickup-suggestion-${result.place_id}`}
-                      >
-                        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-green-500'}`} />
-                        <div className="min-w-0">
-                          <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
-                          {!result.isLocal && (
-                            <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    {pickupNoResults && (
-                      <button
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { setSelectMode('pickup'); setShowPickupSuggestions(false); setPickupNoResults(false); }}
-                        className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
-                        data-testid="pickup-mark-on-map"
-                      >
-                        <Crosshair className="w-4 h-4 text-primary shrink-0" />
-                        <span className="font-medium text-primary">
-                          {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
-                        </span>
+        {isGeocoding && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-20 bg-background/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg text-sm font-medium flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {lang === 'mg' ? 'Mitady adiresy...' : 'Recherche d\'adresse...'}
+          </div>
+        )}
+
+        {selectMode && (
+          <div className="absolute top-20 right-4 z-20">
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              className="rounded-full shadow-lg"
+              onClick={() => setSelectMode(null)}
+              data-testid="button-cancel-select"
+            >
+              <X className="w-4 h-4 mr-1" />
+              {lang === 'mg' ? 'Ajanony' : 'Annuler'}
+            </Button>
+          </div>
+        )}
+
+        <motion.div 
+          initial={{ y: "100%" }}
+          animate={{ y: 0 }}
+          transition={{ type: "spring", damping: 25, stiffness: 200 }}
+          className="absolute bottom-0 w-full z-10 p-3 max-h-[85vh] overflow-y-auto"
+        >
+          <Card className="p-4 rounded-3xl shadow-float border-0 bg-background/95 backdrop-blur-xl">
+            <div className="w-10 h-1 bg-muted rounded-full mx-auto mb-4" />
+            
+            {/* Section titre avec animation */}
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-center mb-4"
+            >
+              <h2 className="text-lg font-bold font-display bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                {lang === 'mg' ? 'Aiza no halehanao?' : 'Où allez-vous?'}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {lang === 'mg' ? 'Safidio ny toerana fiaingana sy fahatongavana' : 'Choisissez votre départ et destination'}
+              </p>
+            </motion.div>
+            
+            <div className="space-y-2.5 mb-4">
+              <div className="relative" data-testid="pickup-field">
+                <div className="relative flex items-center">
+                  <div className="absolute left-3 w-3 h-3 rounded-full bg-green-500 z-10 border-2 border-white shadow" />
+                  <Input 
+                    value={pickup}
+                    onChange={(e) => handlePickupInput(e.target.value)}
+                    onFocus={() => { if (pickupSuggestions.length > 0) setShowPickupSuggestions(true); }}
+                    onBlur={() => setTimeout(() => setShowPickupSuggestions(false), 200)}
+                    placeholder={lang === 'mg' ? 'Aiza ny fiaingana?' : 'Point de départ'}
+                    className="pl-10 pr-20 h-11 bg-secondary/50 border-none rounded-xl text-sm font-medium"
+                    data-testid="input-pickup"
+                  />
+                  <div className="absolute right-1.5 flex items-center gap-0.5">
+                    {isSearchingPickup && <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />}
+                    {pickup && (
+                      <button onClick={() => { clearSelection('pickup'); setShowPickupSuggestions(false); setPickupSuggestions([]); }} className="p-1.5 hover:bg-muted rounded-full" data-testid="clear-pickup">
+                        <X className="w-3.5 h-3.5 text-muted-foreground" />
                       </button>
                     )}
-                  </motion.div>
+                    <button onClick={useMyLocation} className="p-1.5 hover:bg-muted rounded-full" data-testid="button-my-location" title={lang === 'mg' ? 'Toeranako' : 'Ma position'}>
+                      <LocateFixed className="w-3.5 h-3.5 text-blue-500" />
+                    </button>
+                    <button onClick={() => setSelectMode('pickup')} className="p-1.5 hover:bg-muted rounded-full" data-testid="select-pickup-map">
+                      <Crosshair className={`w-3.5 h-3.5 ${selectMode === 'pickup' ? 'text-green-500 animate-pulse' : 'text-muted-foreground'}`} />
+                    </button>
+                  </div>
+                </div>
+                <AnimatePresence>
+                  {showPickupSuggestions && (pickupSuggestions.length > 0 || pickupNoResults) && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
+                      data-testid="pickup-suggestions"
+                    >
+                      {pickupSuggestions.map((result: any) => (
+                        <button
+                          key={result.place_id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectSuggestion('pickup', result)}
+                          className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
+                          data-testid={`pickup-suggestion-${result.place_id}`}
+                        >
+                          <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-green-500'}`} />
+                          <div className="min-w-0">
+                            <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
+                            {!result.isLocal && (
+                              <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                      {pickupNoResults && (
+                        <button
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => { setSelectMode('pickup'); setShowPickupSuggestions(false); setPickupNoResults(false); }}
+                          className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
+                          data-testid="pickup-mark-on-map"
+                        >
+                          <Crosshair className="w-4 h-4 text-primary shrink-0" />
+                          <span className="font-medium text-primary">
+                            {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
+                          </span>
+                        </button>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              
+              <div className="relative" data-testid="dropoff-field">
+                <div className="relative flex items-center">
+                  <div className="absolute left-3 w-3 h-3 rounded-sm bg-red-500 z-10 border-2 border-white shadow" />
+                  <Input 
+                    value={dropoff}
+                    onChange={(e) => handleDropoffInput(e.target.value)}
+                    onFocus={() => { if (dropoffSuggestions.length > 0) setShowDropoffSuggestions(true); }}
+                    onBlur={() => setTimeout(() => setShowDropoffSuggestions(false), 200)}
+                    placeholder={lang === 'mg' ? 'Aiza ny fahatongavana?' : 'Destination'}
+                    className="pl-10 pr-16 h-11 bg-secondary/50 border-none rounded-xl text-sm font-medium"
+                    data-testid="input-dropoff"
+                  />
+                  <div className="absolute right-1.5 flex items-center gap-0.5">
+                    {isSearchingDropoff && <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />}
+                    {dropoff && (
+                      <button onClick={() => { clearSelection('dropoff'); setShowDropoffSuggestions(false); setDropoffSuggestions([]); }} className="p-1.5 hover:bg-muted rounded-full" data-testid="clear-dropoff">
+                        <X className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
+                    )}
+                    <button onClick={() => setSelectMode('dropoff')} className="p-1.5 hover:bg-muted rounded-full" data-testid="select-dropoff-map">
+                      <Crosshair className={`w-3.5 h-3.5 ${selectMode === 'dropoff' ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
+                    </button>
+                  </div>
+                </div>
+                <AnimatePresence>
+                  {showDropoffSuggestions && (dropoffSuggestions.length > 0 || dropoffNoResults) && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
+                      data-testid="dropoff-suggestions"
+                    >
+                      {dropoffSuggestions.map((result: any) => (
+                        <button
+                          key={result.place_id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectSuggestion('dropoff', result)}
+                          className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
+                          data-testid={`dropoff-suggestion-${result.place_id}`}
+                        >
+                          <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-red-500'}`} />
+                          <div className="min-w-0">
+                            <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
+                            {!result.isLocal && (
+                              <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                      {dropoffNoResults && (
+                        <button
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => { setSelectMode('dropoff'); setShowDropoffSuggestions(false); setDropoffNoResults(false); }}
+                          className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
+                          data-testid="dropoff-mark-on-map"
+                        >
+                          <Crosshair className="w-4 h-4 text-primary shrink-0" />
+                          <span className="font-medium text-primary">
+                            {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
+                          </span>
+                        </button>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {distanceKm !== null && etaMin !== null && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-3 mb-3 px-1"
+              >
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-primary/5 px-3 py-1.5 rounded-full">
+                  <Route className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-semibold text-foreground">{distanceKm.toFixed(1)} km</span>
+                </div>
+                <div className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-primary/5 px-3 py-1.5 rounded-full">
+                  <Clock className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-semibold text-foreground">~{etaMin} min</span>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Types de véhicules améliorés */}
+            <div className="mb-4">
+              <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                <Car className="w-3 h-3" />
+                {lang === 'mg' ? 'Safidio ny karazana fiara' : 'Choisissez votre véhicule'}
+              </p>
+              <div className="grid grid-cols-5 gap-1.5">
+                {VEHICLE_TYPES.map(vt => (
+                  <motion.button 
+                    key={vt.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setVehicle(vt.id as any)}
+                    className={`py-2 flex flex-col items-center justify-center rounded-xl transition-all ${
+                      vehicle === vt.id 
+                        ? `bg-gradient-to-r ${vt.color} text-white shadow-lg` 
+                        : 'bg-secondary text-foreground hover:bg-secondary/70'
+                    }`}
+                    data-testid={`select-${vt.id.toLowerCase()}`}
+                  >
+                    <vt.icon className={`w-4 h-4 mb-0.5 ${vehicle === vt.id ? 'text-white' : 'text-muted-foreground'}`} />
+                    <span className={`font-bold text-[10px] ${vehicle === vt.id ? 'text-white' : 'text-foreground'}`}>
+                      {getVehicleLabel(vt)}
+                    </span>
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+
+            {/* Boutons d'action */}
+            <div className="flex gap-2 mb-3">
+              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="flex-1">
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl border-dashed"
+                  onClick={() => setShowBookingModal(true)}
+                  data-testid="button-booking"
+                >
+                  <Calendar className="w-4 h-4 mr-2" />
+                  {lang === 'mg' ? 'Mangataka fotoana' : 'Réserver'}
+                </Button>
+              </motion.div>
+            </div>
+
+            <motion.div
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <Button 
+                onClick={handleRequest}
+                disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending}
+                className="w-full h-12 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-all bg-gradient-to-r from-primary to-primary/80"
+                data-testid="button-request-ride"
+              >
+                {createRide.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    {t('finding_drivers')}
+                  </>
+                ) : (
+                  t('request_ride')
                 )}
-              </AnimatePresence>
+              </Button>
+            </motion.div>
+          </Card>
+        </motion.div>
+
+        {/* Modal de réservation */}
+        <Dialog open={showBookingModal} onOpenChange={setShowBookingModal}>
+          <DialogContent className="rounded-3xl max-w-sm mx-auto">
+            <DialogHeader>
+              <DialogTitle className="font-display text-xl flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-primary" />
+                {lang === 'mg' ? 'Mangataka fotoana' : 'Réserver un trajet'}
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-green-500" />
+                  {lang === 'mg' ? 'Fiaingana' : 'Départ'}
+                </label>
+                <p className="text-sm bg-muted/30 p-2 rounded-xl">{pickup || (lang === 'mg' ? 'Tsy voafidy' : 'Non sélectionné')}</p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-semibold flex items-center gap-2">
+                  <Navigation className="w-4 h-4 text-red-500" />
+                  {lang === 'mg' ? 'Fahatongavana' : 'Arrivée'}
+                </label>
+                <p className="text-sm bg-muted/30 p-2 rounded-xl">{dropoff || (lang === 'mg' ? 'Tsy voafidy' : 'Non sélectionné')}</p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-semibold flex items-center gap-2">
+                  <Car className="w-4 h-4 text-primary" />
+                  {lang === 'mg' ? 'Karazana fiara' : 'Type de véhicule'}
+                </label>
+                <p className="text-sm bg-muted/30 p-2 rounded-xl">
+                  {VEHICLE_TYPES.find(v => v.id === vehicle)?.label}
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">
+                    {lang === 'mg' ? 'Daty' : 'Date'}
+                  </label>
+                  <Input
+                    type="date"
+                    value={bookingDate}
+                    onChange={(e) => setBookingDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    className="rounded-xl"
+                    data-testid="input-booking-date"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">
+                    {lang === 'mg' ? 'Ora' : 'Heure'}
+                  </label>
+                  <Input
+                    type="time"
+                    value={bookingTime}
+                    onChange={(e) => setBookingTime(e.target.value)}
+                    className="rounded-xl"
+                    data-testid="input-booking-time"
+                  />
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">
+                  {lang === 'mg' ? 'Fanampiny' : 'Note (optionnel)'}
+                </label>
+                <Input
+                  placeholder={lang === 'mg' ? 'Fanazavana fanampiny...' : 'Informations supplémentaires...'}
+                  value={bookingNote}
+                  onChange={(e) => setBookingNote(e.target.value)}
+                  className="rounded-xl"
+                  data-testid="input-booking-note"
+                />
+              </div>
             </div>
             
-            <div className="relative" data-testid="dropoff-field">
-              <div className="relative flex items-center">
-                <div className="absolute left-3 w-3 h-3 rounded-sm bg-red-500 z-10 border-2 border-white shadow" />
-                <Input 
-                  value={dropoff}
-                  onChange={(e) => handleDropoffInput(e.target.value)}
-                  onFocus={() => { if (dropoffSuggestions.length > 0) setShowDropoffSuggestions(true); }}
-                  onBlur={() => setTimeout(() => setShowDropoffSuggestions(false), 200)}
-                  placeholder={lang === 'mg' ? 'Aiza ny fahatongavana?' : 'Destination'}
-                  className="pl-10 pr-16 h-11 bg-secondary/50 border-none rounded-xl text-sm font-medium"
-                  data-testid="input-dropoff"
-                />
-                <div className="absolute right-1.5 flex items-center gap-0.5">
-                  {isSearchingDropoff && <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />}
-                  {dropoff && (
-                    <button onClick={() => { clearSelection('dropoff'); setShowDropoffSuggestions(false); setDropoffSuggestions([]); }} className="p-1.5 hover:bg-muted rounded-full" data-testid="clear-dropoff">
-                      <X className="w-3.5 h-3.5 text-muted-foreground" />
-                    </button>
+            <DialogFooter>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowBookingModal(false)}
+                >
+                  {lang === 'mg' ? 'Hiverina' : 'Annuler'}
+                </Button>
+                <Button
+                  className="flex-1 bg-primary"
+                  onClick={handleBooking}
+                  disabled={!pickup || !dropoff || !bookingDate || !bookingTime || createBooking.isPending}
+                  data-testid="button-confirm-booking"
+                >
+                  {createBooking.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    lang === 'mg' ? 'Hamangataka' : 'Réserver'
                   )}
-                  <button onClick={() => setSelectMode('dropoff')} className="p-1.5 hover:bg-muted rounded-full" data-testid="select-dropoff-map">
-                    <Crosshair className={`w-3.5 h-3.5 ${selectMode === 'dropoff' ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
-                  </button>
-                </div>
+                </Button>
               </div>
-              <AnimatePresence>
-                {showDropoffSuggestions && (dropoffSuggestions.length > 0 || dropoffNoResults) && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute left-0 right-0 top-full mt-1 z-50 bg-background border rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto"
-                    data-testid="dropoff-suggestions"
-                  >
-                    {dropoffSuggestions.map((result: any) => (
-                      <button
-                        key={result.place_id}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectSuggestion('dropoff', result)}
-                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 flex items-start gap-2 border-b last:border-b-0 transition-colors"
-                        data-testid={`dropoff-suggestion-${result.place_id}`}
-                      >
-                        <MapPin className={`w-4 h-4 mt-0.5 shrink-0 ${result.isLocal ? 'text-primary' : 'text-red-500'}`} />
-                        <div className="min-w-0">
-                          <span className="font-medium line-clamp-1">{result.isLocal ? result.name : formatAddress(result)}</span>
-                          {!result.isLocal && (
-                            <span className="text-xs text-muted-foreground line-clamp-1 block">{result.display_name}</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    {dropoffNoResults && (
-                      <button
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { setSelectMode('dropoff'); setShowDropoffSuggestions(false); setDropoffNoResults(false); }}
-                        className="w-full text-left px-3 py-3 text-sm bg-primary/5 hover:bg-primary/10 flex items-center gap-2 transition-colors"
-                        data-testid="dropoff-mark-on-map"
-                      >
-                        <Crosshair className="w-4 h-4 text-primary shrink-0" />
-                        <span className="font-medium text-primary">
-                          {lang === 'mg' ? 'Tsindrio ny sarintany hifidianana' : 'Pointez sur la carte'}
-                        </span>
-                      </button>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
-
-          {distanceKm !== null && etaMin !== null && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="flex items-center gap-3 mb-3 px-1"
-            >
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Route className="w-3.5 h-3.5" />
-                <span className="font-semibold text-foreground">{distanceKm.toFixed(1)} km</span>
-              </div>
-              <div className="w-1 h-1 rounded-full bg-muted-foreground/40" />
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Navigation className="w-3.5 h-3.5" />
-                <span className="font-semibold text-foreground">~{etaMin} min</span>
-              </div>
-            </motion.div>
-          )}
-
-          <div className="flex gap-2.5 mb-4">
-            <button 
-              onClick={() => setVehicle('TAXI')}
-              className={`flex-1 py-2.5 flex flex-col items-center justify-center rounded-2xl border-2 transition-all ${vehicle === 'TAXI' ? 'border-primary bg-primary/10' : 'border-transparent bg-secondary'}`}
-              data-testid="select-taxi"
-            >
-              <Car className={`w-6 h-6 mb-0.5 ${vehicle === 'TAXI' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className={`font-bold text-xs ${vehicle === 'TAXI' ? 'text-foreground' : 'text-muted-foreground'}`}>{t('taxi')}</span>
-            </button>
-            <button 
-              onClick={() => setVehicle('BAJAJ')}
-              className={`flex-1 py-2.5 flex flex-col items-center justify-center rounded-2xl border-2 transition-all ${vehicle === 'BAJAJ' ? 'border-primary bg-primary/10' : 'border-transparent bg-secondary'}`}
-              data-testid="select-bajaj"
-            >
-              <Bike className={`w-6 h-6 mb-0.5 ${vehicle === 'BAJAJ' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className={`font-bold text-xs ${vehicle === 'BAJAJ' ? 'text-foreground' : 'text-muted-foreground'}`}>{t('bajaj')}</span>
-            </button>
-          </div>
-
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <Button 
-              onClick={handleRequest}
-              disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending}
-              className="w-full h-12 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-all"
-              data-testid="button-request-ride"
-            >
-              {createRide.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {t('finding_drivers')}
-                </>
-              ) : (
-                t('request_ride')
-              )}
-            </Button>
-          </motion.div>
-        </Card>
-      </motion.div>
-    </MobileLayout>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </MobileLayout>
+    </>
   );
 }

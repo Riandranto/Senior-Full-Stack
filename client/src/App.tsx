@@ -15,19 +15,30 @@ import Settings from "./pages/Settings";
 import DriverHome from "./pages/driver/Home";
 import AdminDashboard from "./pages/admin/Dashboard";
 import Help from "./pages/Help";
+import BookingsPage from './pages/passenger/Bookings';
 
 // Composants publicitaires
 import { FullscreenAd } from "@/components/FullscreenAd";
 
+// Composant de chargement
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+    <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+  </div>
+);
+
 function ProtectedRoute({ component: Component, allowedRoles }: { component: any, allowedRoles: string[] }) {
   const { user, isLoading } = useAuth();
+  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
+
+  // Mode hors-ligne : bypass l'authentification
+  if (offlineMode) {
+    console.log('🔓 Offline mode: bypassing auth');
+    return <Component />;
+  }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   if (!user) {
@@ -47,13 +58,45 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 
 function Router() {
   const { user, isLoading } = useAuth();
+  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
+
+  // En mode hors-ligne, on force le rôle passager par défaut
+  if (offlineMode) {
+    return (
+      <Switch>
+        <Route path="/passenger">
+          {() => <ProtectedRoute component={PassengerHome} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/history">
+          {() => <ProtectedRoute component={PassengerHistory} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/ride/:id">
+          {() => <ProtectedRoute component={PassengerRide} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/profile">
+          {() => <ProtectedRoute component={Profile} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/settings">
+          {() => <ProtectedRoute component={Settings} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/help">
+          {() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/passenger/bookings">
+          {() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />}
+        </Route>
+        <Route path="/">
+          <Redirect to="/passenger" />
+        </Route>
+        <Route>
+          <Redirect to="/passenger" />
+        </Route>
+      </Switch>
+    );
+  }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   return (
@@ -90,6 +133,9 @@ function Router() {
       <Route path="/passenger/help">
         {() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />}
       </Route>
+      <Route path="/passenger/bookings">
+        {() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />}
+      </Route>
 
       <Route path="/driver">
         {() => <ProtectedRoute component={DriverHome} allowedRoles={['DRIVER']} />}
@@ -121,9 +167,11 @@ function Router() {
 function AppContent() {
   const [showFullscreenAd, setShowFullscreenAd] = useState(false);
   const { user, isLoading } = useAuth();
+  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
 
-  // Gestion de l'affichage des publicités plein écran
+  // Gestion de l'affichage des publicités plein écran (désactivé en mode hors-ligne)
   useEffect(() => {
+    if (offlineMode) return;
     if (!user || isLoading) return;
 
     const adShown = sessionStorage.getItem('fullscreen_ad_shown');
@@ -143,7 +191,7 @@ function AppContent() {
       
       return () => clearTimeout(timer);
     }
-  }, [user, isLoading]);
+  }, [user, isLoading, offlineMode]);
 
   const handleCloseFullscreenAd = () => {
     setShowFullscreenAd(false);
@@ -152,7 +200,7 @@ function AppContent() {
   return (
     <>
       <Router />
-      {showFullscreenAd && !isLoading && user && (
+      {showFullscreenAd && !isLoading && user && !offlineMode && (
         <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
       )}
     </>

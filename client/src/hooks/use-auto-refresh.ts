@@ -1,3 +1,4 @@
+// use-auto-refresh.ts - Version corrigée
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -11,6 +12,7 @@ export function useAutoRefresh({ queryKeys, interval = 10000, enabled = true }: 
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout>();
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -22,7 +24,9 @@ export function useAutoRefresh({ queryKeys, interval = 10000, enabled = true }: 
     } catch (error) {
       console.error('Erreur lors du rafraîchissement:', error);
     } finally {
-      setTimeout(() => setIsRefreshing(false), 500);
+      // Garder l'indicateur visible un peu plus longtemps
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setIsRefreshing(false), 800);
     }
   }, [queryClient, queryKeys, enabled]);
 
@@ -31,9 +35,8 @@ export function useAutoRefresh({ queryKeys, interval = 10000, enabled = true }: 
       intervalRef.current = setInterval(refresh, interval);
     }
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, [refresh, interval, enabled]);
 

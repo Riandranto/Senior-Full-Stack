@@ -119,10 +119,12 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
+    // En développement, autorisez toutes les origines
     if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
+    
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -184,13 +186,13 @@ async function setupSession() {
     name: 'farady.sid',
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000,
-      secure: true,
+      secure: false, // 🔥 CHANGE: false en développement
       httpOnly: true,
-      sameSite: 'none' as const,
+      sameSite: 'lax' as const, // 🔥 CHANGE: 'lax' en développement
       path: '/',
     },
     rolling: true,
-    proxy: true,
+    proxy: false, // 🔥 CHANGE: false en développement
   };
   
   console.log('📦 Session config:', {
@@ -334,6 +336,34 @@ app.get('/api/debug/cookies', (req, res) => {
     sessionId: req.session?.id,
     userId: req.session?.userId,
     sessionExists: !!req.session,
+  });
+});
+
+//========== TEST =========
+// Dans server/index.ts, ajoutez après les autres endpoints debug
+app.post('/api/debug/set-session', (req, res) => {
+  req.session.userId = 1;
+  req.session.role = 'PASSENGER';
+  req.session.save((err) => {
+    if (err) {
+      console.error('❌ Session save error:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ 
+      message: 'Session set', 
+      sessionId: req.session.id,
+      userId: req.session.userId 
+    });
+  });
+});
+
+app.get('/api/debug/check-session', (req, res) => {
+  res.json({
+    sessionId: req.session.id,
+    userId: req.session.userId,
+    role: req.session.role,
+    cookie: req.headers.cookie,
+    hasSession: !!req.session.userId
   });
 });
 

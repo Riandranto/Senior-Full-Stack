@@ -50,6 +50,8 @@ export default function PassengerRide() {
   const [assignedDriverLoc, setAssignedDriverLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
 
+  const [chatMinimized, setChatMinimized] = useState(false);
+
   // Récupérer l'utilisateur courant
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -612,13 +614,19 @@ export default function PassengerRide() {
 
       {/* Chat Box */}
       {showChat && rideId && currentUser && (
-        <ChatBox
+          <ChatBox
           rideId={rideId}
           currentUserId={currentUser.id}
           otherUserId={otherUserId}
           otherUserName={otherUserName}
+          otherUserPhone={ride.driver?.phone}
           isOpen={showChat}
-          onClose={() => setShowChat(false)}
+          minimized={chatMinimized}
+          onClose={() => {
+            setShowChat(false);
+            setChatMinimized(false);
+          }}
+          onMinimize={() => setChatMinimized(true)}
         />
       )}
 

@@ -156,7 +156,9 @@ function FitBounds({ pickup, dropoff, driverMarkers }: { pickup?: LatLng | null;
 }
 
 export function MapView({ 
-  center = { lat: -25.0325, lng: 46.9920 }, 
+  //center = { lat: -25.0325, lng: 46.9920 }, 
+  //zoom = 15,
+  center = { lat: -18.8792, lng: 47.5079 },  
   zoom = 15,
   pickupMarker,
   dropoffMarker,

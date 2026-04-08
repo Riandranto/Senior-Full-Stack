@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { 
   MapPin, Navigation, Clock, Send, CheckCircle, Route, Phone, 
   Loader2, AlertCircle, User, Bike, Car, Wifi, WifiOff,
-  Play, XCircle, MessageCircle
+  Play, XCircle, MessageCircle, Calendar, Compass
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
@@ -32,9 +32,10 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { useWebSocket } from '@/hooks/use-websocket';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
-import { useQueryClient } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 
 interface ActiveRide {
   id: number;
@@ -90,6 +91,24 @@ const extractPrice = (ride: any): number => {
   return 0;
 };
 
+// Fonction pour convertir les degrés en radians
+const deg2rad = (deg: number): number => {
+  return deg * (Math.PI / 180);
+};
+
+// Fonction pour calculer la distance entre deux points (formule Haversine)
+const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Rayon de la Terre en km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 export default function DriverHome() {
   const { t, lang } = useTranslation();
   const [, setLocation] = useLocation();
@@ -108,8 +127,10 @@ export default function DriverHome() {
 
   // Chat states
   const [showChat, setShowChat] = useState(false);
+  const [chatMinimized, setChatMinimized] = useState(false);
   const [otherUserName, setOtherUserName] = useState('');
   const [otherUserId, setOtherUserId] = useState(0);
+  const [otherUserPhone, setOtherUserPhone] = useState('');
 
   // Auto-refresh des données
   const { refresh, isRefreshing } = useAutoRefresh({
@@ -146,17 +167,179 @@ export default function DriverHome() {
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
 
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // États pour les réservations
+  const [showBookings, setShowBookings] = useState(false);
+  const [availableBookings, setAvailableBookings] = useState<any[]>([]);
+  const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [bookingPrice, setBookingPrice] = useState('');
+  const [bookingPriceError, setBookingPriceError] = useState<string | null>(null);
+
+  // État pour suivre si le driver est arrivé au point de départ
+  const [hasArrivedAtPickup, setHasArrivedAtPickup] = useState(false);
+
+  // Définir isOnline et isPending APRÈS tous les hooks
+  const isOnline = profile?.online || false;
+  const isPending = profile?.status === 'PENDING';
+
+  // Récupérer les réservations disponibles - MAINTENANT après la définition de isOnline
+  const { data: driverBookings, refetch: refetchBookings } = useQuery({
+    queryKey: ['/api/driver/bookings'],
+    queryFn: async () => {
+      const res = await fetch('/api/driver/bookings', { credentials: 'include' });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 30000,
+    enabled: isOnline && !activeRide,
+  });
+
+  // Mettre à jour les réservations disponibles
+  useEffect(() => {
+    if (driverBookings && driverBookings.length > 0) {
+      setAvailableBookings(driverBookings);
+      // Si une réservation est disponible, montrer l'icône de notification
+      if (driverBookings.length > 0 && !activeRide) {
+        toast({
+          title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
+          description: lang === 'mg' 
+            ? `${driverBookings.length} reservation${driverBookings.length > 1 ? 's' : ''} misy`
+            : `${driverBookings.length} réservation${driverBookings.length > 1 ? 's' : ''} disponible${driverBookings.length > 1 ? 's' : ''}`,
+          duration: 5000,
+        });
+      }
+    }
+  }, [driverBookings, activeRide, toast, lang]);
+
+  // Surveiller l'arrivée du driver au point de départ
+  useEffect(() => {
+    if (!activeRide || !driverPos || !pickupCoords) return;
+    
+    if (activeRide.status === 'DRIVER_EN_ROUTE' && !hasArrivedAtPickup) {
+      // Calculer la distance entre le driver et le point de départ
+      const distance = getDistanceFromLatLonInKm(
+        driverPos.lat, driverPos.lng,
+        pickupCoords.lat, pickupCoords.lng
+      );
+      
+      // Si le driver est à moins de 50m, considérer qu'il est arrivé
+      if (distance < 0.05) {
+        setHasArrivedAtPickup(true);
+        toast({
+          title: lang === 'mg' ? "Tonga any amin'ny toerana fiaingana!" : "Arrivé au point de départ!",
+          description: lang === 'mg' 
+            ? "Azonao atao ny manomboka ny dia na manokatra Google Maps ho an'ny toerana alehana"
+            : "Vous pouvez démarrer la course ou ouvrir Google Maps pour la destination",
+        });
+      }
+    }
+    
+    if (activeRide.status === 'DRIVER_ARRIVED' && !hasArrivedAtPickup) {
+      setHasArrivedAtPickup(true);
+    }
+    
+    if (activeRide.status === 'CANCELED' || activeRide.status === 'COMPLETED') {
+      setHasArrivedAtPickup(false);
+    }
+  }, [activeRide, driverPos, pickupCoords, hasArrivedAtPickup, lang, toast]);
+
+  // Envoyer une offre pour une réservation
+  const sendBookingOffer = useMutation({
+    mutationFn: async ({ bookingId, priceAr, etaMinutes }: { bookingId: number; priceAr: number; etaMinutes: number }) => {
+      const res = await apiFetch(`/api/bookings/${bookingId}/offers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceAr, etaMinutes }),
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to send offer");
+      }
+      return res.json();
+    },
+    onSuccess: (_, { priceAr, etaMinutes }) => {
+      toast({
+        title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!",
+        description: lang === 'mg' 
+          ? `${priceAr} Ar - ${etaMinutes} min`
+          : `${priceAr} Ar - ${etaMinutes} min`,
+      });
+      setSelectedBooking(null);
+      setBookingPrice('');
+      refetchBookings();
+    },
+    onError: (error: Error) => {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: error.message,
+      });
+    },
+  });
+
+  const handleSendBookingOffer = async () => {
+    if (!selectedBooking || !bookingPrice) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy feno" : "Incomplet",
+        description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix"
+      });
+      return;
+    }
+    
+    const error = validatePrice(bookingPrice);
+    if (error) {
+      setBookingPriceError(error);
+      return;
+    }
+
+    const eta = autoEta || selectedBooking?.etaMinutes || 10;
+    
+    await sendBookingOffer.mutateAsync({
+      bookingId: selectedBooking.id,
+      priceAr: parseInt(bookingPrice),
+      etaMinutes: eta,
+    });
+  };
+
+  // Écouter les événements de nouvelles réservations WebSocket
+  useEffect(() => {
+    if (!connected) return;
+    
+    const unsubscribe = subscribe('BOOKING_NEW', (data: any) => {
+      console.log('📅 New booking received:', data);
+      if (!activeRide) {
+        refetchBookings();
+        toast({
+          title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
+          description: lang === 'mg' 
+            ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleDateString()}`
+            : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}`,
+        });
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [connected, refetchBookings, activeRide, toast, lang]);
+
   // Prix formaté pour l'affichage
   const formattedPrice = useMemo(() => {
     const price = extractPrice(activeRide);
     return price ? price.toLocaleString('fr-FR') : "0";
   }, [activeRide]);
 
+  const setActiveRide = (ride: any) => {
+    queryClient.setQueryData(['/api/driver/active-ride'], ride);
+  };
+
   // Afficher la fenêtre de suivi quand une course est active
   useEffect(() => {
-    if (activeRide && ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'].includes(activeRide.status)) {
+    if (activeRide && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(activeRide.status)) {
       setShowRideTracking(true);
-
+      
+      // Mettre à jour les coordonnées
       if (activeRide.pickupLat && activeRide.pickupLng) {
         setPickupCoords({ 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -171,6 +354,7 @@ export default function DriverHome() {
         });
       }
 
+      // Calculer l'itinéraire
       if (activeRide.pickupLat && activeRide.pickupLng && activeRide.dropLat && activeRide.dropLng) {
         const pickup = { 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -189,12 +373,14 @@ export default function DriverHome() {
       }
       
       // Ouvrir automatiquement le chat quand la course est acceptée
-      if (activeRide.status !== 'PENDING' && activeRide.status !== 'OFFER_SENT') {
+      if (activeRide.status !== 'REQUESTED' && activeRide.status !== 'BIDDING') {
         setOtherUserName(activeRide.passengerName);
         setOtherUserId(activeRide.passengerId);
+        setOtherUserPhone(activeRide.passengerPhone);
         setShowChat(true);
+        setChatMinimized(false);
       }
-    } else {
+    } else if (activeRide && activeRide.status === 'CANCELED') {
       setShowRideTracking(false);
       setTimerStarted(false);
       setStartTime(null);
@@ -202,17 +388,9 @@ export default function DriverHome() {
       setPickupCoords(null);
       setDropoffCoords(null);
       setShowChat(false);
-      
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = undefined;
-      }
-      if (secondsIntervalRef.current) {
-        clearInterval(secondsIntervalRef.current);
-        secondsIntervalRef.current = undefined;
-      }
+      setChatMinimized(false);
     }
-
+    
     return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
@@ -233,7 +411,6 @@ export default function DriverHome() {
       console.log('🎉 OFFER_ACCEPTED received in DriverHome:', data);
       
       if (data.driverId === profile?.userId) {
-        // Forcer le refetch immédiat
         refetchActiveRide();
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
@@ -245,10 +422,11 @@ export default function DriverHome() {
             : "Rendez-vous au point de départ",
         });
         
-        // Ouvrir le chat automatiquement
         setOtherUserId(data.passengerId);
         setOtherUserName(data.passengerName || 'Passager');
+        setOtherUserPhone(data.passengerPhone || '');
         setShowChat(true);
+        setChatMinimized(false);
       }
     });
     
@@ -270,111 +448,146 @@ export default function DriverHome() {
   
     return markers;
   }, [requests, activeRide]);
-
   
   const handleStartJourney = async () => {
-    if (!activeRide) {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: lang === 'mg' ? "Tsy hita ny dia" : "Course introuvable",
-      });
-      return;
-    }
-  
+    if (!activeRide || isUpdating) return;
+    
     try {
-      console.log('🚀 Starting journey for ride:', activeRide.id);
+      setIsUpdating(true);
+      console.log(`🚀 Starting journey for ride: ${activeRide.id}, current status: ${activeRide.status}`);
       
-      // Transition correcte: ASSIGNED → DRIVER_EN_ROUTE (pas IN_PROGRESS directement)
+      let nextStatus = '';
+      
+      switch (activeRide.status) {
+        case 'ASSIGNED':
+          nextStatus = 'DRIVER_EN_ROUTE';
+          break;
+        case 'DRIVER_EN_ROUTE':
+          nextStatus = 'DRIVER_ARRIVED';
+          break;
+        case 'DRIVER_ARRIVED':
+          nextStatus = 'IN_PROGRESS';
+          break;
+        case 'IN_PROGRESS':
+          nextStatus = 'COMPLETED';
+          break;
+        default:
+          console.warn(`Unknown status: ${activeRide.status}`);
+          setIsUpdating(false);
+          return;
+      }
+      
+      // Vérifier que le statut n'est pas déjà le même
+      if (activeRide.status === nextStatus) {
+        console.log(`Status already ${nextStatus}, skipping`);
+        setIsUpdating(false);
+        return;
+      }
+      
       const response = await fetch(`/api/rides/${activeRide.id}/status`, {
-        method: 'POST',
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
-        body: JSON.stringify({ status: 'DRIVER_EN_ROUTE' })  // ← Changement ici
+        body: JSON.stringify({ status: nextStatus }),
       });
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to update status');
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to update ride status');
       }
       
       const updatedRide = await response.json();
       console.log('✅ Ride status updated:', updatedRide);
       
-      setTimerStarted(true);
-      setStartTime(Date.now());
+      // Mettre à jour l'état local via le cache React Query
+      queryClient.setQueryData(['/api/driver/active-ride'], updatedRide);
+      await refetchActiveRide();
+      
+      toast({
+        title: lang === 'mg' ? "Status novaina" : "Statut mis à jour",
+        description: getStatusLabel(nextStatus),
+      });
+      
+    } catch (error) {
+      console.error('ERROR in handleStartJourney:', error);
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: error.message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      'DRIVER_EN_ROUTE': lang === 'mg' ? 'Eny an-dalana' : 'En route',
+      'DRIVER_ARRIVED': lang === 'mg' ? 'Tonga' : 'Arrivé',
+      'IN_PROGRESS': lang === 'mg' ? 'An-dalana' : 'En course',
+      'COMPLETED': lang === 'mg' ? 'Vita' : 'Terminé',
+    };
+    return labels[status] || status;
+  };
+
+  const handleCompleteRide = async () => {
+    if (!activeRide || isUpdating) return;
+    
+    // Ne pas terminer si déjà COMPLETED
+    if (activeRide.status === 'COMPLETED') {
+      console.log('Ride already completed');
+      setShowCompletionConfirm(false);
+      return;
+    }
+    
+    try {
+      setIsUpdating(true);
+      console.log('🏁 Completing ride:', activeRide.id);
+      
+      const response = await fetch(`/api/rides/${activeRide.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'COMPLETED' })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to complete ride');
+      }
+      
+      setShowCompletionConfirm(false);
+      setTimerStarted(false);
+      setStartTime(null);
       
       queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
       queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
       await refetchActiveRide();
       
       toast({
-        title: lang === 'mg' ? "Eny an-dalana!" : "En route!",
+        title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
         description: lang === 'mg' 
-          ? "Mandehana any amin'ny toerana fiaingana"
-          : "Rendez-vous au point de départ",
+          ? `Voaray ${formattedPrice} Ar`
+          : `${formattedPrice} Ar reçus`,
       });
-    } catch (error: any) {
-      console.error("ERROR in handleStartJourney:", error);
-      setTimerStarted(false);
-      setStartTime(null);
-  
+      
+      // Fermer le chat après la fin de la course
+      setShowChat(false);
+      setChatMinimized(false);
+    } catch (error) {
+      console.error('Error completing ride:', error);
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message || (lang === 'mg' ? "Tsy afaka nanomboka ny dia" : "Impossible de démarrer la course"),
+        description: error.message,
       });
+    } finally {
+      setIsUpdating(false);
     }
   };
-
-// Même correction pour handleCompleteRide
-const handleCompleteRide = async () => {
-  if (!activeRide) return;
-  
-  try {
-    console.log('🏁 Completing ride:', activeRide.id);
-    
-    const response = await fetch(`/api/rides/${activeRide.id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-      body: JSON.stringify({ status: 'COMPLETED' })
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || 'Failed to complete ride');
-    }
-    
-    setShowCompletionConfirm(false);
-    setTimerStarted(false);
-    setStartTime(null);
-    
-    queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-    queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-    await refetchActiveRide();
-    
-    toast({
-      title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!",
-      description: lang === 'mg' 
-        ? `Voaray ${formattedPrice} Ar`
-        : `${formattedPrice} Ar reçus`,
-    });
-  } catch (error) {
-    console.error('Error completing ride:', error);
-    toast({
-      variant: "destructive",
-      title: lang === 'mg' ? "Tsy nety" : "Erreur",
-      description: lang === 'mg' 
-        ? "Tsy afaka namita ny dia"
-        : "Impossible de terminer la course",
-    });
-  }
-};
 
   const handleCancelRide = async () => {
     if (!activeRide) return;
@@ -389,6 +602,8 @@ const handleCompleteRide = async () => {
     setShowRideTracking(false);
     setTimerStarted(false);
     setStartTime(null);
+    setShowChat(false);
+    setChatMinimized(false);
     refresh();
   };
 
@@ -459,6 +674,168 @@ const handleCompleteRide = async () => {
       });
     } catch (err: any) {}
   };
+
+  const handleStartBookingRide = async () => {
+    if (!activeRide || !activeRide.bookingId) return;
+    
+    try {
+      setIsUpdating(true);
+      
+      const response = await fetch(`/api/bookings/${activeRide.bookingId}/start-ride`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to start booking ride');
+      }
+      
+      const newRide = await response.json();
+      queryClient.setQueryData(['/api/driver/active-ride'], newRide);
+      await refetchActiveRide();
+      
+      toast({
+        title: lang === 'mg' ? "Reservation nanomboka!" : "Réservation démarrée!",
+        description: lang === 'mg' 
+          ? "Manomboka ny dia"
+          : "Course en cours",
+      });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: error.message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // ==================== FONCTION NAVIGATION GOOGLE MAPS AMÉLIORÉE ====================
+  const openGoogleMapsNavigation = useCallback(() => {
+    // Vérifier la position du conducteur
+    if (!driverPos) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy hita ny toerana misy anao" : "Position non trouvée",
+        description: lang === 'mg' 
+          ? "Mbola tsy hita ny toerana misy anao. Andraso kely."
+          : "Votre position n'est pas encore disponible. Veuillez patienter.",
+      });
+      return;
+    }
+
+    let origin: string;
+    let destination: string;
+    let mode: string = 'driving';
+    let destinationLabel: string;
+    let viewParams: string;
+
+    // Déterminer le point A et B selon le statut de la course
+    const isArrived = activeRide?.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup;
+    
+    if (isArrived) {
+      // Cas 2: Driver arrivé au point de départ -> Navigation vers point d'arrivée
+      if (!activeRide?.dropLat || !activeRide?.dropLng) {
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy hita ny toerana alehana" : "Destination non trouvée",
+          description: lang === 'mg' 
+            ? "Tsy hita ny toerana alehan'ny mpandeha."
+            : "La destination du passager n'est pas disponible.",
+        });
+        return;
+      }
+      
+      origin = `${activeRide.pickupLat},${activeRide.pickupLng}`;
+      destination = `${activeRide.dropLat},${activeRide.dropLng}`;
+      destinationLabel = lang === 'mg' ? 'Toerana alehana' : 'Destination';
+      // Vue 3D pour la destination
+      viewParams = `&data=!3m1!4b1!4m2!4m1!3e0!5m1!1e4!5m2!1e1!1e2!6e0!7e1`;
+    } else {
+      // Cas 1: Driver en route vers le client -> Navigation vers point de départ
+      if (!activeRide?.pickupLat || !activeRide?.pickupLng) {
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy hita ny toerana fiaingana" : "Point de départ non trouvé",
+          description: lang === 'mg' 
+            ? "Tsy hita ny toerana fiaingan'ny mpandeha."
+            : "Le point de départ du passager n'est pas disponible.",
+        });
+        return;
+      }
+      
+      origin = `${driverPos.lat},${driverPos.lng}`;
+      destination = `${activeRide.pickupLat},${activeRide.pickupLng}`;
+      destinationLabel = lang === 'mg' ? 'Toerana fiaingana' : 'Point de départ';
+      // Vue 3D pour le point de départ
+      viewParams = `&data=!3m1!4b1!4m2!4m1!3e0!5m1!1e4`;
+    }
+
+    // Construction de l'URL Google Maps avec paramètres avancés
+    const encodedOrigin = encodeURIComponent(origin);
+    const encodedDestination = encodeURIComponent(destination);
+    
+    // Extraire les coordonnées pour le centre de la carte en 3D
+    const [originLat, originLng] = origin.split(',');
+    const [destLat, destLng] = destination.split(',');
+    
+    // Calculer le point milieu pour centrer la carte
+    const centerLat = (parseFloat(originLat) + parseFloat(destLat)) / 2;
+    const centerLng = (parseFloat(originLng) + parseFloat(destLng)) / 2;
+    
+    // Niveau de zoom pour la vue 3D (16-18 pour voir les bâtiments en 3D)
+    const zoomLevel = 17;
+    // Inclinaison pour la vue 3D (45 degrés pour un effet 3D)
+    const tilt = 45;
+    // Rotation de la carte
+    const bearing = 0;
+    
+    // Détecter si c'est un appareil mobile
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      // URL pour application mobile Google Maps avec vue 3D complète
+      const intentUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodedOrigin}&destination=${encodedDestination}&travelmode=${mode}&dir_action=navigate&force=3d&zoom=${zoomLevel}`;
+      
+      toast({
+        title: lang === 'mg' ? "Fanokafana Google Maps 3D" : "Ouverture Google Maps 3D",
+        description: lang === 'mg' 
+          ? "Mandehana any amin'ny Google Maps amin'ny fomba 3D"
+          : "Lancement de Google Maps en mode 3D",
+      });
+      
+      // Essayer d'ouvrir l'app Google Maps
+      window.location.href = intentUrl;
+      
+      // Fallback: si l'app n'est pas installée, rediriger vers Play Store
+      const timeout = setTimeout(() => {
+        window.location.href = 'https://play.google.com/store/apps/details?id=com.google.android.apps.maps';
+      }, 2500);
+      
+      const onBlur = () => {
+        clearTimeout(timeout);
+        window.removeEventListener('blur', onBlur);
+      };
+      window.addEventListener('blur', onBlur);
+      
+      setTimeout(() => {
+        window.removeEventListener('blur', onBlur);
+      }, 3000);
+    } else {
+      // Sur desktop, URL avec vue 3D améliorée
+      // Paramètres complets pour une expérience 3D optimale
+      const webUrl = `https://www.google.com/maps/dir/${encodedOrigin}/${encodedDestination}/@${centerLat},${centerLng},${zoomLevel}z/data=!3m1!4b1!4m2!4m1!3e0!5e1!6e0!7e1!8e2!9m1!1e1!10m1!8e3!11e1`;
+      
+      // Alternative: URL avec Street View au point de destination
+      // const streetViewUrl = `https://www.google.com/maps/@${destLat},${destLng},3a,75y,90t/data=!3m8!1e1!3m6!1sAF1QipM!2e0!3e11!6shttps:%2F%2Flh5.googleusercontent.com%2Fp%2FAF1QipM%3Dw203-h100-k-no-pi0-ya0-ro0-fo100!7i8000!8i4000`;
+      
+      window.open(webUrl, '_blank');
+    }
+  }, [driverPos, activeRide, lang, toast, hasArrivedAtPickup]);
+  // ==================== FIN FONCTION NAVIGATION ====================
 
   // Obtenir la position du conducteur
   useEffect(() => {
@@ -543,14 +920,11 @@ const handleCompleteRide = async () => {
   }, [selectedRequest?.id, driverPos]);
 
   useEffect(() => {
-    // Fermer le chat quand la course est terminée ou annulée
     if (activeRide && (activeRide.status === 'COMPLETED' || activeRide.status === 'CANCELED')) {
       setShowChat(false);
+      setChatMinimized(false);
     }
   }, [activeRide]);
-
-  const isOnline = profile?.online || false;
-  const isPending = profile?.status === 'PENDING';
 
   const mapCenter = useMemo(() => {
     if (activeRide) {
@@ -658,6 +1032,27 @@ const handleCompleteRide = async () => {
         </motion.div>
       </div>
 
+      {/* Bouton pour afficher les réservations */}
+      {isOnline && !activeRide && availableBookings.length > 0 && (
+        <div className="absolute top-28 right-4 z-10">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 400 }}
+          >
+            <Button
+              variant="default"
+              size="sm"
+              className="rounded-full shadow-lg bg-amber-500 hover:bg-amber-600"
+              onClick={() => setShowBookings(!showBookings)}
+            >
+              <Calendar className="w-4 h-4 mr-1" />
+              {availableBookings.length} {lang === 'mg' ? 'Reservation' : 'Réserv'}
+            </Button>
+          </motion.div>
+        </div>
+      )}
+
       {/* Erreur GPS */}
       {locationError && (
         <div className="absolute top-32 left-1/2 -translate-x-1/2 z-10">
@@ -668,7 +1063,7 @@ const handleCompleteRide = async () => {
         </div>
       )}
 
-      {/* Fenêtre de suivi de course - FLUX ULTRA SIMPLE */}
+      {/* Fenêtre de suivi de course */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
           <motion.div
@@ -686,6 +1081,8 @@ const handleCompleteRide = async () => {
                     activeRide.status === 'IN_PROGRESS' ? 'default' : 'outline'
                   }>
                     {activeRide.status === 'ASSIGNED' && (lang === 'mg' ? 'Voatendry' : 'Assigné')}
+                    {activeRide.status === 'DRIVER_EN_ROUTE' && (lang === 'mg' ? 'Eny an-dalana' : 'En route')}
+                    {activeRide.status === 'DRIVER_ARRIVED' && (lang === 'mg' ? 'Tonga' : 'Arrivé')}
                     {activeRide.status === 'IN_PROGRESS' && (lang === 'mg' ? 'An-dalana' : 'En cours')}
                     {activeRide.status === 'COMPLETED' && (lang === 'mg' ? 'Vita' : 'Terminé')}
                   </Badge>
@@ -712,13 +1109,15 @@ const handleCompleteRide = async () => {
                     </div>
                     <div>
                       <p className="font-bold">{activeRide.passengerName}</p>
-                      <a 
-                        href={`tel:${activeRide.passengerPhone}`}
-                        className="text-xs text-primary flex items-center gap-1"
-                      >
-                        <Phone className="w-3 h-3" />
-                        {activeRide.passengerPhone}
-                      </a>
+                      {activeRide.passengerPhone && (
+                        <a 
+                          href={`tel:${activeRide.passengerPhone}`}
+                          className="text-xs text-primary flex items-center gap-1"
+                        >
+                          <Phone className="w-3 h-3" />
+                          {activeRide.passengerPhone}
+                        </a>
+                      )}
                     </div>
                   </div>
                   <Button
@@ -727,7 +1126,9 @@ const handleCompleteRide = async () => {
                     onClick={() => {
                       setOtherUserName(activeRide.passengerName);
                       setOtherUserId(activeRide.passengerId);
+                      setOtherUserPhone(activeRide.passengerPhone);
                       setShowChat(true);
+                      setChatMinimized(false);
                     }}
                     className="rounded-full"
                   >
@@ -748,9 +1149,53 @@ const handleCompleteRide = async () => {
                 </div>
               </div>
 
-              {/* Boutons d'action - FLUX ULTRA SIMPLE */}
+              {/* 🔥 BOUTON NAVIGUER - AMÉLIORÉ */}
+              <Button 
+                onClick={openGoogleMapsNavigation}
+                className={`w-full h-10 mb-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${
+                  (activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup)
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+                data-testid="button-navigate"
+              >
+                <Compass className="w-4 h-4" />
+                {activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup ? (
+                  lang === 'mg' ? 'Navigue mankany amin\'ny toerana alehana' : 'Naviguer vers la destination'
+                ) : (
+                  lang === 'mg' ? 'Navigue mankany amin\'ny toerana fiaingana' : 'Naviguer vers le point de départ'
+                )}
+                <span className="text-xs opacity-80 ml-1">
+                  {activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup ? '🚩 B' : '📍 A'}
+                </span>
+              </Button>
+
+              {/* Indicateur de progression vers le point de départ */}
+              {(activeRide.status === 'DRIVER_EN_ROUTE' && !hasArrivedAtPickup && driverPos && pickupCoords) && (
+                <div className="mb-3 p-2 bg-blue-500/10 rounded-xl text-center">
+                  <p className="text-xs text-blue-600 flex items-center justify-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {lang === 'mg' 
+                      ? `Mijanòna akaikin'ny toerana fiaingana...`
+                      : `Approchez-vous du point de départ...`}
+                  </p>
+                </div>
+              )}
+
+              {/* Message de confirmation d'arrivée */}
+              {(activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup) && activeRide.status !== 'IN_PROGRESS' && (
+                <div className="mb-3 p-2 bg-green-500/10 rounded-xl text-center">
+                  <p className="text-xs text-green-600 flex items-center justify-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    {lang === 'mg' 
+                      ? `Tonga any amin'ny toerana fiaingana! Azonao atao ny manokatra Google Maps ho an'ny toerana alehana.`
+                      : `Arrivé au point de départ! Ouvrez Google Maps pour la destination.`}
+                  </p>
+                </div>
+              )}
+
+              {/* Boutons d'action */}
               <div className="space-y-3">
-                {/* Bouton pour commencer le trajet (ASSIGNED) */}
                 {activeRide.status === 'ASSIGNED' && (
                   <Button 
                     onClick={handleStartJourney}
@@ -766,7 +1211,26 @@ const handleCompleteRide = async () => {
                   </Button>
                 )}
 
-                {/* Bouton pour terminer la course (IN_PROGRESS) */}
+                {activeRide.status === 'DRIVER_EN_ROUTE' && (
+                  <Button 
+                    onClick={handleStartJourney}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-blue-600 hover:bg-blue-700"
+                  >
+                    <MapPin className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Tonga teo amin\'ny toerana' : 'Arrivé au point de départ'}
+                  </Button>
+                )}
+
+                {activeRide.status === 'DRIVER_ARRIVED' && (
+                  <Button 
+                    onClick={handleStartJourney}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-green-600 hover:bg-green-700"
+                  >
+                    <Play className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Manomboka ny dia' : 'Démarrer la course'}
+                  </Button>
+                )}
+
                 {activeRide.status === 'IN_PROGRESS' && (
                   <Button 
                     onClick={() => setShowCompletionConfirm(true)}
@@ -782,7 +1246,6 @@ const handleCompleteRide = async () => {
                   </Button>
                 )}
 
-                {/* Bouton d'annulation */}
                 {activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED' && (
                   <Button
                     onClick={handleCancelRide}
@@ -791,6 +1254,16 @@ const handleCompleteRide = async () => {
                   >
                     <XCircle className="w-4 h-4 mr-2" />
                     {lang === 'mg' ? 'Mamafa ny dia' : 'Annuler la course'}
+                  </Button>
+                )}
+
+                {activeRide.status === 'ASSIGNED' && activeRide.isBooking && (
+                  <Button 
+                    onClick={handleStartBookingRide}
+                    className="w-full h-12 text-base font-bold rounded-xl bg-amber-600 hover:bg-amber-700"
+                  >
+                    <Calendar className="w-4 h-4 mr-2" />
+                    {lang === 'mg' ? 'Manomboka ny reservation' : 'Démarrer la réservation'}
                   </Button>
                 )}
               </div>
@@ -1057,17 +1530,142 @@ const handleCompleteRide = async () => {
         </DialogContent>
       </Dialog>
 
-      {/* Chat Box */}
-      {showChat && activeRide && (
-        <ChatBox
-          rideId={activeRide.id}
-          currentUserId={profile?.userId || 0}
-          otherUserId={otherUserId}
-          otherUserName={otherUserName}
-          isOpen={showChat}
-          onClose={() => setShowChat(false)}
-        />
-      )}
+      {/* Modal des réservations disponibles */}
+      <Dialog open={showBookings && !activeRide} onOpenChange={setShowBookings}>
+        <DialogContent className="rounded-3xl max-w-md mx-auto max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              {lang === 'mg' ? 'Reservation misy' : 'Réservations disponibles'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {availableBookings.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Calendar className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>{lang === 'mg' ? 'Tsy misy reservation' : 'Aucune réservation'}</p>
+              </div>
+            ) : (
+              availableBookings.map((booking: any) => (
+                <Card
+                  key={booking.id}
+                  className="p-4 rounded-2xl cursor-pointer hover:border-primary transition-all"
+                  onClick={() => setSelectedBooking(booking)}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <Badge variant="outline" className="text-[10px]">
+                      {booking.vehicleType}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(booking.scheduledFor).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-green-500" />
+                      <span className="truncate">{booking.pickupAddress}</span>
+                    </p>
+                    <p className="text-xs flex items-center gap-1">
+                      <Navigation className="w-3 h-3 text-red-400" />
+                      <span className="truncate">{booking.dropAddress}</span>
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-2 border-t flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">{booking.passenger?.name}</span>
+                    {booking.estimatedPriceAr && (
+                      <span className="font-bold text-primary">{booking.estimatedPriceAr.toLocaleString()} Ar</span>
+                    )}
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal d'envoi d'offre pour réservation */}
+      <Dialog open={!!selectedBooking && !activeRide} onOpenChange={() => setSelectedBooking(null)}>
+        <DialogContent className="rounded-3xl max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">
+              {lang === 'mg' ? 'Manolotra reservation' : 'Faire une offre'}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedBooking && (
+            <div className="space-y-4">
+              <div className="text-xs bg-secondary/50 rounded-xl p-3 space-y-2">
+                <p className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-green-500"/>
+                  <span className="line-clamp-1">{selectedBooking.pickupAddress}</span>
+                </p>
+                <p className="flex items-center gap-1">
+                  <Navigation className="w-3 h-3 text-red-400"/>
+                  <span className="line-clamp-1">{selectedBooking.dropAddress}</span>
+                </p>
+                <p className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-primary"/>
+                  <span>{new Date(selectedBooking.scheduledFor).toLocaleString()}</span>
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold mb-1.5 block">
+                  {lang === 'mg' ? 'Vidiny (Ar)' : 'Prix (Ar)'}
+                </label>
+                <Input 
+                  type="text"
+                  value={bookingPrice} 
+                  onChange={(e) => {
+                    setBookingPrice(e.target.value);
+                    const error = validatePrice(e.target.value);
+                    setBookingPriceError(error);
+                  }}
+                  placeholder="5000"
+                  className={`h-12 text-lg rounded-xl ${bookingPriceError ? 'border-destructive' : ''}`}
+                  inputMode="numeric"
+                />
+                {bookingPriceError && <p className="text-xs text-destructive mt-1">{bookingPriceError}</p>}
+                <p className="text-xs text-muted-foreground mt-1">
+                  {lang === 'mg' ? '1000 Ar ny farany ambany' : 'Minimum: 1000 Ar'}
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button 
+              onClick={handleSendBookingOffer}
+              disabled={!bookingPrice || sendBookingOffer.isPending}
+              className="w-full h-12 text-lg font-bold rounded-xl"
+            >
+              {sendBookingOffer.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{lang === 'mg' ? 'Mandefa...' : 'Envoi...'}</>
+              ) : (
+                lang === 'mg' ? 'Andefa tolobidy' : 'Envoyer l\'offre'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Chat Box avec minimisation */}
+      <AnimatePresence>
+        {showChat && activeRide && (
+          <ChatBox
+            rideId={activeRide.id}
+            currentUserId={profile?.userId || 0}
+            otherUserId={otherUserId}
+            otherUserName={otherUserName}
+            otherUserPhone={otherUserPhone}
+            isOpen={showChat}
+            minimized={chatMinimized}
+            onClose={() => {
+              setShowChat(false);
+              setChatMinimized(false);
+            }}
+            onMinimize={() => setChatMinimized(true)}
+          />
+        )}
+      </AnimatePresence>
     </MobileLayout>
   );
 }

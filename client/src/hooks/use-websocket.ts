@@ -56,31 +56,37 @@ export function useWebSocket() {
       return;
     }
     
+    // Réinitialiser le compteur si on est en train de faire une connexion volontaire
+    if (reconnectAttemptsRef.current > 0 && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+      console.log(`Reconnection attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS}`);
+    }
+    
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       console.warn("Max WebSocket reconnection attempts reached");
       return;
     }
-  
+
     try {
       const wsUrl = getWebSocketUrl();
       console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
       
-      // Fermer l'ancienne connexion
+      // Fermer l'ancienne connexion proprement
       if (wsRef.current) {
-        wsRef.current.close();
+        wsRef.current.close(1000, "Reconnecting");
+        wsRef.current = null;
       }
-  
+
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
-  
+
       // Timeout pour détecter les connexions qui échouent
       const connectionTimeout = setTimeout(() => {
         if (ws.readyState !== WebSocket.OPEN) {
           console.log('WebSocket connection timeout');
           ws.close();
         }
-      }, 5000);
-  
+      }, 10000); // Augmenté à 10 secondes
+
       ws.onopen = () => {
         clearTimeout(connectionTimeout);
         console.log("✅ WebSocket connected");
@@ -90,10 +96,11 @@ export function useWebSocket() {
           sendAuth();
         }
       };
-  
+
       ws.onclose = (event) => {
         clearTimeout(connectionTimeout);
         console.log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason || 'No reason'}`);
+        
         if (mountedRef.current) {
           setConnected(false);
         }
@@ -103,9 +110,14 @@ export function useWebSocket() {
           console.log("WebSocket closed cleanly");
           return;
         }
-  
+        
+        // Pour code=1005 ou 1006, attendre avant de reconnecter
+        if (event.code === 1005 || event.code === 1006) {
+          console.log(`WebSocket closed abnormally (${event.code}), waiting before reconnect`);
+        }
+
         if (!mountedRef.current) return;
-  
+
         const delay = Math.min(
           BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttemptsRef.current),
           30000
@@ -113,17 +125,22 @@ export function useWebSocket() {
         
         console.log(`WebSocket closed, reconnecting in ${delay}ms... (attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
         
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+        }
+        
         reconnectTimerRef.current = setTimeout(() => {
           reconnectAttemptsRef.current++;
           connect();
         }, delay);
       };
-  
+
       ws.onerror = (error) => {
         clearTimeout(connectionTimeout);
         console.error("WebSocket error:", error);
+        // Ne pas reconnecter immédiatement, laisser onclose gérer
       };
-  
+
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);

@@ -1,3 +1,4 @@
+// src/pages/admin/Dashboard.tsx - Version avec pagination qui fonctionne
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, buildUrl } from '@shared/routes';
@@ -18,7 +19,7 @@ import {
   CheckCircle, XCircle, Ban, Eye, Phone, Navigation, Clock, Route,
   Search, LogOut, ChevronLeft, ChevronRight, DollarSign, AlertTriangle,
   FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File,
-  RefreshCw
+  RefreshCw, Calendar
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -52,9 +53,8 @@ const driverStatusColors: Record<string, string> = {
   SUSPENDED: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400',
 };
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
-// Animation de chargement
 const LoadingSpinner = () => (
   <motion.div
     initial={{ opacity: 0, scale: 0.8 }}
@@ -62,17 +62,13 @@ const LoadingSpinner = () => (
     exit={{ opacity: 0, scale: 0.8 }}
     className="flex flex-col items-center justify-center p-8"
   >
-    <motion.div
-      animate={{ rotate: 360 }}
-      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-    >
+    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
       <Loader2 className="w-8 h-8 text-primary" />
     </motion.div>
     <p className="text-sm text-muted-foreground mt-2">Chargement...</p>
   </motion.div>
 );
 
-// Indicateur de rafraîchissement
 const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
   <AnimatePresence>
     {isRefreshing && (
@@ -83,10 +79,7 @@ const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
         className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50"
       >
         <div className="bg-primary/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-          >
+          <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
             <RefreshCw className="w-4 h-4 text-white" />
           </motion.div>
           <span className="text-white text-xs font-medium">Mise à jour...</span>
@@ -96,22 +89,118 @@ const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
   </AnimatePresence>
 );
 
-function Pagination({ current, total, onChange, count }: { current: number; total: number; onChange: (p: number) => void; count: number }) {
-  if (total <= 1) return null;
+// Composant Pagination générique - CORRIGÉ pour toujours s'afficher quand nécessaire
+function TablePagination({ 
+  currentPage, 
+  totalPages, 
+  onPageChange, 
+  totalItems,
+  pageSize,
+  onPageSizeChange,
+  pageSizeOptions = PAGE_SIZE_OPTIONS
+}: { 
+  currentPage: number; 
+  totalPages: number; 
+  onPageChange: (p: number) => void; 
+  totalItems: number;
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
+  pageSizeOptions?: number[];
+}) {
+  // Afficher la pagination si plus d'une page OU si le nombre d'éléments dépasse la taille de page
+  const showPagination = totalPages > 1 || totalItems > pageSize;
+  
+  if (!showPagination) return null;
+  
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      if (currentPage <= 3) {
+        for (let i = 1; i <= 4; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1);
+        pages.push('...');
+        for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        pages.push('...');
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      }
+    }
+    return pages;
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="flex items-center justify-between p-3 border-t border-border/30 bg-muted/10"
+      className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 border-t border-border/30 bg-muted/10"
     >
-      <span className="text-xs text-muted-foreground">{count} résultat{count > 1 ? 's' : ''}</span>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span>{totalItems} résultat{totalItems > 1 ? 's' : ''}</span>
+        <div className="flex items-center gap-2">
+          <span>Afficher</span>
+          <Select value={pageSize.toString()} onValueChange={(v) => onPageSizeChange(parseInt(v))}>
+            <SelectTrigger className="w-20 h-7 text-xs rounded-lg">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {pageSizeOptions.map(size => (
+                <SelectItem key={size} value={size.toString()} className="text-xs">
+                  {size}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span>par page</span>
+        </div>
+      </div>
+      
       <div className="flex items-center gap-1">
-        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={current <= 1} onClick={() => onChange(current - 1)} data-testid="button-prev-page">
-          <ChevronLeft className="w-4 h-4" />
+        <Button 
+          size="icon" 
+          variant="outline" 
+          className="h-7 w-7 rounded-lg" 
+          disabled={currentPage <= 1} 
+          onClick={() => onPageChange(currentPage - 1)}
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
         </Button>
-        <span className="text-xs font-medium px-2" data-testid="text-page-info">{current} / {total}</span>
-        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={current >= total} onClick={() => onChange(current + 1)} data-testid="button-next-page">
-          <ChevronRight className="w-4 h-4" />
+        
+        <div className="flex items-center gap-1">
+          {getPageNumbers().map((page, idx) => (
+            page === '...' ? (
+              <span key={`dots-${idx}`} className="px-2 text-xs text-muted-foreground">...</span>
+            ) : (
+              <Button
+                key={page}
+                size="icon"
+                variant={currentPage === page ? "default" : "outline"}
+                className={`h-7 w-7 rounded-lg text-xs ${currentPage === page ? 'bg-primary text-primary-foreground' : ''}`}
+                onClick={() => onPageChange(page as number)}
+              >
+                {page}
+              </Button>
+            )
+          ))}
+        </div>
+        
+        <Button 
+          size="icon" 
+          variant="outline" 
+          className="h-7 w-7 rounded-lg" 
+          disabled={currentPage >= totalPages} 
+          onClick={() => onPageChange(currentPage + 1)}
+        >
+          <ChevronRight className="w-3.5 h-3.5" />
         </Button>
       </div>
     </motion.div>
@@ -178,7 +267,7 @@ function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driver
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5 }}
       ref={mapRef} 
-      className="h-[350px] w-full" 
+      className="h-[350px] w-full rounded-xl overflow-hidden" 
       data-testid="admin-map" 
     />
   );
@@ -539,6 +628,153 @@ function DriverDetailView({ driver }: { driver: any }) {
   );
 }
 
+function BookingDetailView({ booking }: { booking: any }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-4"
+    >
+      <div className="flex items-center gap-2">
+        <motion.span 
+          initial={{ scale: 0.8 }}
+          animate={{ scale: 1 }}
+          className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+            booking.status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
+            booking.status === 'CONFIRMED' ? 'bg-blue-100 text-blue-700' :
+            booking.status === 'ASSIGNED' ? 'bg-purple-100 text-purple-700' :
+            booking.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
+            'bg-red-100 text-red-700'
+          }`}
+        >
+          {booking.status === 'PENDING' ? 'En attente' :
+           booking.status === 'CONFIRMED' ? 'Confirmée' :
+           booking.status === 'ASSIGNED' ? 'Assignée' :
+           booking.status === 'COMPLETED' ? 'Terminée' : 'Annulée'}
+        </motion.span>
+        {booking.vehicleType && <Badge variant="outline" className="text-xs">{booking.vehicleType}</Badge>}
+      </div>
+
+      <div className="space-y-2">
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/20 rounded-xl"
+        >
+          <MapPin className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+          <div>
+            <div className="text-xs text-muted-foreground">Départ</div>
+            <div className="text-sm font-medium">{booking.pickupAddress}</div>
+          </div>
+        </motion.div>
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/20 rounded-xl"
+        >
+          <Navigation className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+          <div>
+            <div className="text-xs text-muted-foreground">Arrivée</div>
+            <div className="text-sm font-medium">{booking.dropAddress}</div>
+          </div>
+        </motion.div>
+      </div>
+
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="grid grid-cols-2 gap-2"
+      >
+        <div className="bg-muted/30 rounded-lg p-2.5 text-center">
+          <div className="text-[10px] text-muted-foreground">Date réservée</div>
+          <div className="font-bold text-sm">
+            {new Date(booking.scheduledFor).toLocaleString('fr-FR', {
+              day: '2-digit',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </div>
+        </div>
+        <div className="bg-muted/30 rounded-lg p-2.5 text-center">
+          <div className="text-[10px] text-muted-foreground">Prix estimé</div>
+          <div className="font-bold text-sm text-primary">
+            {booking.estimatedPriceAr ? formatAr(booking.estimatedPriceAr) : '—'}
+          </div>
+        </div>
+      </motion.div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <motion.div 
+          initial={{ x: -20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="p-3 bg-muted/20 rounded-xl"
+        >
+          <div className="text-[10px] text-muted-foreground mb-1">Passager</div>
+          <div className="font-medium text-sm">{booking.passenger?.name || '—'}</div>
+          <div className="text-xs text-muted-foreground">{booking.passenger?.phone}</div>
+        </motion.div>
+        <motion.div 
+          initial={{ x: 20, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          className="p-3 bg-muted/20 rounded-xl"
+        >
+          <div className="text-[10px] text-muted-foreground mb-1">Chauffeur</div>
+          <div className="font-medium text-sm">{booking.driver?.name || '—'}</div>
+          <div className="text-xs text-muted-foreground">{booking.driver?.phone || ''}</div>
+        </motion.div>
+      </div>
+
+      {booking.offers && booking.offers.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+        >
+          <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({booking.offers.length})</div>
+          <div className="space-y-1">
+            {booking.offers.map((o: any, idx: number) => (
+              <motion.div 
+                key={o.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.7 + idx * 0.05 }}
+                className="flex justify-between items-center p-2 bg-muted/20 rounded-lg text-xs"
+              >
+                <span>Offre #{o.id}</span>
+                <span className="font-bold">{formatAr(o.priceAr)}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${o.status === 'ACCEPTED' ? 'bg-green-100 text-green-700' : o.status === 'EXPIRED' ? 'bg-gray-100 text-gray-600' : 'bg-blue-100 text-blue-700'}`}>{o.status}</span>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {booking.cancelReason && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.8 }}
+          className="p-3 bg-red-50 dark:bg-red-950/20 rounded-xl"
+        >
+          <div className="text-xs text-red-600 font-bold mb-1">Annulation</div>
+          <div className="text-sm">{booking.cancelReason} <span className="text-xs text-muted-foreground">({booking.cancelBy})</span></div>
+        </motion.div>
+      )}
+
+      <div className="text-xs text-muted-foreground">
+        Créée le {formatDate(booking.createdAt)} — MAJ {formatDate(booking.updatedAt)}
+      </div>
+    </motion.div>
+  );
+}
+
 function DocImage({ url, type }: { url: string; type: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -691,10 +927,7 @@ function LocationsManager() {
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <motion.div
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
+        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
           <Button
             onClick={() => { setShowAdd(true); setForm({ name: '', nameFr: '', lat: '', lng: '' }); }}
             className="rounded-xl"
@@ -829,44 +1062,100 @@ export default function AdminDashboard() {
   const [rideStatusFilter, setRideStatusFilter] = useState('ALL');
   const [driverStatusFilter, setDriverStatusFilter] = useState('ALL');
   const [userRoleFilter, setUserRoleFilter] = useState('ALL');
+  
+  // Pagination states
   const [ridesPage, setRidesPage] = useState(1);
+  const [ridesPageSize, setRidesPageSize] = useState(20);
   const [driversPage, setDriversPage] = useState(1);
+  const [driversPageSize, setDriversPageSize] = useState(20);
   const [usersPage, setUsersPage] = useState(1);
+  const [usersPageSize, setUsersPageSize] = useState(20);
+  const [bookingsPage, setBookingsPage] = useState(1);
+  const [bookingsPageSize, setBookingsPageSize] = useState(20);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  // Bookings states
+  const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [searchBookings, setSearchBookings] = useState('');
+  const [bookingStatusFilter, setBookingStatusFilter] = useState('ALL');
+  const [showCancelBookingDialog, setShowCancelBookingDialog] = useState(false);
+  const [cancelBookingId, setCancelBookingId] = useState<number | null>(null);
+  const [cancelBookingReason, setCancelBookingReason] = useState('');
+
+  // API Queries
+  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
     queryKey: ['/api/admin/stats'],
-    queryFn: async () => (await fetch('/api/admin/stats', { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch('/api/admin/stats', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch stats');
+      return res.json();
+    },
     refetchInterval: 10000,
   });
 
-  const { data: users = [], isLoading: usersLoading } = useQuery({
+  const { data: users = [], isLoading: usersLoading, error: usersError } = useQuery({
     queryKey: [api.admin.getUsers.path],
-    queryFn: async () => (await fetch(api.admin.getUsers.path, { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch(api.admin.getUsers.path, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch users');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
   });
 
-  const { data: drivers = [], isLoading: driversLoading } = useQuery({
+  const { data: drivers = [], isLoading: driversLoading, error: driversError } = useQuery({
     queryKey: [api.admin.getDrivers.path],
-    queryFn: async () => (await fetch(api.admin.getDrivers.path, { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch(api.admin.getDrivers.path, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch drivers');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
   });
 
-  const { data: rides = [], isLoading: ridesLoading } = useQuery({
+  const { data: rides = [], isLoading: ridesLoading, error: ridesError } = useQuery({
     queryKey: [api.admin.getRides.path],
-    queryFn: async () => (await fetch(api.admin.getRides.path, { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch(api.admin.getRides.path, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch rides');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
     refetchInterval: 5000,
+  });
+
+  const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
+    queryKey: ['/api/admin/bookings'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/bookings', { credentials: 'include' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    refetchInterval: 10000,
   });
 
   const { data: config } = useQuery({
     queryKey: [api.admin.getConfig.path],
-    queryFn: async () => (await fetch(api.admin.getConfig.path, { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch(api.admin.getConfig.path, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch config');
+      return res.json();
+    },
   });
 
   const { data: driverLocations = [] } = useQuery({
     queryKey: ['/api/admin/driver-locations'],
-    queryFn: async () => (await fetch('/api/admin/driver-locations', { credentials: 'include' })).json(),
+    queryFn: async () => {
+      const res = await fetch('/api/admin/driver-locations', { credentials: 'include' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
     refetchInterval: 10000,
   });
 
+  // Mutations
   const updateDriverStatus = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) => {
       const url = buildUrl(api.admin.updateDriverStatus.path, { id });
@@ -879,13 +1168,31 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error('Failed');
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.admin.getDrivers.path] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/stats'] });
-      toast({ title: 'Statut mis à jour' });
+      queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
+      
+      if (variables.action === 'REJECT') {
+        toast({ 
+          title: 'Conducteur rejeté',
+          description: 'L\'utilisateur a été rétrogradé en passager.',
+          variant: 'destructive'
+        });
+      } else if (variables.action === 'APPROVE') {
+        toast({ title: 'Conducteur approuvé' });
+      } else if (variables.action === 'SUSPEND') {
+        toast({ title: 'Conducteur suspendu' });
+      }
+    },
+    onError: (error) => {
+      toast({ 
+        title: 'Erreur', 
+        description: 'Impossible de mettre à jour le statut',
+        variant: 'destructive'
+      });
     },
   });
-  
 
   const blockUser = useMutation({
     mutationFn: async ({ id, blocked }: { id: number; blocked: boolean }) => {
@@ -901,6 +1208,9 @@ export default function AdminDashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
       toast({ title: 'Utilisateur mis à jour' });
+    },
+    onError: () => {
+      toast({ title: 'Erreur', variant: 'destructive' });
     },
   });
 
@@ -922,6 +1232,31 @@ export default function AdminDashboard() {
       setCancelReason('');
       toast({ title: 'Course annulée' });
     },
+    onError: () => {
+      toast({ title: 'Erreur', variant: 'destructive' });
+    },
+  });
+
+  const adminCancelBooking = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
+      const res = await fetch(`/api/admin/bookings/${id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+        credentials: 'include'
+      });
+      if (!res.ok) throw new Error('Failed');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/bookings'] });
+      setShowCancelBookingDialog(false);
+      setCancelBookingReason('');
+      toast({ title: 'Réservation annulée' });
+    },
+    onError: () => {
+      toast({ title: 'Erreur', variant: 'destructive' });
+    },
   });
 
   const updateConfig = useMutation({
@@ -939,16 +1274,24 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: [api.admin.getConfig.path] });
       toast({ title: 'Configuration mise à jour' });
     },
+    onError: () => {
+      toast({ title: 'Erreur', variant: 'destructive' });
+    },
   });
 
+  // Filtering data
   const filteredRides = useMemo(() => {
-    let result = rides;
-    if (rideStatusFilter !== 'ALL') result = result.filter((r: any) => r.status === rideStatusFilter);
+    let result = Array.isArray(rides) ? [...rides] : [];
+    if (rideStatusFilter !== 'ALL') {
+      result = result.filter((r: any) => r.status === rideStatusFilter);
+    }
     if (searchRides) {
       const q = searchRides.toLowerCase();
       result = result.filter((r: any) =>
         r.passenger?.name?.toLowerCase().includes(q) ||
         r.passenger?.phone?.includes(q) ||
+        r.driver?.name?.toLowerCase().includes(q) ||
+        r.driver?.phone?.includes(q) ||
         r.pickupAddress?.toLowerCase().includes(q) ||
         r.dropAddress?.toLowerCase().includes(q) ||
         String(r.id).includes(q)
@@ -958,8 +1301,10 @@ export default function AdminDashboard() {
   }, [rides, rideStatusFilter, searchRides]);
 
   const filteredDrivers = useMemo(() => {
-    let result = drivers;
-    if (driverStatusFilter !== 'ALL') result = result.filter((d: any) => d.profile?.status === driverStatusFilter);
+    let result = Array.isArray(drivers) ? [...drivers] : [];
+    if (driverStatusFilter !== 'ALL') {
+      result = result.filter((d: any) => d.profile?.status === driverStatusFilter);
+    }
     if (searchDrivers) {
       const q = searchDrivers.toLowerCase();
       result = result.filter((d: any) =>
@@ -972,8 +1317,10 @@ export default function AdminDashboard() {
   }, [drivers, driverStatusFilter, searchDrivers]);
 
   const filteredUsers = useMemo(() => {
-    let result = users;
-    if (userRoleFilter !== 'ALL') result = result.filter((u: any) => u.role === userRoleFilter);
+    let result = Array.isArray(users) ? [...users] : [];
+    if (userRoleFilter !== 'ALL') {
+      result = result.filter((u: any) => u.role === userRoleFilter);
+    }
     if (searchUsers) {
       const q = searchUsers.toLowerCase();
       result = result.filter((u: any) =>
@@ -984,21 +1331,68 @@ export default function AdminDashboard() {
     return result;
   }, [users, userRoleFilter, searchUsers]);
 
-  const ridePages = Math.max(1, Math.ceil(filteredRides.length / PAGE_SIZE));
-  const driverPages = Math.max(1, Math.ceil(filteredDrivers.length / PAGE_SIZE));
-  const userPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const filteredBookings = useMemo(() => {
+    let result = Array.isArray(bookings) ? [...bookings] : [];
+    if (bookingStatusFilter !== 'ALL') {
+      result = result.filter((b: any) => b.status === bookingStatusFilter);
+    }
+    if (searchBookings) {
+      const q = searchBookings.toLowerCase();
+      result = result.filter((b: any) =>
+        b.passenger?.name?.toLowerCase().includes(q) ||
+        b.passenger?.phone?.includes(q) ||
+        b.pickupAddress?.toLowerCase().includes(q) ||
+        b.dropAddress?.toLowerCase().includes(q) ||
+        String(b.id).includes(q)
+      );
+    }
+    return result;
+  }, [bookings, bookingStatusFilter, searchBookings]);
 
-  const pagedRides = filteredRides.slice((ridesPage - 1) * PAGE_SIZE, ridesPage * PAGE_SIZE);
-  const pagedDrivers = filteredDrivers.slice((driversPage - 1) * PAGE_SIZE, driversPage * PAGE_SIZE);
-  const pagedUsers = filteredUsers.slice((usersPage - 1) * PAGE_SIZE, usersPage * PAGE_SIZE);
+  // Calculate total pages
+  const rideTotalPages = Math.max(1, Math.ceil(filteredRides.length / ridesPageSize));
+  const driverTotalPages = Math.max(1, Math.ceil(filteredDrivers.length / driversPageSize));
+  const userTotalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPageSize));
+  const bookingTotalPages = Math.max(1, Math.ceil(filteredBookings.length / bookingsPageSize));
 
-  useEffect(() => { setRidesPage(1); }, [rideStatusFilter, searchRides]);
-  useEffect(() => { setDriversPage(1); }, [driverStatusFilter, searchDrivers]);
-  useEffect(() => { setUsersPage(1); }, [userRoleFilter, searchUsers]);
+  // Paginate data
+  const pagedRides = filteredRides.slice((ridesPage - 1) * ridesPageSize, ridesPage * ridesPageSize);
+  const pagedDrivers = filteredDrivers.slice((driversPage - 1) * driversPageSize, driversPage * driversPageSize);
+  const pagedUsers = filteredUsers.slice((usersPage - 1) * usersPageSize, usersPage * usersPageSize);
+  const pagedBookings = filteredBookings.slice((bookingsPage - 1) * bookingsPageSize, bookingsPage * bookingsPageSize);
 
-  const activeRides = rides.filter((r: any) => ['REQUESTED', 'BIDDING', 'ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status));
+  // Reset page when filters or page size change
+  useEffect(() => { setRidesPage(1); }, [rideStatusFilter, searchRides, ridesPageSize]);
+  useEffect(() => { setDriversPage(1); }, [driverStatusFilter, searchDrivers, driversPageSize]);
+  useEffect(() => { setUsersPage(1); }, [userRoleFilter, searchUsers, usersPageSize]);
+  useEffect(() => { setBookingsPage(1); }, [bookingStatusFilter, searchBookings, bookingsPageSize]);
 
-  const isLoading = statsLoading || usersLoading || driversLoading || ridesLoading;
+  // Ensure current page doesn't exceed total pages
+  useEffect(() => {
+    if (ridesPage > rideTotalPages) setRidesPage(1);
+  }, [rideTotalPages, ridesPage]);
+  
+  useEffect(() => {
+    if (driversPage > driverTotalPages) setDriversPage(1);
+  }, [driverTotalPages, driversPage]);
+  
+  useEffect(() => {
+    if (usersPage > userTotalPages) setUsersPage(1);
+  }, [userTotalPages, usersPage]);
+  
+  useEffect(() => {
+    if (bookingsPage > bookingTotalPages) setBookingsPage(1);
+  }, [bookingTotalPages, bookingsPage]);
+
+  const activeRides = Array.isArray(rides) ? rides.filter((r: any) => 
+    ['REQUESTED', 'BIDDING', 'ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
+  ) : [];
+
+  const isLoading = statsLoading || usersLoading || driversLoading || ridesLoading || bookingsLoading;
+
+  if (statsError || usersError || driversError || ridesError) {
+    console.error('API Errors:', { statsError, usersError, driversError, ridesError });
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -1006,11 +1400,7 @@ export default function AdminDashboard() {
       
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-border/50 px-4 md:px-8 py-3">
         <div className="max-w-[1400px] mx-auto flex justify-between items-center">
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="flex items-center gap-3"
-          >
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
               <Shield className="w-5 h-5 text-primary-foreground" />
             </div>
@@ -1021,20 +1411,13 @@ export default function AdminDashboard() {
           </motion.div>
           <div className="flex items-center gap-2">
             {stats?.activeRides > 0 && (
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: "spring", stiffness: 400 }}
-              >
+              <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 400 }}>
                 <Badge className="bg-green-500/10 text-green-600 border-green-200 animate-pulse" data-testid="badge-active-rides">
                   <Activity className="w-3 h-3 mr-1" /> {stats.activeRides} en cours
                 </Badge>
               </motion.div>
             )}
-            <motion.div
-              whileHover={{ rotate: 90 }}
-              transition={{ duration: 0.2 }}
-            >
+            <motion.div whileHover={{ rotate: 90 }} transition={{ duration: 0.2 }}>
               <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
                 <LogOut className="w-4 h-4" />
               </Button>
@@ -1045,11 +1428,7 @@ export default function AdminDashboard() {
 
       <div className="max-w-[1400px] mx-auto p-4 md:p-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
             <TabsList className="bg-white dark:bg-zinc-900 border border-border/50 rounded-xl p-1 w-full md:w-auto flex flex-wrap gap-0" data-testid="admin-tabs">
               <TabsTrigger value="overview" className="rounded-lg text-xs md:text-sm" data-testid="tab-overview">
                 <TrendingUp className="w-4 h-4 mr-1.5" /> Vue d'ensemble
@@ -1068,6 +1447,9 @@ export default function AdminDashboard() {
               </TabsTrigger>
               <TabsTrigger value="ads" className="rounded-lg text-xs md:text-sm" data-testid="tab-ads">
                 <Image className="w-4 h-4 mr-1.5" /> Publicités
+              </TabsTrigger>
+              <TabsTrigger value="bookings" className="rounded-lg text-xs md:text-sm" data-testid="tab-bookings">
+                <Calendar className="w-4 h-4 mr-1.5" /> Réservations
               </TabsTrigger>
               <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
                 <Settings className="w-4 h-4 mr-1.5" /> Paramètres
@@ -1091,7 +1473,6 @@ export default function AdminDashboard() {
               <MiniStat label="En ligne" value={stats?.onlineDrivers || 0} icon={<CircleDot className="w-4 h-4 text-green-500" />} delay={0.7} />
             </div>
 
-            {/* Real-time map */}
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-border/50 flex justify-between items-center">
                 <h3 className="font-bold text-sm flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> Carte en temps réel</h3>
@@ -1143,10 +1524,10 @@ export default function AdminDashboard() {
               <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-border/50 flex justify-between items-center">
                   <h3 className="font-bold text-sm flex items-center gap-2"><Car className="w-4 h-4 text-purple-500" /> Chauffeurs récents</h3>
-                  <Badge variant="outline" className="text-xs">{drivers.length} total</Badge>
+                  <Badge variant="outline" className="text-xs">{Array.isArray(drivers) ? drivers.length : 0} total</Badge>
                 </div>
                 <div className="divide-y divide-border/30 max-h-[400px] overflow-y-auto">
-                  {drivers.length === 0 ? (
+                  {!Array.isArray(drivers) || drivers.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground text-sm">Aucun chauffeur</div>
                   ) : (
                     drivers.slice(0, 10).map((d: any, idx: number) => (
@@ -1185,7 +1566,7 @@ export default function AdminDashboard() {
             </div>
           </TabsContent>
 
-          {/* ===== RIDES TAB ===== */}
+          {/* ===== RIDES TAB WITH PAGINATION ===== */}
           <TabsContent value="rides" className="space-y-4 mt-0">
             <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des courses</h2>
@@ -1208,15 +1589,25 @@ export default function AdminDashboard() {
                 </Select>
                 <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input placeholder="Rechercher course, passager, adresse..." value={searchRides} onChange={e => setSearchRides(e.target.value)} className="pl-9 rounded-xl h-9 text-xs" data-testid="input-search-rides" />
+                  <Input 
+                    placeholder="Rechercher course, passager, chauffeur, adresse..." 
+                    value={searchRides} 
+                    onChange={e => setSearchRides(e.target.value)} 
+                    className="pl-9 rounded-xl h-9 text-xs" 
+                    data-testid="input-search-rides" 
+                  />
                 </div>
               </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground mb-2">
+              {filteredRides.length} course{filteredRides.length !== 1 ? 's' : ''} trouvée{filteredRides.length !== 1 ? 's' : ''}
             </div>
 
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-muted/30 text-xs uppercase tracking-wider">
+                  <thead className="bg-muted/30 text-xs uppercase tracking-wider sticky top-0">
                     <tr>
                       <th className="p-3 font-semibold">#</th>
                       <th className="p-3 font-semibold">Passager</th>
@@ -1230,59 +1621,86 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {pagedRides.map((r: any, idx: number) => (
-                      <motion.tr 
-                        key={r.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.02 }}
-                        className="hover:bg-muted/20 transition-colors" 
-                        data-testid={`ride-row-${r.id}`}
-                      >
-                        <td className="p-3 font-mono text-xs font-bold">{r.id}</td>
-                        <td className="p-3">
-                          <div className="font-medium text-sm">{r.passenger?.name || '—'}</div>
-                          <div className="text-xs text-muted-foreground">{r.passenger?.phone}</div>
-                        </td>
-                        <td className="p-3">
-                          <div className="font-medium text-sm">{r.driver?.name || '—'}</div>
-                          <div className="text-xs text-muted-foreground">{r.driver?.phone || ''}</div>
-                        </td>
-                        <td className="p-3 hidden md:table-cell max-w-[200px]">
-                          <div className="text-xs truncate flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500 shrink-0" /> {r.pickupAddress}</div>
-                          <div className="text-xs truncate flex items-center gap-1 text-muted-foreground"><Navigation className="w-3 h-3 text-red-400 shrink-0" /> {r.dropAddress}</div>
-                        </td>
-                        <td className="p-3">
-                          <span className={`text-[10px] px-2 py-1 rounded-full font-medium whitespace-nowrap ${statusColors[r.status] || ''}`}>{r.status.replace(/_/g, ' ')}</span>
-                        </td>
-                        <td className="p-3 hidden md:table-cell font-bold text-sm">{r.selectedPriceAr ? formatAr(r.selectedPriceAr) : '—'}</td>
-                        <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">
-                          {r.distanceKm ? `${parseFloat(r.distanceKm).toFixed(1)} km` : '—'}
-                        </td>
-                        <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">{formatDate(r.createdAt)}</td>
-                        <td className="p-3 text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setSelectedRide(r)} data-testid={`button-view-ride-${r.id}`}>
-                              <Eye className="w-3.5 h-3.5" />
-                            </Button>
-                            {!['COMPLETED', 'CANCELED'].includes(r.status) && (
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => { setCancelRideId(r.id); setShowCancelDialog(true); }} data-testid={`button-cancel-ride-${r.id}`}>
-                                <XCircle className="w-3.5 h-3.5" />
+                    {ridesLoading ? (
+                      <tr><td colSpan={9} className="p-8 text-center"><LoadingSpinner /></td></tr>
+                    ) : pagedRides.length === 0 ? (
+                      <tr><td colSpan={9} className="p-8 text-center text-muted-foreground text-sm">Aucune course trouvée</td></tr>
+                    ) : (
+                      pagedRides.map((r: any) => (
+                        <motion.tr 
+                          key={r.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="hover:bg-muted/20 transition-colors" 
+                          data-testid={`ride-row-${r.id}`}
+                        >
+                          <td className="p-3 font-mono text-xs font-bold">{r.id}</td>
+                          <td className="p-3">
+                            <div className="font-medium text-sm">{r.passenger?.name || '—'}</div>
+                            <div className="text-xs text-muted-foreground">{r.passenger?.phone}</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-medium text-sm">{r.driver?.name || '—'}</div>
+                            <div className="text-xs text-muted-foreground">{r.driver?.phone || ''}</div>
+                          </td>
+                          <td className="p-3 hidden md:table-cell max-w-[200px]">
+                            <div className="text-xs truncate flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-green-500 shrink-0" /> 
+                              <span className="truncate">{r.pickupAddress}</span>
+                            </div>
+                            <div className="text-xs truncate flex items-center gap-1 text-muted-foreground">
+                              <Navigation className="w-3 h-3 text-red-400 shrink-0" /> 
+                              <span className="truncate">{r.dropAddress}</span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span className={`text-[10px] px-2 py-1 rounded-full font-medium whitespace-nowrap ${statusColors[r.status] || ''}`}>
+                              {r.status.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="p-3 hidden md:table-cell font-bold text-sm">
+                            {r.selectedPriceAr ? formatAr(r.selectedPriceAr) : '—'}
+                          </td>
+                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">
+                            {r.distanceKm ? `${parseFloat(r.distanceKm).toFixed(1)} km` : '—'}
+                          </td>
+                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">
+                            {formatDate(r.createdAt)}
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={() => setSelectedRide(r)}>
+                                <Eye className="w-3.5 h-3.5" />
                               </Button>
-                            )}
-                          </div>
-                        </td>
-                      </motion.tr>
-                    ))}
+                              {!['COMPLETED', 'CANCELED'].includes(r.status) && (
+                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => { setCancelRideId(r.id); setShowCancelDialog(true); }}>
+                                  <XCircle className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </motion.tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
-                {filteredRides.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Aucune course trouvée</div>}
               </div>
-              <Pagination current={ridesPage} total={ridePages} onChange={setRidesPage} count={filteredRides.length} />
+              
+              <TablePagination 
+                currentPage={ridesPage} 
+                totalPages={rideTotalPages} 
+                onPageChange={setRidesPage} 
+                totalItems={filteredRides.length}
+                pageSize={ridesPageSize}
+                onPageSizeChange={(size) => {
+                  setRidesPageSize(size);
+                  setRidesPage(1);
+                }}
+              />
             </Card>
           </TabsContent>
 
-          {/* ===== DRIVERS TAB ===== */}
+          {/* ===== DRIVERS TAB WITH PAGINATION ===== */}
           <TabsContent value="drivers" className="space-y-4 mt-0">
             <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des chauffeurs</h2>
@@ -1301,108 +1719,139 @@ export default function AdminDashboard() {
                 </Select>
                 <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input placeholder="Rechercher chauffeur..." value={searchDrivers} onChange={e => setSearchDrivers(e.target.value)} className="pl-9 rounded-xl h-9 text-xs" data-testid="input-search-drivers" />
+                  <Input 
+                    placeholder="Rechercher chauffeur..." 
+                    value={searchDrivers} 
+                    onChange={e => setSearchDrivers(e.target.value)} 
+                    className="pl-9 rounded-xl h-9 text-xs" 
+                    data-testid="input-search-drivers" 
+                  />
                 </div>
               </div>
             </div>
 
+            <div className="text-xs text-muted-foreground mb-2">
+              {filteredDrivers.length} chauffeur{filteredDrivers.length !== 1 ? 's' : ''} trouvé{filteredDrivers.length !== 1 ? 's' : ''}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pagedDrivers.map((d: any, idx: number) => (
-                <motion.div
-                  key={d.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: idx * 0.05 }}
-                  whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                >
-                  <Card className="rounded-2xl border-0 shadow-sm overflow-hidden hover:shadow-md transition-all" data-testid={`card-driver-${d.id}`}>
-                    <div className="p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-3">
-                          <motion.div 
-                            whileHover={{ scale: 1.05 }}
-                            className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center"
-                          >
-                            <Users className="w-6 h-6 text-muted-foreground" />
-                          </motion.div>
-                          <div>
-                            <h4 className="font-bold text-sm">{d.name}</h4>
-                            <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {d.phone}</p>
+              {driversLoading ? (
+                <div className="col-span-full p-8 text-center"><LoadingSpinner /></div>
+              ) : filteredDrivers.length === 0 ? (
+                <div className="col-span-full p-8 text-center text-muted-foreground text-sm">
+                  <Car className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>Aucun chauffeur trouvé</p>
+                </div>
+              ) : (
+                pagedDrivers.map((d: any) => (
+                  <motion.div
+                    key={d.id}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    whileHover={{ y: -4 }}
+                  >
+                    <Card className="rounded-2xl border-0 shadow-sm overflow-hidden hover:shadow-md transition-all" data-testid={`card-driver-${d.id}`}>
+                      <div className="p-4">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <motion.div whileHover={{ scale: 1.05 }} className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center">
+                              <Users className="w-6 h-6 text-muted-foreground" />
+                            </motion.div>
+                            <div>
+                              <h4 className="font-bold text-sm">{d.name || 'Sans nom'}</h4>
+                              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Phone className="w-3 h-3" /> {d.phone || '—'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${driverStatusColors[d.profile?.status] || 'bg-gray-100 text-gray-800'}`}>
+                              {d.profile?.status || 'PENDING'}
+                            </span>
+                            {d.profile?.online && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium flex items-center gap-1">
+                                <CircleDot className="w-2 h-2" /> En ligne
+                              </span>
+                            )}
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${driverStatusColors[d.profile?.status] || ''}`}>{d.profile?.status}</span>
-                          {d.profile?.online && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium flex items-center gap-1"><CircleDot className="w-2 h-2" /> En ligne</span>}
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className="bg-muted/30 rounded-lg p-2 text-center">
-                          <div className="text-xs text-muted-foreground">Véhicule</div>
-                          <div className="font-bold text-xs flex items-center justify-center gap-1">
-                            {d.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-3 h-3" /> : <Car className="w-3 h-3" />}
-                            {d.profile?.vehicleType}
+                        <div className="grid grid-cols-3 gap-2 mb-3">
+                          <div className="bg-muted/30 rounded-lg p-2 text-center">
+                            <div className="text-xs text-muted-foreground">Véhicule</div>
+                            <div className="font-bold text-xs flex items-center justify-center gap-1">
+                              {d.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-3 h-3" /> : <Car className="w-3 h-3" />}
+                              {d.profile?.vehicleType || '—'}
+                            </div>
+                          </div>
+                          <div className="bg-muted/30 rounded-lg p-2 text-center">
+                            <div className="text-xs text-muted-foreground">Note</div>
+                            <div className="font-bold text-xs flex items-center justify-center gap-1">
+                              <Star className="w-3 h-3 text-amber-400" /> {d.profile?.ratingAvg || '0.00'}
+                            </div>
+                          </div>
+                          <div className="bg-muted/30 rounded-lg p-2 text-center">
+                            <div className="text-xs text-muted-foreground">Courses</div>
+                            <div className="font-bold text-xs">{d.completedRides || 0}</div>
                           </div>
                         </div>
-                        <div className="bg-muted/30 rounded-lg p-2 text-center">
-                          <div className="text-xs text-muted-foreground">Note</div>
-                          <div className="font-bold text-xs flex items-center justify-center gap-1">
-                            <Star className="w-3 h-3 text-amber-400" /> {d.profile?.ratingAvg || '0.00'}
-                          </div>
-                        </div>
-                        <div className="bg-muted/30 rounded-lg p-2 text-center">
-                          <div className="text-xs text-muted-foreground">Courses</div>
-                          <div className="font-bold text-xs">{d.completedRides || 0}</div>
-                        </div>
-                      </div>
 
-                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
-                        <span>Gains: <span className="font-bold text-foreground">{formatAr(d.totalEarnings || 0)}</span></span>
-                        <span>{d.profile?.ratingCount || 0} avis</span>
-                      </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
+                          <span>Gains: <span className="font-bold text-foreground">{formatAr(d.totalEarnings || 0)}</span></span>
+                          <span>{d.profile?.ratingCount || 0} avis</span>
+                        </div>
 
-                      <div className="flex gap-2">
-                        {d.profile?.status === 'PENDING' && (
-                          <>
-                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-${d.id}`}>
+                        <div className="flex gap-2">
+                          {d.profile?.status === 'PENDING' && (
+                            <>
+                              <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
+                                <CheckCircle className="w-3 h-3 mr-1" /> Approuver
+                              </Button>
+                              <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })}>
+                                <XCircle className="w-3 h-3 mr-1" /> Rejeter
+                              </Button>
+                            </>
+                          )}
+                          {d.profile?.status === 'APPROVED' && (
+                            <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })}>
+                              <Ban className="w-3 h-3 mr-1" /> Suspendre
+                            </Button>
+                          )}
+                          {d.profile?.status === 'SUSPENDED' && (
+                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
+                              <CheckCircle className="w-3 h-3 mr-1" /> Réactiver
+                            </Button>
+                          )}
+                          {d.profile?.status === 'REJECTED' && (
+                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
                               <CheckCircle className="w-3 h-3 mr-1" /> Approuver
                             </Button>
-                            <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })} data-testid={`button-reject-${d.id}`}>
-                              <XCircle className="w-3 h-3 mr-1" /> Rejeter
-                            </Button>
-                          </>
-                        )}
-                        {d.profile?.status === 'APPROVED' && (
-                          <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })} data-testid={`button-suspend-${d.id}`}>
-                            <Ban className="w-3 h-3 mr-1" /> Suspendre
+                          )}
+                          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)}>
+                            <Eye className="w-3 h-3" />
                           </Button>
-                        )}
-                        {d.profile?.status === 'SUSPENDED' && (
-                          <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-reactivate-${d.id}`}>
-                            <CheckCircle className="w-3 h-3 mr-1" /> Réactiver
-                          </Button>
-                        )}
-                        {d.profile?.status === 'REJECTED' && (
-                          <Button size="sm" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })} data-testid={`button-approve-rejected-${d.id}`}>
-                            <CheckCircle className="w-3 h-3 mr-1" /> Approuver
-                          </Button>
-                        )}
-                        <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)} data-testid={`button-details-driver-${d.id}`}>
-                          <Eye className="w-3 h-3" />
-                        </Button>
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-                </motion.div>
-              ))}
-              {filteredDrivers.length === 0 && (
-                <div className="col-span-full p-8 text-center text-muted-foreground text-sm">Aucun chauffeur trouvé</div>
+                    </Card>
+                  </motion.div>
+                ))
               )}
             </div>
-            <Pagination current={driversPage} total={driverPages} onChange={setDriversPage} count={filteredDrivers.length} />
+            
+            <TablePagination 
+              currentPage={driversPage} 
+              totalPages={driverTotalPages} 
+              onPageChange={setDriversPage} 
+              totalItems={filteredDrivers.length}
+              pageSize={driversPageSize}
+              onPageSizeChange={(size) => {
+                setDriversPageSize(size);
+                setDriversPage(1);
+              }}
+            />
           </TabsContent>
 
-          {/* ===== USERS TAB ===== */}
+          {/* ===== USERS TAB WITH PAGINATION ===== */}
           <TabsContent value="users" className="space-y-4 mt-0">
             <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des utilisateurs</h2>
@@ -1425,6 +1874,10 @@ export default function AdminDashboard() {
               </div>
             </div>
 
+            <div className="text-xs text-muted-foreground mb-2">
+              {filteredUsers.length} utilisateur{filteredUsers.length !== 1 ? 's' : ''} trouvé{filteredUsers.length !== 1 ? 's' : ''}
+            </div>
+
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -1441,59 +1894,68 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
-                    {pagedUsers.map((u: any, idx: number) => (
-                      <motion.tr 
-                        key={u.id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.02 }}
-                        className="hover:bg-muted/20 transition-colors" 
-                        data-testid={`user-row-${u.id}`}
-                      >
-                        <td className="p-3 font-mono text-xs font-bold">{u.id}</td>
-                        <td className="p-3 font-medium">{u.name}</td>
-                        <td className="p-3 text-muted-foreground">{u.phone}</td>
-                        <td className="p-3">
-                          <Badge variant="outline" className="text-[10px]">
-                            {u.role === 'ADMIN' ? <Shield className="w-2.5 h-2.5 mr-1" /> : u.role === 'DRIVER' ? <Car className="w-2.5 h-2.5 mr-1" /> : <Users className="w-2.5 h-2.5 mr-1" />}
-                            {u.role}
-                          </Badge>
-                        </td>
-                        <td className="p-3 hidden md:table-cell text-xs">{u.language === 'mg' ? 'Malagasy' : 'Français'}</td>
-                        <td className="p-3 hidden md:table-cell text-xs text-muted-foreground">{formatDate(u.createdAt)}</td>
-                        <td className="p-3">
-                          {u.isBlocked ? (
-                            <Badge variant="destructive" className="text-[10px]"><Ban className="w-2.5 h-2.5 mr-1" /> Bloqué</Badge>
-                          ) : (
-                            <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"><UserCheck className="w-2.5 h-2.5 mr-1" /> Actif</Badge>
-                          )}
-                        </td>
-                        <td className="p-3 text-right">
-                          <div className="flex justify-end gap-1">
-                            {u.role !== 'ADMIN' && (
-                              <motion.div
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.9 }}
-                              >
-                                <Button
-                                  size="icon" variant="ghost"
-                                  className={`h-7 w-7 ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`}
-                                  onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}
-                                  data-testid={`button-toggle-block-${u.id}`}
-                                >
-                                  {u.isBlocked ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
-                                </Button>
-                              </motion.div>
+                    {pagedUsers.length === 0 ? (
+                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground text-sm">Aucun utilisateur trouvé</td></tr>
+                    ) : (
+                      pagedUsers.map((u: any) => (
+                        <motion.tr 
+                          key={u.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          className="hover:bg-muted/20 transition-colors" 
+                          data-testid={`user-row-${u.id}`}
+                        >
+                          <td className="p-3 font-mono text-xs font-bold">{u.id}</td>
+                          <td className="p-3 font-medium">{u.name}</td>
+                          <td className="p-3 text-muted-foreground">{u.phone}</td>
+                          <td className="p-3">
+                            <Badge variant="outline" className="text-[10px]">
+                              {u.role === 'ADMIN' ? <Shield className="w-2.5 h-2.5 mr-1" /> : u.role === 'DRIVER' ? <Car className="w-2.5 h-2.5 mr-1" /> : <Users className="w-2.5 h-2.5 mr-1" />}
+                              {u.role}
+                            </Badge>
+                          </td>
+                          <td className="p-3 hidden md:table-cell text-xs">{u.language === 'mg' ? 'Malagasy' : 'Français'}</td>
+                          <td className="p-3 hidden md:table-cell text-xs text-muted-foreground">{formatDate(u.createdAt)}</td>
+                          <td className="p-3">
+                            {u.isBlocked ? (
+                              <Badge variant="destructive" className="text-[10px]"><Ban className="w-2.5 h-2.5 mr-1" /> Bloqué</Badge>
+                            ) : (
+                              <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"><UserCheck className="w-2.5 h-2.5 mr-1" /> Actif</Badge>
                             )}
-                          </div>
-                        </td>
-                      </motion.tr>
-                    ))}
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex justify-end gap-1">
+                              {u.role !== 'ADMIN' && (
+                                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                                  <Button
+                                    size="icon" variant="ghost"
+                                    className={`h-7 w-7 rounded-lg ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`}
+                                    onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}
+                                  >
+                                    {u.isBlocked ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
+                                  </Button>
+                                </motion.div>
+                              )}
+                            </div>
+                          </td>
+                        </motion.tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
-                {filteredUsers.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Aucun utilisateur trouvé</div>}
               </div>
-              <Pagination current={usersPage} total={userPages} onChange={setUsersPage} count={filteredUsers.length} />
+              
+              <TablePagination 
+                currentPage={usersPage} 
+                totalPages={userTotalPages} 
+                onPageChange={setUsersPage} 
+                totalItems={filteredUsers.length}
+                pageSize={usersPageSize}
+                onPageSizeChange={(size) => {
+                  setUsersPageSize(size);
+                  setUsersPage(1);
+                }}
+              />
             </Card>
           </TabsContent>
 
@@ -1505,15 +1967,158 @@ export default function AdminDashboard() {
             <LocationsManager />
           </TabsContent>
 
+          {/* ===== ADS TAB ===== */}
+          <TabsContent value="ads" className="space-y-4 mt-0">
+            <AdminAds />
+          </TabsContent>
+
+          {/* ===== BOOKINGS TAB WITH PAGINATION ===== */}
+          <TabsContent value="bookings" className="space-y-4 mt-0">
+            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+              <h2 className="text-xl font-bold font-display">Gestion des réservations</h2>
+              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                <Select value={bookingStatusFilter} onValueChange={setBookingStatusFilter}>
+                  <SelectTrigger className="w-full sm:w-44 rounded-xl h-9 text-xs" data-testid="select-booking-status">
+                    <SelectValue placeholder="Filtrer par statut" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Tous les statuts</SelectItem>
+                    <SelectItem value="PENDING">En attente</SelectItem>
+                    <SelectItem value="CONFIRMED">Confirmée</SelectItem>
+                    <SelectItem value="ASSIGNED">Assignée</SelectItem>
+                    <SelectItem value="COMPLETED">Terminée</SelectItem>
+                    <SelectItem value="CANCELED">Annulée</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input 
+                    placeholder="Rechercher réservation, passager, adresse..." 
+                    value={searchBookings} 
+                    onChange={e => setSearchBookings(e.target.value)} 
+                    className="pl-9 rounded-xl h-9 text-xs" 
+                    data-testid="input-search-bookings" 
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground mb-2">
+              {filteredBookings.length} réservation{filteredBookings.length !== 1 ? 's' : ''} trouvée{filteredBookings.length !== 1 ? 's' : ''}
+            </div>
+
+            <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/30 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="p-3 font-semibold">#</th>
+                      <th className="p-3 font-semibold">Passager</th>
+                      <th className="p-3 font-semibold">Chauffeur</th>
+                      <th className="p-3 font-semibold hidden md:table-cell">Trajet</th>
+                      <th className="p-3 font-semibold">Véhicule</th>
+                      <th className="p-3 font-semibold">Date réservée</th>
+                      <th className="p-3 font-semibold">Statut</th>
+                      <th className="p-3 font-semibold text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {pagedBookings.length === 0 ? (
+                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground text-sm">Aucune réservation trouvée</td></tr>
+                    ) : (
+                      pagedBookings.map((b: any) => (
+                        <motion.tr 
+                          key={b.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="hover:bg-muted/20 transition-colors cursor-pointer"
+                          onClick={() => setSelectedBooking(b)}
+                          data-testid={`booking-row-${b.id}`}
+                        >
+                          <td className="p-3 font-mono text-xs font-bold">{b.id}</td>
+                          <td className="p-3">
+                            <div className="font-medium text-sm">{b.passenger?.name || '—'}</div>
+                            <div className="text-xs text-muted-foreground">{b.passenger?.phone}</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-medium text-sm">{b.driver?.name || '—'}</div>
+                            <div className="text-xs text-muted-foreground">{b.driver?.phone || ''}</div>
+                          </td>
+                          <td className="p-3 hidden md:table-cell max-w-[200px]">
+                            <div className="text-xs truncate flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-green-500 shrink-0" /> {b.pickupAddress}
+                            </div>
+                            <div className="text-xs truncate flex items-center gap-1 text-muted-foreground">
+                              <Navigation className="w-3 h-3 text-red-400 shrink-0" /> {b.dropAddress}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <Badge variant="outline" className="text-[10px]">
+                              {b.vehicleType === 'TAXI' ? <Car className="w-2.5 h-2.5 mr-1" /> : 
+                               b.vehicleType === 'BAJAJ' ? <Bike className="w-2.5 h-2.5 mr-1" /> : 
+                               <Car className="w-2.5 h-2.5 mr-1" />}
+                              {b.vehicleType}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-xs">
+                            {new Date(b.scheduledFor).toLocaleString('fr-FR', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="p-3">
+                            <span className={`text-[10px] px-2 py-1 rounded-full font-medium whitespace-nowrap ${
+                              b.status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
+                              b.status === 'CONFIRMED' ? 'bg-blue-100 text-blue-700' :
+                              b.status === 'ASSIGNED' ? 'bg-purple-100 text-purple-700' :
+                              b.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {b.status === 'PENDING' ? 'En attente' :
+                               b.status === 'CONFIRMED' ? 'Confirmée' :
+                               b.status === 'ASSIGNED' ? 'Assignée' :
+                               b.status === 'COMPLETED' ? 'Terminée' : 'Annulée'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={(e) => { e.stopPropagation(); setSelectedBooking(b); }}>
+                                <Eye className="w-3.5 h-3.5" />
+                              </Button>
+                              {!['COMPLETED', 'CANCELED'].includes(b.status) && (
+                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setCancelBookingId(b.id); setShowCancelBookingDialog(true); }}>
+                                  <XCircle className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </motion.tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              
+              <TablePagination 
+                currentPage={bookingsPage} 
+                totalPages={bookingTotalPages} 
+                onPageChange={setBookingsPage} 
+                totalItems={filteredBookings.length}
+                pageSize={bookingsPageSize}
+                onPageSizeChange={(size) => {
+                  setBookingsPageSize(size);
+                  setBookingsPage(1);
+                }}
+              />
+            </Card>
+          </TabsContent>
+
           {/* ===== SETTINGS TAB ===== */}
           <TabsContent value="settings" className="space-y-6 mt-0">
             <h2 className="text-xl font-bold font-display">Configuration de la plateforme</h2>
             {config && <ConfigForm config={config} onSave={(data: any) => updateConfig.mutate(data)} isPending={updateConfig.isPending} />}
-          </TabsContent>
-
-          {/* ======= ADS TAB =========*/}
-          <TabsContent value="ads" className="space-y-4 mt-0">
-            <AdminAds />
           </TabsContent>
         </Tabs>
       </div>
@@ -1521,32 +2126,46 @@ export default function AdminDashboard() {
       {/* Dialogs */}
       <Dialog open={!!selectedRide} onOpenChange={() => setSelectedRide(null)}>
         <DialogContent className="max-w-lg rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="font-display">Course #{selectedRide?.id}</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">Course #{selectedRide?.id}</DialogTitle></DialogHeader>
           {selectedRide && <RideDetailView ride={selectedRide} />}
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!selectedDriver} onOpenChange={() => setSelectedDriver(null)}>
         <DialogContent className="max-w-lg rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display">Profil chauffeur</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">Profil chauffeur</DialogTitle></DialogHeader>
           {selectedDriver && <DriverDetailView driver={selectedDriver} />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedBooking} onOpenChange={() => setSelectedBooking(null)}>
+        <DialogContent className="max-w-lg rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="font-display">Réservation #{selectedBooking?.id}</DialogTitle></DialogHeader>
+          {selectedBooking && <BookingDetailView booking={selectedBooking} />}
         </DialogContent>
       </Dialog>
 
       <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
         <DialogContent className="max-w-sm rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-red-600">Annuler la course #{cancelRideId}</DialogTitle>
-          </DialogHeader>
-          <Textarea placeholder="Raison de l'annulation..." value={cancelReason} onChange={e => setCancelReason(e.target.value)} className="rounded-xl" data-testid="input-cancel-reason" />
+          <DialogHeader><DialogTitle className="text-red-600">Annuler la course #{cancelRideId}</DialogTitle></DialogHeader>
+          <Textarea placeholder="Raison de l'annulation..." value={cancelReason} onChange={e => setCancelReason(e.target.value)} className="rounded-xl" />
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCancelDialog(false)}>Retour</Button>
-            <Button variant="destructive" disabled={adminCancelRide.isPending} onClick={() => cancelRideId && adminCancelRide.mutate({ id: cancelRideId, reason: cancelReason })} data-testid="button-confirm-cancel">
+            <Button variant="destructive" disabled={adminCancelRide.isPending} onClick={() => cancelRideId && adminCancelRide.mutate({ id: cancelRideId, reason: cancelReason })}>
               {adminCancelRide.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmer l\'annulation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showCancelBookingDialog} onOpenChange={setShowCancelBookingDialog}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader><DialogTitle className="text-red-600">Annuler la réservation #{cancelBookingId}</DialogTitle></DialogHeader>
+          <Textarea placeholder="Raison de l'annulation..." value={cancelBookingReason} onChange={e => setCancelBookingReason(e.target.value)} className="rounded-xl" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCancelBookingDialog(false)}>Retour</Button>
+            <Button variant="destructive" disabled={adminCancelBooking.isPending} onClick={() => cancelBookingId && adminCancelBooking.mutate({ id: cancelBookingId, reason: cancelBookingReason })}>
+              {adminCancelBooking.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmer l\'annulation'}
             </Button>
           </DialogFooter>
         </DialogContent>

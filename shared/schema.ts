@@ -4,11 +4,15 @@ import { z } from "zod";
 import { relations } from "drizzle-orm";
 
 // Geo-restriction for Fort-Dauphin
-export const GEOCENTER = { lat: -25.0325, lng: 46.9920 };
-export const MAX_RADIUS_KM = 100;
+//export const GEOCENTER = { lat: -25.0325, lng: 46.9920 };
+//export const MAX_RADIUS_KM = 100;
+
+// Nouvelles valeurs pour Anamalamanga
+export const GEOCENTER = { lat: -18.8792, lng: 47.5079 };  // Centre d'Anamalamanga
+export const MAX_RADIUS_KM = 50;  // Rayon de 50km autour d'Anamalamanga
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // km
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = 
@@ -27,11 +31,11 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   phone: text("phone").notNull().unique(),
   name: text("name").notNull(),
-  role: text("role").notNull().default("PASSENGER"), // PASSENGER, DRIVER, ADMIN
-  language: text("language").notNull().default("mg"), // mg, fr
+  role: text("role").notNull().default("PASSENGER"),
+  language: text("language").notNull().default("mg"),
   otpAuth: text("otp_auth"),
   isBlocked: boolean("is_blocked").notNull().default(false),
-  idCardUrl: text("id_card_url"), // CIN or School ID
+  idCardUrl: text("id_card_url"),
   isApproved: boolean("is_approved").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -39,10 +43,10 @@ export const users = pgTable("users", {
 export const driverProfiles = pgTable("driver_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
-  vehicleType: text("vehicle_type").notNull(), // TAXI, BAJAJ
-  vehicleNumber: text("vehicle_number"), // License plate / Matriculation
-  licenseNumber: text("license_number"), // Driving license info
-  status: text("status").notNull().default("PENDING"), // PENDING, APPROVED, REJECTED, SUSPENDED
+  vehicleType: text("vehicle_type").notNull(),
+  vehicleNumber: text("vehicle_number"),
+  licenseNumber: text("license_number"),
+  status: text("status").notNull().default("PENDING"),
   online: boolean("online").notNull().default(false),
   zone: text("zone"),
   ratingAvg: numeric("rating_avg", { precision: 3, scale: 2 }).default("0.00"),
@@ -51,8 +55,17 @@ export const driverProfiles = pgTable("driver_profiles", {
 
 export const driverDocuments = pgTable("driver_documents", {
   id: serial("id").primaryKey(),
-  driverId: integer("driver_id").notNull().references(() => driverProfiles.id),
-  type: text("type").notNull(), // CIN, PERMIS, VEHICLE, PHOTO
+  driverId: integer("driver_id").references(() => driverProfiles.id),
+  type: text("type").notNull(),
+  url: text("url").notNull(),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
+// Nouvelle table pour les documents passager
+export const passengerDocuments = pgTable("passenger_documents", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
   url: text("url").notNull(),
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
@@ -60,8 +73,8 @@ export const driverDocuments = pgTable("driver_documents", {
 export const rides = pgTable("rides", {
   id: serial("id").primaryKey(),
   passengerId: integer("passenger_id").notNull().references(() => users.id),
-  driverId: integer("driver_id").references(() => users.id), // Actually references users.id (the driver user)
-  status: text("status").notNull().default("REQUESTED"), // REQUESTED, BIDDING, ASSIGNED, DRIVER_EN_ROUTE, DRIVER_ARRIVED, IN_PROGRESS, COMPLETED, CANCELED
+  driverId: integer("driver_id").references(() => users.id),
+  status: text("status").notNull().default("REQUESTED"),
   pickupLat: numeric("pickup_lat", { precision: 10, scale: 7 }).notNull(),
   pickupLng: numeric("pickup_lng", { precision: 10, scale: 7 }).notNull(),
   pickupAddress: text("pickup_address").notNull(),
@@ -71,12 +84,14 @@ export const rides = pgTable("rides", {
   distanceKm: numeric("distance_km", { precision: 6, scale: 2 }),
   etaMinutes: integer("eta_minutes"),
   selectedPriceAr: integer("selected_price_ar"),
-  cancelBy: text("cancel_by"), // PASSENGER, DRIVER, ADMIN
+  cancelBy: text("cancel_by"),
   cancelReason: text("cancel_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-  vehicleType: text("vehicle_type").notNull().default("TAXI"), // Requested vehicle type
+  vehicleType: text("vehicle_type").notNull().default("TAXI"),
   note: text("note"),
+  isBooking: boolean("is_booking").notNull().default(false),
+  bookingId: integer("booking_id"),
 });
 
 export const offers = pgTable("offers", {
@@ -86,7 +101,45 @@ export const offers = pgTable("offers", {
   priceAr: integer("price_ar").notNull(),
   etaMinutes: integer("eta_minutes").notNull(),
   message: text("message"),
-  status: text("status").notNull().default("SENT"), // SENT, ACCEPTED, REJECTED, EXPIRED
+  status: text("status").notNull().default("SENT"),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Nouvelle table pour les réservations
+export const bookings = pgTable("bookings", {
+  id: serial("id").primaryKey(),
+  passengerId: integer("passenger_id").notNull().references(() => users.id),
+  driverId: integer("driver_id").references(() => users.id),
+  status: text("status").notNull().default("PENDING"),
+  pickupLat: numeric("pickup_lat", { precision: 10, scale: 7 }).notNull(),
+  pickupLng: numeric("pickup_lng", { precision: 10, scale: 7 }).notNull(),
+  pickupAddress: text("pickup_address").notNull(),
+  dropLat: numeric("drop_lat", { precision: 10, scale: 7 }).notNull(),
+  dropLng: numeric("drop_lng", { precision: 10, scale: 7 }).notNull(),
+  dropAddress: text("drop_address").notNull(),
+  vehicleType: text("vehicle_type").notNull(),
+  scheduledFor: timestamp("scheduled_for").notNull(),
+  estimatedPriceAr: integer("estimated_price_ar"),
+  finalPriceAr: integer("final_price_ar"),
+  distanceKm: numeric("distance_km", { precision: 6, scale: 2 }),
+  etaMinutes: integer("eta_minutes"),
+  note: text("note"),
+  cancelBy: text("cancel_by"),
+  cancelReason: text("cancel_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Nouvelle table pour les offres de réservation
+export const bookingOffers = pgTable("booking_offers", {
+  id: serial("id").primaryKey(),
+  bookingId: integer("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
+  driverId: integer("driver_id").notNull().references(() => users.id),
+  priceAr: integer("price_ar").notNull(),
+  etaMinutes: integer("eta_minutes").notNull(),
+  message: text("message"),
+  status: text("status").notNull().default("SENT"),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -136,7 +189,6 @@ export const appConfig = pgTable("app_config", {
   commissionPercent: numeric("commission_percent", { precision: 5, scale: 2 }).notNull().default("0.0"),
 });
 
-// Table pour les publicités
 export const advertisements = pgTable("advertisements", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
@@ -145,30 +197,28 @@ export const advertisements = pgTable("advertisements", {
   descriptionFr: text("description_fr"),
   imageUrl: text("image_url").notNull(),
   linkUrl: text("link_url"),
-  type: text("type").notNull().default("BANNER"), // BANNER, FULLSCREEN, SPLASH
-  position: text("position").default("HOME_TOP"), // HOME_TOP, HOME_BOTTOM, RIDE_SCREEN, PROFILE
-  priority: integer("priority").default(0), // Plus haut = affiché en premier
+  type: text("type").notNull().default("BANNER"),
+  position: text("position").default("HOME_TOP"),
+  priority: integer("priority").default(0),
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
   isActive: boolean("is_active").default(true),
   impressionCount: integer("impression_count").default(0),
   clickCount: integer("click_count").default(0),
-  targetAudience: text("target_audience"), // ALL, PASSENGER, DRIVER
+  targetAudience: text("target_audience"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Table pour les statistiques d'affichage
 export const adStats = pgTable("ad_stats", {
   id: serial("id").primaryKey(),
   adId: integer("ad_id").references(() => advertisements.id, { onDelete: "cascade" }).notNull(),
   userId: integer("user_id").references(() => users.id),
-  action: text("action").notNull(), // IMPRESSION, CLICK
-  screen: text("screen"), // HOME, RIDE, PROFILE
+  action: text("action").notNull(),
+  screen: text("screen"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Table pour l'historique des messages de chat
 export const chatMessages = pgTable("chat_messages", {
   id: serial("id").primaryKey(),
   rideId: integer("ride_id").notNull().references(() => rides.id, { onDelete: "cascade" }),
@@ -186,6 +236,12 @@ export type AdStat = typeof adStats.$inferSelect;
 export type InsertAdStat = typeof adStats.$inferInsert;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
+export type PassengerDocument = typeof passengerDocuments.$inferSelect;
+export type InsertPassengerDocument = typeof passengerDocuments.$inferInsert;
+export type Booking = typeof bookings.$inferSelect;
+export type InsertBooking = typeof bookings.$inferInsert;
+export type BookingOffer = typeof bookingOffers.$inferSelect;
+export type InsertBookingOffer = typeof bookingOffers.$inferInsert;
 
 // Zod schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
@@ -194,10 +250,11 @@ export const insertRideSchema = createInsertSchema(rides).omit({ id: true, creat
 export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true });
 export const insertDriverLocationSchema = createInsertSchema(driverLocations).omit({ id: true, timestamp: true });
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true, createdAt: true });
+export const insertPassengerDocumentSchema = createInsertSchema(passengerDocuments).omit({ id: true, uploadedAt: true });
+export const insertBookingSchema = createInsertSchema(bookings).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertBookingOfferSchema = createInsertSchema(bookingOffers).omit({ id: true, createdAt: true });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
-
-// Explicit API Contract Types
 export type User = typeof users.$inferSelect;
 export type DriverProfile = typeof driverProfiles.$inferSelect;
 export type DriverDocument = typeof driverDocuments.$inferSelect;
@@ -208,9 +265,7 @@ export type Notification = typeof notifications.$inferSelect;
 export type AppConfig = typeof appConfig.$inferSelect;
 export type CustomPlace = typeof customPlaces.$inferSelect;
 
-// App config needs to always exist at id 1
 export type ConfigResponse = AppConfig;
-
 export type RequestOtpRequest = { phone: string };
 export type VerifyOtpRequest = { phone: string; otp: string };
 
@@ -227,24 +282,28 @@ export type CreateRideRequest = {
   etaMinutes?: number;
 };
 
-export type CancelRideRequest = { reason: string };
-export type RateRideRequest = { rating: number; comment?: string };
-
-export type UpdateOnlineStatusRequest = { online: boolean };
-
-export type CreateOfferRequest = {
-  rideId: number;
-  priceAr: number;
-  etaMinutes: number;
-  message?: string;
+export type CreateBookingRequest = {
+  pickupLat: number;
+  pickupLng: number;
+  pickupAddress: string;
+  dropLat: number;
+  dropLng: number;
+  dropAddress: string;
+  vehicleType: string;
+  scheduledFor: Date | string;
+  note?: string;
+  distanceKm?: number;
+  etaMinutes?: number;
+  estimatedPriceAr?: number;
 };
 
-export type UpdateRideStatusRequest = { status: string }; // DRIVER_ARRIVED, IN_PROGRESS, COMPLETED
-
+export type CancelRideRequest = { reason: string };
+export type RateRideRequest = { rating: number; comment?: string };
+export type UpdateOnlineStatusRequest = { online: boolean };
+export type CreateOfferRequest = { rideId: number; priceAr: number; etaMinutes: number; message?: string };
+export type UpdateRideStatusRequest = { status: string };
 export type UpdateLocationRequest = { lat: number; lng: number };
-
 export type AdminApproveDriverRequest = { action: "APPROVE" | "REJECT" | "SUSPEND", reason?: string };
-
 export type AcceptOfferRequest = { offerId: number };
 
 export const WS_EVENTS = {
@@ -255,6 +314,10 @@ export const WS_EVENTS = {
   RIDE_STATUS_CHANGED: 'ride:status_changed',
   DRIVER_LOCATION: 'driver:location',
   CHAT_MESSAGE: 'CHAT_MESSAGE',
+  BOOKING_NEW: 'booking:new',
+  BOOKING_OFFER_NEW: 'booking_offer:new',
+  BOOKING_OFFER_ACCEPTED: 'booking_offer:accepted',
+  BOOKING_STATUS_CHANGED: 'booking:status_changed',
 } as const;
 
 export interface WsMessage<T = unknown> {

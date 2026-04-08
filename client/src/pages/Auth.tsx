@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useLocation } from 'wouter';
 import { useTranslation } from '@/lib/i18n';
@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, Shield, Loader2 } from 'lucide-react';
+import { Phone, Shield, Loader2, WifiOff } from 'lucide-react';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 
 // Animation du logo
 const LogoAnimation = () => (
@@ -110,15 +111,44 @@ export default function Auth() {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
+  const [offlineCredentials, setOfflineCredentials] = useState<{phone: string, timestamp: number} | null>(null);
   
   const { requestOtp, login, isLoginPending } = useAuth();
   const [, setLocation] = useLocation();
   const { t } = useTranslation();
   const { toast } = useToast();
+  const { isConnected } = useNetworkStatus();
+
+  // Charger les identifiants sauvegardés au démarrage
+  useEffect(() => {
+    const saved = localStorage.getItem('offline_credentials');
+    if (saved) {
+      try {
+        const creds = JSON.parse(saved);
+        // Vérifier si moins de 7 jours
+        if (Date.now() - creds.timestamp < 7 * 24 * 60 * 60 * 1000) {
+          setOfflineCredentials(creds);
+        } else {
+          localStorage.removeItem('offline_credentials');
+        }
+      } catch(e) {}
+    }
+  }, []);
 
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone) return;
+    
+    // Vérifier la connexion Internet
+    if (!isConnected) {
+      toast({ 
+        variant: "destructive", 
+        title: "Pas de connexion", 
+        description: "Vérifiez votre connexion Internet pour recevoir le code." 
+      });
+      return;
+    }
+    
     try {
       await requestOtp(phone);
       setStep('otp');
@@ -134,8 +164,27 @@ export default function Auth() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otp) return;
+    
+    // Vérifier la connexion Internet
+    if (!isConnected) {
+      toast({ 
+        variant: "destructive", 
+        title: "Pas de connexion", 
+        description: "Vérifiez votre connexion Internet pour vous connecter." 
+      });
+      return;
+    }
+    
     try {
       const res = await login({ phone, otp });
+      
+      // SAUVEGARDER POUR LE MODE HORS-LIGNE
+      localStorage.setItem('offline_credentials', JSON.stringify({
+        phone: phone,
+        timestamp: Date.now()
+      }));
+      sessionStorage.removeItem('offline_mode');
+      
       // Animation de transition avant redirection
       await new Promise(resolve => setTimeout(resolve, 300));
       if (res.user.role === 'DRIVER') {
@@ -150,9 +199,31 @@ export default function Auth() {
     }
   };
 
+  const handleOfflineAccess = () => {
+    if (offlineCredentials) {
+      // Mode hors-ligne - accès limité
+      toast({
+        title: "Mode hors-ligne",
+        description: "Accès limité. Reconnectez-vous pour utiliser toutes les fonctionnalités."
+      });
+      // Stocker qu'on est en mode hors-ligne
+      sessionStorage.setItem('offline_mode', 'true');
+      // Rediriger vers l'accueil passager (mode dégradé)
+      setLocation('/passenger');
+    }
+  };
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4 relative overflow-hidden">
       <BackgroundAnimation />
+      
+      {/* Bannière hors-ligne si besoin */}
+      {isConnected === false && (
+        <div className="absolute top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-sm z-20 flex items-center justify-center gap-2">
+          <WifiOff className="w-4 h-4" />
+          <span>Pas de connexion Internet - Mode dégradé</span>
+        </div>
+      )}
       
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
@@ -210,6 +281,7 @@ export default function Auth() {
                     type="submit" 
                     className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
                     data-testid="button-send-otp"
+                    disabled={!isConnected}
                   >
                     <motion.span
                       animate={{ x: [0, 5, 0] }}
@@ -247,7 +319,7 @@ export default function Auth() {
                   whileTap={{ scale: 0.98 }}
                 >
                   <Button 
-                    disabled={isLoginPending} 
+                    disabled={isLoginPending || !isConnected} 
                     type="submit" 
                     className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
                     data-testid="button-verify-otp"
@@ -283,6 +355,27 @@ export default function Auth() {
               </motion.form>
             )}
           </AnimatePresence>
+          
+          {/* Bouton d'accès hors-ligne si des identifiants sont sauvegardés */}
+          {isConnected === false && offlineCredentials && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mt-4 pt-4 border-t"
+            >
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleOfflineAccess}
+              >
+                <WifiOff className="w-4 h-4 mr-2" />
+                📱 Accès hors-ligne
+              </Button>
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                Dernière connexion : {new Date(offlineCredentials.timestamp).toLocaleDateString()}
+              </p>
+            </motion.div>
+          )}
           
           <motion.div 
             initial={{ opacity: 0 }}

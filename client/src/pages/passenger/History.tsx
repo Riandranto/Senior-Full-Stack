@@ -10,6 +10,7 @@ import { Clock, MapPin, Navigation, ChevronLeft, ChevronRight, Search, Star, Car
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 
 const PAGE_SIZE = 10;
 
@@ -73,7 +74,7 @@ export default function HistoryPage() {
   if (isLoading) {
     return (
       <MobileLayout role="passenger">
-        <div className="p-4 pt-20 space-y-3">
+        <div className="p-4 pt-20 space-y-3 pb-20">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-28 bg-muted animate-pulse rounded-2xl" />
           ))}
@@ -84,7 +85,7 @@ export default function HistoryPage() {
 
   return (
     <MobileLayout role="passenger">
-      <div className="p-4 pt-20 space-y-4">
+      <div className="p-4 pt-20 space-y-4 pb-24">
         <h1 className="text-2xl font-bold font-display">{t('history')}</h1>
         
         <div className="relative">
@@ -108,11 +109,9 @@ export default function HistoryPage() {
           </div>
         ) : (
           <>
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[calc(100vh-220px)] overflow-y-auto pb-4">
               {paginatedRides.map((ride, idx) => {
                 const StatusIcon = statusIcons[ride.status] || Car;
-                const isCompleted = ride.status === 'COMPLETED';
-                const isCanceled = ride.status === 'CANCELED';
                 
                 return (
                   <motion.div
@@ -175,8 +174,9 @@ export default function HistoryPage() {
               })}
             </div>
             
+            {/* Pagination fixe en bas */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between pt-2">
+              <div className="fixed bottom-16 left-0 right-0 bg-background/95 backdrop-blur-xl border-t border-border/30 py-3 px-4 flex items-center justify-between z-10">
                 <Button
                   variant="outline"
                   size="sm"
@@ -215,7 +215,7 @@ export default function HistoryPage() {
             </DialogTitle>
           </DialogHeader>
           {selectedRide && (
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               <div className="flex justify-between items-center">
                 <Badge className={statusColors[selectedRide.status]}>
                   {getStatusLabel(selectedRide.status)}
