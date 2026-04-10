@@ -1,3 +1,5 @@
+// client/src/pages/driver/Home.tsx - Version corrigée
+
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
@@ -24,7 +26,8 @@ import { Input } from '@/components/ui/input';
 import { 
   MapPin, Navigation, Clock, Send, CheckCircle, Route, Phone, 
   Loader2, AlertCircle, User, Bike, Car, Wifi, WifiOff,
-  Play, XCircle, MessageCircle, Calendar, Compass
+  Play, XCircle, MessageCircle, Calendar, Compass, Truck, 
+  Navigation2, LocateFixed, Gauge, Crosshair
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
@@ -36,6 +39,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
 import { apiFetch } from '@/lib/api';
+
+// Types de véhicules modifiés
+const VEHICLE_TYPES = [
+  { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, color: 'from-blue-500 to-blue-600' },
+  { id: 'BAJAJ', label: 'Bajaj', labelMg: 'Bajaj', icon: Bike, color: 'from-green-500 to-green-600' },
+  { id: 'CAMION', label: 'Camion', labelMg: 'Kamiao', icon: Truck, color: 'from-orange-500 to-orange-600' },
+  { id: '4X4', label: '4x4 Location', labelMg: '4x4 Location', icon: Gauge, color: 'from-red-500 to-red-600' },
+];
 
 interface ActiveRide {
   id: number;
@@ -57,6 +68,7 @@ interface ActiveRide {
   pickupLng?: string | number;
   dropLat?: string | number;
   dropLng?: string | number;
+  vehicleType?: string;
   [key: string]: any;
 }
 
@@ -79,7 +91,6 @@ const extractPrice = (ride: any): number => {
 
   for (const key of possibleFields) {
     const val = ride[key];
-
     if (val !== undefined && val !== null) {
       const num = Number(val);
       if (!isNaN(num) && num > 0) {
@@ -87,23 +98,17 @@ const extractPrice = (ride: any): number => {
       }
     }
   }
-
   return 0;
 };
 
-// Fonction pour convertir les degrés en radians
-const deg2rad = (deg: number): number => {
-  return deg * (Math.PI / 180);
-};
+const deg2rad = (deg: number): number => deg * (Math.PI / 180);
 
-// Fonction pour calculer la distance entre deux points (formule Haversine)
 const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; // Rayon de la Terre en km
+  const R = 6371;
   const dLat = deg2rad(lat2 - lat1);
   const dLon = deg2rad(lon2 - lon1);
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -124,6 +129,13 @@ export default function DriverHome() {
   const { connected, subscribe, sendMessage } = useWebSocket();
   const updateRideStatus = useUpdateRideStatus(activeRide?.id || 0);
   const extendEta = useExtendEta(activeRide?.id || 0);
+
+  // États de localisation
+  const [driverPos, setDriverPos] = useState<LatLng | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [watchId, setWatchId] = useState<number | null>(null);
 
   // Chat states
   const [showChat, setShowChat] = useState(false);
@@ -151,8 +163,6 @@ export default function DriverHome() {
   const [autoEta, setAutoEta] = useState<number | null>(null);
   const [calculatingEta, setCalculatingEta] = useState(false);
   const [offerSentFor, setOfferSentFor] = useState<Set<number>>(new Set());
-  const [driverPos, setDriverPos] = useState<LatLng | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
   
   const [showRideTracking, setShowRideTracking] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
@@ -179,11 +189,167 @@ export default function DriverHome() {
   // État pour suivre si le driver est arrivé au point de départ
   const [hasArrivedAtPickup, setHasArrivedAtPickup] = useState(false);
 
-  // Définir isOnline et isPending APRÈS tous les hooks
   const isOnline = profile?.online || false;
   const isPending = profile?.status === 'PENDING';
 
-  // Récupérer les réservations disponibles - MAINTENANT après la définition de isOnline
+  // Fonction pour activer la localisation GPS avec haute précision
+  const startLocationTracking = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocationError(lang === 'mg' ? "Tsy misy GPS" : "GPS non disponible");
+      return false;
+    }
+
+    setIsLocating(true);
+    setLocationError(null);
+
+    // Options de géolocalisation avec haute précision
+    const options: PositionOptions = {
+      enableHighAccuracy: true,
+      timeout: 30000,
+      maximumAge: 5000
+    };
+
+    // Arrêter l'ancien tracking si existant
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+    }
+
+    // Démarrer le tracking
+    const newWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const location = { 
+          lat: pos.coords.latitude, 
+          lng: pos.coords.longitude 
+        };
+        
+        setDriverPos(location);
+        setLocationAccuracy(pos.coords.accuracy);
+        setLocationError(null);
+        setIsLocating(false);
+        
+        // Envoyer la position au serveur si en ligne
+        if (profile?.online) {
+          updateLocation.mutate(location);
+          
+          // Broadcast via WebSocket pour les courses actives
+          if (activeRide) {
+            sendMessage({
+              type: 'DRIVER_LOCATION',
+              payload: {
+                rideId: activeRide.id,
+                lat: location.lat,
+                lng: location.lng,
+                driverId: profile.userId
+              }
+            });
+          }
+        }
+        
+        console.log(`📍 Position mise à jour: ${location.lat}, ${location.lng} (précision: ${pos.coords.accuracy}m)`);
+      },
+      (error) => {
+        console.error('GPS Error:', error);
+        let message = '';
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
+            break;
+          case error.TIMEOUT:
+            message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout";
+            break;
+          default:
+            message = error.message;
+        }
+        setLocationError(message);
+        setIsLocating(false);
+        
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Olana GPS" : "Problème GPS",
+          description: message,
+        });
+      },
+      options
+    );
+
+    setWatchId(newWatchId);
+    return true;
+  }, [profile?.online, activeRide, updateLocation, sendMessage, toast, lang]);
+
+  // Fonction pour obtenir une position unique (une seule fois)
+  const getSingleLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "GPS tsy misy" : "GPS non disponible",
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const location = { 
+          lat: pos.coords.latitude, 
+          lng: pos.coords.longitude 
+        };
+        setDriverPos(location);
+        setLocationAccuracy(pos.coords.accuracy);
+        setLocationError(null);
+        setIsLocating(false);
+        
+        toast({
+          title: lang === 'mg' ? "Toerana hita" : "Position trouvée",
+          description: lang === 'mg' 
+            ? `Précision: ${Math.round(pos.coords.accuracy)}m`
+            : `Précision: ${Math.round(pos.coords.accuracy)}m`,
+        });
+        
+        if (profile?.online) {
+          updateLocation.mutate(location);
+        }
+      },
+      (error) => {
+        console.error('GPS Error:', error);
+        setIsLocating(false);
+        let message = '';
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
+            break;
+          case error.TIMEOUT:
+            message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout";
+            break;
+        }
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée",
+          description: message,
+        });
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  }, [profile?.online, updateLocation, toast, lang]);
+
+  // Démarrer le tracking au montage du composant
+  useEffect(() => {
+    startLocationTracking();
+    
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [startLocationTracking]);
+
+  // Récupérer les réservations disponibles
   const { data: driverBookings, refetch: refetchBookings } = useQuery({
     queryKey: ['/api/driver/bookings'],
     queryFn: async () => {
@@ -199,7 +365,6 @@ export default function DriverHome() {
   useEffect(() => {
     if (driverBookings && driverBookings.length > 0) {
       setAvailableBookings(driverBookings);
-      // Si une réservation est disponible, montrer l'icône de notification
       if (driverBookings.length > 0 && !activeRide) {
         toast({
           title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
@@ -217,20 +382,18 @@ export default function DriverHome() {
     if (!activeRide || !driverPos || !pickupCoords) return;
     
     if (activeRide.status === 'DRIVER_EN_ROUTE' && !hasArrivedAtPickup) {
-      // Calculer la distance entre le driver et le point de départ
       const distance = getDistanceFromLatLonInKm(
         driverPos.lat, driverPos.lng,
         pickupCoords.lat, pickupCoords.lng
       );
       
-      // Si le driver est à moins de 50m, considérer qu'il est arrivé
       if (distance < 0.05) {
         setHasArrivedAtPickup(true);
         toast({
           title: lang === 'mg' ? "Tonga any amin'ny toerana fiaingana!" : "Arrivé au point de départ!",
           description: lang === 'mg' 
-            ? "Azonao atao ny manomboka ny dia na manokatra Google Maps ho an'ny toerana alehana"
-            : "Vous pouvez démarrer la course ou ouvrir Google Maps pour la destination",
+            ? "Azonao atao ny manomboka ny dia"
+            : "Vous pouvez démarrer la course",
         });
       }
     }
@@ -330,16 +493,11 @@ export default function DriverHome() {
     return price ? price.toLocaleString('fr-FR') : "0";
   }, [activeRide]);
 
-  const setActiveRide = (ride: any) => {
-    queryClient.setQueryData(['/api/driver/active-ride'], ride);
-  };
-
   // Afficher la fenêtre de suivi quand une course est active
   useEffect(() => {
     if (activeRide && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(activeRide.status)) {
       setShowRideTracking(true);
       
-      // Mettre à jour les coordonnées
       if (activeRide.pickupLat && activeRide.pickupLng) {
         setPickupCoords({ 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -354,7 +512,6 @@ export default function DriverHome() {
         });
       }
 
-      // Calculer l'itinéraire
       if (activeRide.pickupLat && activeRide.pickupLng && activeRide.dropLat && activeRide.dropLng) {
         const pickup = { 
           lat: parseFloat(activeRide.pickupLat as any), 
@@ -372,7 +529,6 @@ export default function DriverHome() {
         });
       }
       
-      // Ouvrir automatiquement le chat quand la course est acceptée
       if (activeRide.status !== 'REQUESTED' && activeRide.status !== 'BIDDING') {
         setOtherUserName(activeRide.passengerName);
         setOtherUserId(activeRide.passengerId);
@@ -477,7 +633,6 @@ export default function DriverHome() {
           return;
       }
       
-      // Vérifier que le statut n'est pas déjà le même
       if (activeRide.status === nextStatus) {
         console.log(`Status already ${nextStatus}, skipping`);
         setIsUpdating(false);
@@ -486,9 +641,7 @@ export default function DriverHome() {
       
       const response = await fetch(`/api/rides/${activeRide.id}/status`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
       });
       
@@ -500,7 +653,6 @@ export default function DriverHome() {
       const updatedRide = await response.json();
       console.log('✅ Ride status updated:', updatedRide);
       
-      // Mettre à jour l'état local via le cache React Query
       queryClient.setQueryData(['/api/driver/active-ride'], updatedRide);
       await refetchActiveRide();
       
@@ -534,7 +686,6 @@ export default function DriverHome() {
   const handleCompleteRide = async () => {
     if (!activeRide || isUpdating) return;
     
-    // Ne pas terminer si déjà COMPLETED
     if (activeRide.status === 'COMPLETED') {
       console.log('Ride already completed');
       setShowCompletionConfirm(false);
@@ -547,9 +698,7 @@ export default function DriverHome() {
       
       const response = await fetch(`/api/rides/${activeRide.id}/status`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ status: 'COMPLETED' })
       });
@@ -574,7 +723,6 @@ export default function DriverHome() {
           : `${formattedPrice} Ar reçus`,
       });
       
-      // Fermer le chat après la fin de la course
       setShowChat(false);
       setChatMinimized(false);
     } catch (error) {
@@ -713,9 +861,8 @@ export default function DriverHome() {
     }
   };
 
-  // ==================== FONCTION NAVIGATION GOOGLE MAPS AMÉLIORÉE ====================
+  // Fonction de navigation Google Maps
   const openGoogleMapsNavigation = useCallback(() => {
-    // Vérifier la position du conducteur
     if (!driverPos) {
       toast({
         variant: "destructive",
@@ -730,14 +877,10 @@ export default function DriverHome() {
     let origin: string;
     let destination: string;
     let mode: string = 'driving';
-    let destinationLabel: string;
-    let viewParams: string;
 
-    // Déterminer le point A et B selon le statut de la course
     const isArrived = activeRide?.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup;
     
     if (isArrived) {
-      // Cas 2: Driver arrivé au point de départ -> Navigation vers point d'arrivée
       if (!activeRide?.dropLat || !activeRide?.dropLng) {
         toast({
           variant: "destructive",
@@ -751,11 +894,7 @@ export default function DriverHome() {
       
       origin = `${activeRide.pickupLat},${activeRide.pickupLng}`;
       destination = `${activeRide.dropLat},${activeRide.dropLng}`;
-      destinationLabel = lang === 'mg' ? 'Toerana alehana' : 'Destination';
-      // Vue 3D pour la destination
-      viewParams = `&data=!3m1!4b1!4m2!4m1!3e0!5m1!1e4!5m2!1e1!1e2!6e0!7e1`;
     } else {
-      // Cas 1: Driver en route vers le client -> Navigation vers point de départ
       if (!activeRide?.pickupLat || !activeRide?.pickupLng) {
         toast({
           variant: "destructive",
@@ -769,111 +908,20 @@ export default function DriverHome() {
       
       origin = `${driverPos.lat},${driverPos.lng}`;
       destination = `${activeRide.pickupLat},${activeRide.pickupLng}`;
-      destinationLabel = lang === 'mg' ? 'Toerana fiaingana' : 'Point de départ';
-      // Vue 3D pour le point de départ
-      viewParams = `&data=!3m1!4b1!4m2!4m1!3e0!5m1!1e4`;
     }
 
-    // Construction de l'URL Google Maps avec paramètres avancés
     const encodedOrigin = encodeURIComponent(origin);
     const encodedDestination = encodeURIComponent(destination);
-    
-    // Extraire les coordonnées pour le centre de la carte en 3D
-    const [originLat, originLng] = origin.split(',');
-    const [destLat, destLng] = destination.split(',');
-    
-    // Calculer le point milieu pour centrer la carte
-    const centerLat = (parseFloat(originLat) + parseFloat(destLat)) / 2;
-    const centerLng = (parseFloat(originLng) + parseFloat(destLng)) / 2;
-    
-    // Niveau de zoom pour la vue 3D (16-18 pour voir les bâtiments en 3D)
-    const zoomLevel = 17;
-    // Inclinaison pour la vue 3D (45 degrés pour un effet 3D)
-    const tilt = 45;
-    // Rotation de la carte
-    const bearing = 0;
-    
-    // Détecter si c'est un appareil mobile
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     
     if (isMobile) {
-      // URL pour application mobile Google Maps avec vue 3D complète
-      const intentUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodedOrigin}&destination=${encodedDestination}&travelmode=${mode}&dir_action=navigate&force=3d&zoom=${zoomLevel}`;
-      
-      toast({
-        title: lang === 'mg' ? "Fanokafana Google Maps 3D" : "Ouverture Google Maps 3D",
-        description: lang === 'mg' 
-          ? "Mandehana any amin'ny Google Maps amin'ny fomba 3D"
-          : "Lancement de Google Maps en mode 3D",
-      });
-      
-      // Essayer d'ouvrir l'app Google Maps
+      const intentUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodedOrigin}&destination=${encodedDestination}&travelmode=${mode}&dir_action=navigate`;
       window.location.href = intentUrl;
-      
-      // Fallback: si l'app n'est pas installée, rediriger vers Play Store
-      const timeout = setTimeout(() => {
-        window.location.href = 'https://play.google.com/store/apps/details?id=com.google.android.apps.maps';
-      }, 2500);
-      
-      const onBlur = () => {
-        clearTimeout(timeout);
-        window.removeEventListener('blur', onBlur);
-      };
-      window.addEventListener('blur', onBlur);
-      
-      setTimeout(() => {
-        window.removeEventListener('blur', onBlur);
-      }, 3000);
     } else {
-      // Sur desktop, URL avec vue 3D améliorée
-      // Paramètres complets pour une expérience 3D optimale
-      const webUrl = `https://www.google.com/maps/dir/${encodedOrigin}/${encodedDestination}/@${centerLat},${centerLng},${zoomLevel}z/data=!3m1!4b1!4m2!4m1!3e0!5e1!6e0!7e1!8e2!9m1!1e1!10m1!8e3!11e1`;
-      
-      // Alternative: URL avec Street View au point de destination
-      // const streetViewUrl = `https://www.google.com/maps/@${destLat},${destLng},3a,75y,90t/data=!3m8!1e1!3m6!1sAF1QipM!2e0!3e11!6shttps:%2F%2Flh5.googleusercontent.com%2Fp%2FAF1QipM%3Dw203-h100-k-no-pi0-ya0-ro0-fo100!7i8000!8i4000`;
-      
+      const webUrl = `https://www.google.com/maps/dir/${encodedOrigin}/${encodedDestination}`;
       window.open(webUrl, '_blank');
     }
   }, [driverPos, activeRide, lang, toast, hasArrivedAtPickup]);
-  // ==================== FIN FONCTION NAVIGATION ====================
-
-  // Obtenir la position du conducteur
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationError(lang === 'mg' ? "Tsy misy GPS" : "GPS non disponible");
-      return;
-    }
-
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setDriverPos(location);
-        setLocationError(null);
-        
-        if (profile?.online) {
-          updateLocation.mutate(location);
-        }
-      },
-      (error) => {
-        let message = '';
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
-            break;
-          case error.POSITION_UNAVAILABLE:
-            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
-            break;
-          case error.TIMEOUT:
-            message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout";
-            break;
-        }
-        setLocationError(message);
-      },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [profile?.online, lang, updateLocation]);
 
   // Calcul de l'ETA
   useEffect(() => {
@@ -1014,8 +1062,38 @@ export default function DriverHome() {
         </motion.div>
       </div>
 
-      {/* Contrôle en ligne */}
+      {/* Indicateur GPS */}
+      <div className="absolute top-20 left-24 z-10">
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className={`px-2 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 ${
+            driverPos ? 'bg-blue-500/20 text-blue-700' : 'bg-red-500/20 text-red-700'
+          }`}
+        >
+          <LocateFixed className="w-3 h-3" />
+          {driverPos 
+            ? (lang === 'mg' ? `GPS: ${locationAccuracy ? Math.round(locationAccuracy) + 'm' : 'OK'}` : `GPS: ${locationAccuracy ? Math.round(locationAccuracy) + 'm' : 'OK'}`)
+            : (lang === 'mg' ? 'Mitady GPS...' : 'Recherche GPS...')}
+          {isLocating && <Loader2 className="w-2.5 h-2.5 animate-spin ml-1" />}
+        </motion.div>
+      </div>
+
+      {/* Bouton rafraîchir GPS */}
       <div className="absolute top-20 right-4 z-10">
+        <motion.button
+          whileTap={{ scale: 0.95 }}
+          onClick={getSingleLocation}
+          className="p-2 rounded-full bg-background/90 backdrop-blur-sm shadow-lg border border-border/30"
+          disabled={isLocating}
+        >
+          <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-pulse text-primary' : 'text-muted-foreground'}`} />
+        </motion.button>
+      </div>
+
+      {/* Contrôle en ligne */}
+      <div className="absolute top-28 right-4 z-10">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -1034,7 +1112,7 @@ export default function DriverHome() {
 
       {/* Bouton pour afficher les réservations */}
       {isOnline && !activeRide && availableBookings.length > 0 && (
-        <div className="absolute top-28 right-4 z-10">
+        <div className="absolute top-36 right-4 z-10">
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -1055,7 +1133,7 @@ export default function DriverHome() {
 
       {/* Erreur GPS */}
       {locationError && (
-        <div className="absolute top-32 left-1/2 -translate-x-1/2 z-10">
+        <div className="absolute top-44 left-1/2 -translate-x-1/2 z-10">
           <Alert variant="destructive" className="rounded-full py-2">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>{locationError}</AlertDescription>
@@ -1074,7 +1152,6 @@ export default function DriverHome() {
             className="absolute bottom-0 w-full z-20 p-4"
           >
             <Card className="p-5 rounded-3xl shadow-2xl border-0 bg-background/95 backdrop-blur-xl">
-              {/* En-tête */}
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <Badge className="mb-2" variant={
@@ -1100,7 +1177,6 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* Infos passager */}
               <div className="bg-secondary/50 rounded-2xl p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -1149,7 +1225,6 @@ export default function DriverHome() {
                 </div>
               </div>
 
-              {/* 🔥 BOUTON NAVIGUER - AMÉLIORÉ */}
               <Button 
                 onClick={openGoogleMapsNavigation}
                 className={`w-full h-10 mb-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${
@@ -1165,36 +1240,8 @@ export default function DriverHome() {
                 ) : (
                   lang === 'mg' ? 'Navigue mankany amin\'ny toerana fiaingana' : 'Naviguer vers le point de départ'
                 )}
-                <span className="text-xs opacity-80 ml-1">
-                  {activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup ? '🚩 B' : '📍 A'}
-                </span>
               </Button>
 
-              {/* Indicateur de progression vers le point de départ */}
-              {(activeRide.status === 'DRIVER_EN_ROUTE' && !hasArrivedAtPickup && driverPos && pickupCoords) && (
-                <div className="mb-3 p-2 bg-blue-500/10 rounded-xl text-center">
-                  <p className="text-xs text-blue-600 flex items-center justify-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    {lang === 'mg' 
-                      ? `Mijanòna akaikin'ny toerana fiaingana...`
-                      : `Approchez-vous du point de départ...`}
-                  </p>
-                </div>
-              )}
-
-              {/* Message de confirmation d'arrivée */}
-              {(activeRide.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup) && activeRide.status !== 'IN_PROGRESS' && (
-                <div className="mb-3 p-2 bg-green-500/10 rounded-xl text-center">
-                  <p className="text-xs text-green-600 flex items-center justify-center gap-1">
-                    <CheckCircle className="w-3 h-3" />
-                    {lang === 'mg' 
-                      ? `Tonga any amin'ny toerana fiaingana! Azonao atao ny manokatra Google Maps ho an'ny toerana alehana.`
-                      : `Arrivé au point de départ! Ouvrez Google Maps pour la destination.`}
-                  </p>
-                </div>
-              )}
-
-              {/* Boutons d'action */}
               <div className="space-y-3">
                 {activeRide.status === 'ASSIGNED' && (
                   <Button 
@@ -1356,6 +1403,7 @@ export default function DriverHome() {
             ) : (
               requests.map((req: any, index: number) => {
                 const isOfferSent = offerSentFor.has(req.id);
+                const VehicleIcon = VEHICLE_TYPES.find(v => v.id === req.vehicleType)?.icon || Car;
                 
                 return (
                   <motion.div
@@ -1408,9 +1456,11 @@ export default function DriverHome() {
                           )}
                         </div>
 
-                        <Badge className="ml-2 shrink-0">
-                          {req.vehicleType === 'TAXI' ? <Car className="w-3 h-3 mr-1" /> : <Bike className="w-3 h-3 mr-1" />}
-                          {req.vehicleType}
+                        <Badge className="ml-2 shrink-0 flex items-center gap-1">
+                          <VehicleIcon className="w-3 h-3" />
+                          {req.vehicleType === 'TAXI' ? 'Taxi' : 
+                           req.vehicleType === 'BAJAJ' ? 'Bajaj' :
+                           req.vehicleType === 'CAMION' ? 'Camion' : '4x4'}
                         </Badge>
                       </div>
 
@@ -1546,38 +1596,44 @@ export default function DriverHome() {
                 <p>{lang === 'mg' ? 'Tsy misy reservation' : 'Aucune réservation'}</p>
               </div>
             ) : (
-              availableBookings.map((booking: any) => (
-                <Card
-                  key={booking.id}
-                  className="p-4 rounded-2xl cursor-pointer hover:border-primary transition-all"
-                  onClick={() => setSelectedBooking(booking)}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <Badge variant="outline" className="text-[10px]">
-                      {booking.vehicleType}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(booking.scheduledFor).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-green-500" />
-                      <span className="truncate">{booking.pickupAddress}</span>
-                    </p>
-                    <p className="text-xs flex items-center gap-1">
-                      <Navigation className="w-3 h-3 text-red-400" />
-                      <span className="truncate">{booking.dropAddress}</span>
-                    </p>
-                  </div>
-                  <div className="mt-2 pt-2 border-t flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">{booking.passenger?.name}</span>
-                    {booking.estimatedPriceAr && (
-                      <span className="font-bold text-primary">{booking.estimatedPriceAr.toLocaleString()} Ar</span>
-                    )}
-                  </div>
-                </Card>
-              ))
+              availableBookings.map((booking: any) => {
+                const VehicleIcon = VEHICLE_TYPES.find(v => v.id === booking.vehicleType)?.icon || Car;
+                return (
+                  <Card
+                    key={booking.id}
+                    className="p-4 rounded-2xl cursor-pointer hover:border-primary transition-all"
+                    onClick={() => setSelectedBooking(booking)}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <Badge variant="outline" className="text-[10px] flex items-center gap-1">
+                        <VehicleIcon className="w-2.5 h-2.5" />
+                        {booking.vehicleType === 'TAXI' ? 'Taxi' : 
+                         booking.vehicleType === 'BAJAJ' ? 'Bajaj' :
+                         booking.vehicleType === 'CAMION' ? 'Camion' : '4x4'}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(booking.scheduledFor).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-green-500" />
+                        <span className="truncate">{booking.pickupAddress}</span>
+                      </p>
+                      <p className="text-xs flex items-center gap-1">
+                        <Navigation className="w-3 h-3 text-red-400" />
+                        <span className="truncate">{booking.dropAddress}</span>
+                      </p>
+                    </div>
+                    <div className="mt-2 pt-2 border-t flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">{booking.passenger?.name}</span>
+                      {booking.estimatedPriceAr && (
+                        <span className="font-bold text-primary">{booking.estimatedPriceAr.toLocaleString()} Ar</span>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })
             )}
           </div>
         </DialogContent>
@@ -1647,7 +1703,7 @@ export default function DriverHome() {
         </DialogContent>
       </Dialog>
 
-      {/* Chat Box avec minimisation */}
+      {/* Chat Box */}
       <AnimatePresence>
         {showChat && activeRide && (
           <ChatBox
