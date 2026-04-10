@@ -1,8 +1,23 @@
-# Démarrer PgBouncer
-docker-compose up -d
+version: '3.8'
 
-# Vérifier qu'il tourne
-docker ps
-
-# Modifier .env pour utiliser PgBouncer local
-DATABASE_URL=postgresql://neondb_owner:npg_HnpZrL8usV0W@localhost:6432/neondb?sslmode=disable
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: ride_pgbouncer
+    restart: unless-stopped
+    environment:
+      - DB_HOST=autorack.proxy.rlwy.net
+      - DB_PORT=30024
+      - DB_USER=postgres
+      - DB_PASSWORD=ReTdUybuIULvWnloZxuiJpyoLyJqaOzT
+      - DB_NAME=railway
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=50
+    ports:
+      - "6432:6432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost", "-p", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

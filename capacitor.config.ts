@@ -3,15 +3,19 @@ import { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.farady.app',
   appName: 'Farady',
-  webDir: 'dist',
+  webDir: 'dist/public',  // Changé de 'dist' à 'dist/public' pour correspondre à votre build
   server: {
     androidScheme: 'https',
     url: 'https://ride-mada-mg.up.railway.app',
+    cleartext: true,  // Ajouté pour permettre les connexions HTTP en développement
+    allowNavigation: ['*']
   },
   android: {
     allowMixedContent: true,
   },
-  // Configuration des assets
+  ios: {
+    contentInset: 'automatic',
+  },
   plugins: {
     CapacitorAssets: {
       assets: {
@@ -25,6 +29,25 @@ const config: CapacitorConfig = {
           }
         }
       }
+    },
+    Preferences: {
+      storage: 'localStorage'
+    },
+    Network: {
+      enabled: true
+    },
+    SplashScreen: {
+      launchShowDuration: 2000,
+      launchAutoHide: true,
+      backgroundColor: "#ffffff",
+      androidSplashResourceName: "splash",
+      androidScaleType: "CENTER_CROP",
+      showSpinner: true,
+      androidSpinnerStyle: "large",
+      iosSpinnerStyle: "small",
+      spinnerColor: "#0891b2",
+      splashFullScreen: true,
+      splashImmersive: true,
     }
   }
 };

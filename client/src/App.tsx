@@ -1,9 +1,14 @@
+// src/App.tsx - Version modifiée
 import { Switch, Route, Redirect } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { I18nProvider } from "./lib/i18n";
 import { useAuth } from "./hooks/use-auth";
+import { useOfflineSync } from "./hooks/use-offline-sync";
+import { capacitorStorage } from "./lib/capacitor-storage";
+import { offlineSync } from "./lib/offline-sync";
 import { useState, useEffect } from "react";
+import { Capacitor } from '@capacitor/core';
 
 // Pages
 import AuthPage from "./pages/Auth";
@@ -19,6 +24,7 @@ import BookingsPage from './pages/passenger/Bookings';
 
 // Composants publicitaires
 import { FullscreenAd } from "@/components/FullscreenAd";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 // Composant de chargement
 const LoadingSpinner = () => (
@@ -29,7 +35,11 @@ const LoadingSpinner = () => (
 
 function ProtectedRoute({ component: Component, allowedRoles }: { component: any, allowedRoles: string[] }) {
   const { user, isLoading } = useAuth();
-  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
+  const [offlineMode, setOfflineMode] = useState(false);
+
+  useEffect(() => {
+    capacitorStorage.isOfflineMode().then(setOfflineMode);
+  }, []);
 
   // Mode hors-ligne : bypass l'authentification
   if (offlineMode) {
@@ -58,7 +68,11 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 
 function Router() {
   const { user, isLoading } = useAuth();
-  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
+  const [offlineMode, setOfflineMode] = useState(false);
+
+  useEffect(() => {
+    capacitorStorage.isOfflineMode().then(setOfflineMode);
+  }, []);
 
   // En mode hors-ligne, on force le rôle passager par défaut
   if (offlineMode) {
@@ -167,11 +181,19 @@ function Router() {
 function AppContent() {
   const [showFullscreenAd, setShowFullscreenAd] = useState(false);
   const { user, isLoading } = useAuth();
-  const offlineMode = sessionStorage.getItem('offline_mode') === 'true';
+  const { isOfflineMode, isSyncing, pendingSyncCount, syncNow, saveDataForOffline } = useOfflineSync();
+  const isCapacitor = Capacitor.isNativePlatform();
+
+  // Sauvegarder les données pour offline au démarrage
+  useEffect(() => {
+    if (user && !isLoading && !isOfflineMode) {
+      saveDataForOffline();
+    }
+  }, [user, isLoading, isOfflineMode, saveDataForOffline]);
 
   // Gestion de l'affichage des publicités plein écran (désactivé en mode hors-ligne)
   useEffect(() => {
-    if (offlineMode) return;
+    if (isOfflineMode) return;
     if (!user || isLoading) return;
 
     const adShown = sessionStorage.getItem('fullscreen_ad_shown');
@@ -191,7 +213,7 @@ function AppContent() {
       
       return () => clearTimeout(timer);
     }
-  }, [user, isLoading, offlineMode]);
+  }, [user, isLoading, isOfflineMode]);
 
   const handleCloseFullscreenAd = () => {
     setShowFullscreenAd(false);
@@ -199,8 +221,12 @@ function AppContent() {
 
   return (
     <>
+      {/* Bannière offline */}
+      {isOfflineMode && <OfflineBanner onSync={syncNow} isSyncing={isSyncing} pendingCount={pendingSyncCount} />}
+      
       <Router />
-      {showFullscreenAd && !isLoading && user && !offlineMode && (
+      
+      {showFullscreenAd && !isLoading && user && !isOfflineMode && (
         <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
       )}
     </>
@@ -208,6 +234,17 @@ function AppContent() {
 }
 
 function App() {
+  // Initialiser le service worker pour PWA
+  useEffect(() => {
+    if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
+      navigator.serviceWorker.register('/sw.js').then(registration => {
+        console.log('ServiceWorker registration successful');
+      }).catch(err => {
+        console.log('ServiceWorker registration failed: ', err);
+      });
+    }
+  }, []);
+
   return (
     <I18nProvider>
       <TooltipProvider>
