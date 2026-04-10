@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { 
   MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed, 
   Route, Calendar, Clock, Menu, Home, History, User, LogOut, 
-  BookMarked, ChevronRight, Settings, Star, MessageCircle, Bell,
+  BookMarked, ChevronRight, Settings, Star, MessageCircle, Bell,Truck,Gauge,
   Shield, HelpCircle, Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -55,11 +55,10 @@ interface NominatimResult {
 
 // Types de véhicules disponibles
 const VEHICLE_TYPES = [
-  { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, description: 'Voiture standard', descriptionMg: 'Fiara mahazatra', color: 'from-blue-500 to-blue-600' },
-  { id: 'BAJAJ', label: 'Bajaj', labelMg: 'Bajaj', icon: Bike, description: 'Tuk-tuk / 3 roues', descriptionMg: 'Tuk-tuk / 3 kodiarana', color: 'from-green-500 to-green-600' },
-  { id: 'PICKUP', label: 'Pick-up', labelMg: 'Pick-up', icon: Car, description: 'Camionnette plateau', descriptionMg: 'Camionnette misy faritra', color: 'from-orange-500 to-orange-600' },
-  { id: '4X4', label: '4x4', labelMg: '4x4', icon: Car, description: 'Tout-terrain', descriptionMg: 'Fiara 4x4', color: 'from-red-500 to-red-600' },
-  { id: 'CAMIONNETTE', label: 'Camionnette', labelMg: 'Camionnette', icon: Car, description: 'Van / Fourgon', descriptionMg: 'Van / Fourgon', color: 'from-purple-500 to-purple-600' },
+  { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, color: 'from-blue-500 to-blue-600' },
+  { id: 'BAJAJ', label: 'Bajaj', labelMg: 'Bajaj', icon: Bike, color: 'from-green-500 to-green-600' },
+  { id: 'CAMION', label: 'Camion', labelMg: 'Kamiao', icon: Truck, color: 'from-orange-500 to-orange-600' },
+  { id: '4X4', label: '4x4 Location', labelMg: '4x4 Location', icon: Gauge, color: 'from-red-500 to-red-600' },
 ];
 
 const LOCAL_PLACES: { name: string; nameFr: string; lat: number; lng: number }[] = [
