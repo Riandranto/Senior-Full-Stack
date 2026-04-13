@@ -14,36 +14,49 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
-      manifest: false, // Using custom manifest
+      manifest: false,
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/ride-mada-mg\.up\.railway\.app\/api\/.*/i,
+            // CORRECTION: URL pour Render.com
+            urlPattern: /^https:\/\/senior-full-stack\.onrender\.com\/api\/.*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
               expiration: {
                 maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24 // 24 hours
+                maxAgeSeconds: 60 * 60 * 24
               },
               networkTimeoutSeconds: 10
             }
           },
           {
-            urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/i,
+            urlPattern: /^https:\/\/(.*\.)?tile\.openstreetmap\.org\/.*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'map-tiles-cache',
               expiration: {
                 maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+                maxAgeSeconds: 60 * 60 * 24 * 30
+              }
+            }
+          },
+          // Ajout pour Google Fonts
+          {
+            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-cache',
+              expiration: {
+                maxEntries: 30,
+                maxAgeSeconds: 60 * 60 * 24 * 30
               }
             }
           }
         ],
         navigateFallback: '/offline.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/ws\//]
+        navigateFallbackDenylist: [/^\/api\//, /^\/ws\//, /^\/@vite\/client/]
       }
     })
   ],
@@ -70,9 +83,32 @@ export default defineConfig({
     }
   },
   server: {
+    port: 5173,
+    strictPort: false,
+    host: true, // Permet l'accès depuis le réseau local
     fs: {
-      strict: true,
+      strict: false, // Désactiver pour le développement
+      allow: ['..']
     },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/uploads': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:5000',
+        ws: true,
+      }
+    }
   },
   base: '/',
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'framer-motion', 'lucide-react', 'leaflet', 'react-leaflet'],
+    force: true
+  }
 });

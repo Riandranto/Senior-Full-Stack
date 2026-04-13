@@ -48,6 +48,23 @@ const VEHICLE_TYPES = [
   { id: '4X4', label: '4x4 Location', labelMg: '4x4 Location', icon: Gauge, color: 'from-red-500 to-red-600' },
 ];
 
+const driverMarkers = useMemo(() => {
+  const markers: DriverMarkerInfo[] = [];
+  
+  // Ajouter la position actuelle du driver avec son type de véhicule
+  if (driverPos) {
+    markers.push({
+      lat: driverPos.lat,
+      lng: driverPos.lng,
+      name: profile?.name || 'Toeranako',
+      vehicleType: profile?.vehicleType,
+      isDriverStart: true, // Important: indique que c'est le point de départ
+    });
+  }
+  
+  return markers;
+}, [driverPos, profile]);
+
 interface ActiveRide {
   id: number;
   passengerId: number;
@@ -1037,6 +1054,7 @@ export default function DriverHome() {
           zoom={16}
           interactive={true} 
           markers={pickupMarkers}
+          driverMarkers={driverMarkers}
           pickupMarker={pickupCoords}
           dropoffMarker={dropoffCoords}
           showRoute={!!routeCoords}

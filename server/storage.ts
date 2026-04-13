@@ -311,9 +311,10 @@ export class DatabaseStorage implements IStorage {
 
   async getRideHistory(userId: number): Promise<Ride[]> {
     try {
-      return await db.select().from(rides)
-        .where(or(eq(rides.passengerId, userId), eq(rides.driverId, userId)))
+      const result = await db.select().from(rides)
+        .where(sql`${rides.passengerId} = ${userId} OR ${rides.driverId} = ${userId}`)
         .orderBy(sql`${rides.createdAt} DESC`);
+      return result;
     } catch (error) {
       console.error('Error in getRideHistory:', error);
       return [];

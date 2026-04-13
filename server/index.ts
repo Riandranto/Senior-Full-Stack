@@ -130,27 +130,38 @@ function getLocalIP(): string {
 // ========== SECURITY MIDDLEWARES ==========
 
 // 1. Helmet - Sécurise les en-têtes HTTP
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "ws:", "wss:", "http://localhost:5173", "http://localhost:5000", "https://ride-mada-mg.up.railway.app"],
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction) {
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com"],
+        imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org"],
+        connectSrc: ["'self'", "ws:", "wss:", "http://localhost:5173", "http://localhost:5000", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://*.tile.openstreetmap.org"],
+      },
     },
-  },
-}));
+  }));
+} else {
+  // DÉSACTIVER COMPLÈTEMENT CSP EN DÉVELOPPEMENT
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
+  }));
+}
 
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+  max: process.env.NODE_ENV === 'development' ? 1000 : parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'), // Plus permissif en dev
   message: 'Trop de requêtes depuis cette IP, veuillez réessayer plus tard.',
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false,
+  skipSuccessfulRequests: process.env.NODE_ENV === 'development', // Skip en dev
 });
 
 // Appliquer le rate limiting à toutes les routes API
@@ -159,7 +170,7 @@ app.use('/api', limiter);
 // Rate limiting plus strict pour les routes d'authentification
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === 'development' ? 50 : 5,
   message: 'Trop de tentatives de connexion, veuillez réessayer dans 15 minutes.',
   skipSuccessfulRequests: true,
 });
@@ -182,7 +193,7 @@ app.use(
 app.use(express.urlencoded({ extended: false, limit: process.env.MAX_FILE_SIZE || '20mb' }));
 
 // Configuration CORS renforcée
-const isProduction = process.env.NODE_ENV === 'production';
+
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
   'http://localhost:5173,http://localhost:5000,https://ride-mada-mg.up.railway.app'
 ).split(',');

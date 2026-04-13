@@ -236,11 +236,17 @@ function AppContent() {
 function App() {
   // Initialiser le service worker pour PWA
   useEffect(() => {
-    if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
-      navigator.serviceWorker.register('/sw.js').then(registration => {
-        console.log('ServiceWorker registration successful');
-      }).catch(err => {
-        console.log('ServiceWorker registration failed: ', err);
+    if ('serviceWorker' in navigator && import.meta.env.PROD) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(console.error);
+      });
+    } else if ('serviceWorker' in navigator) {
+      
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (const registration of registrations) {
+          registration.unregister();
+          console.log('Service Worker unregistered');
+        }
       });
     }
   }, []);
