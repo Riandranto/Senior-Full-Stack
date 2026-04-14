@@ -47,24 +47,6 @@ const VEHICLE_TYPES = [
   { id: 'CAMION', label: 'Camion', labelMg: 'Kamiao', icon: Truck, color: 'from-orange-500 to-orange-600' },
   { id: '4X4', label: '4x4 Location', labelMg: '4x4 Location', icon: Gauge, color: 'from-red-500 to-red-600' },
 ];
-const [driverPos, setDriverPos] = useState<LatLng | null>(null);
-
-const driverMarkers = useMemo(() => {
-  const markers: DriverMarkerInfo[] = [];
-  
-  // Ajouter la position actuelle du driver avec son type de véhicule
-  if (driverPos) {
-    markers.push({
-      lat: driverPos.lat,
-      lng: driverPos.lng,
-      name: profile?.name || 'Toeranako',
-      vehicleType: profile?.vehicleType,
-      isDriverStart: true, // Important: indique que c'est le point de départ
-    });
-  }
-  
-  return markers;
-}, [driverPos, profile]);
 
 interface ActiveRide {
   id: number;
@@ -161,6 +143,23 @@ export default function DriverHome() {
   const [otherUserName, setOtherUserName] = useState('');
   const [otherUserId, setOtherUserId] = useState(0);
   const [otherUserPhone, setOtherUserPhone] = useState('');
+
+  const driverMarkers = useMemo(() => {
+    const markers: DriverMarkerInfo[] = [];
+    
+    // Ajouter la position actuelle du driver avec son type de véhicule
+    if (driverPos) {
+      markers.push({
+        lat: driverPos.lat,
+        lng: driverPos.lng,
+        name: profile?.name || 'Toeranako',
+        vehicleType: profile?.vehicleType,
+        isDriverStart: true, // Important: indique que c'est le point de départ
+      });
+    }
+    
+    return markers;
+  }, [driverPos, profile]);
 
   // Auto-refresh des données
   const { refresh, isRefreshing } = useAutoRefresh({
