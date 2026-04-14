@@ -132,22 +132,40 @@ function getLocalIP(): string {
 // 1. Helmet - Sécurise les en-têtes HTTP
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) {
+  const cspDirectives = {
+    defaultSrc: ["'self'"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+    styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+    fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+    scriptSrcElem: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+    imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org", "blob:"],
+    connectSrc: [
+      "'self'", 
+      "ws:", "wss:", 
+      "https://fonts.googleapis.com",
+      "https://fonts.gstatic.com",
+      "https://*.tile.openstreetmap.org", 
+      "https://nominatim.openstreetmap.org"
+    ],
+    workerSrc: ["'self'", "blob:"],
+    mediaSrc: ["'self'", "blob:", "data:"],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+    frameAncestors: ["'none'"],
+  };
+  
   app.use(helmet({
     contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-        styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-        scriptSrcElem: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-        imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org", "blob:"],
-        connectSrc: ["'self'", "ws:", "wss:", "https://*.tile.openstreetmap.org", "https://nominatim.openstreetmap.org"],
-        workerSrc: ["'self'", "blob:"],
-      },
+      useDefaults: false,
+      directives: cspDirectives,
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }));
+  
 } else {
   // DÉSACTIVER COMPLÈTEMENT CSP EN DÉVELOPPEMENT
   app.use(helmet({

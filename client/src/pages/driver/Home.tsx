@@ -47,6 +47,7 @@ const VEHICLE_TYPES = [
   { id: 'CAMION', label: 'Camion', labelMg: 'Kamiao', icon: Truck, color: 'from-orange-500 to-orange-600' },
   { id: '4X4', label: '4x4 Location', labelMg: '4x4 Location', icon: Gauge, color: 'from-red-500 to-red-600' },
 ];
+const [driverPos, setDriverPos] = useState<LatLng | null>(null);
 
 const driverMarkers = useMemo(() => {
   const markers: DriverMarkerInfo[] = [];

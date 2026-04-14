@@ -236,7 +236,7 @@ function AppContent() {
 function App() {
   // Initialiser le service worker pour PWA
   useEffect(() => {
-    if ('serviceWorker' in navigator && import.meta.env.PROD) {
+    if ('serviceWorker' in navigator && import.meta.env.MODE === 'development') {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js').catch(console.error);
       });
