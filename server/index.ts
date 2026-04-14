@@ -412,7 +412,6 @@ async function startServer() {
 
     // 5. Servir les fichiers statiques en production
     if (isProduction) {
-      // Servir les fichiers statiques manuellement
       const distPublicPath = path.join(process.cwd(), 'dist', 'public');
       logger.info(`📁 Static files path: ${distPublicPath}`);
       
@@ -422,8 +421,8 @@ async function startServer() {
         // Servir les fichiers statiques
         app.use(express.static(distPublicPath));
         
-        // Fallback pour SPA - toutes les routes non-API renvoient index.html
-        app.get('*', (req, res, next) => {
+        // ✅ CORRECTION: Fallback pour SPA - utiliser app.use() au lieu de app.get('*')
+        app.use((req, res, next) => {
           // Ne pas interférer avec les routes API
           if (req.path.startsWith('/api')) {
             return next();
@@ -451,12 +450,28 @@ async function startServer() {
           path.join(__dirname, '..', 'dist', 'public'),
         ];
         
+        let found = false;
         for (const p of possiblePaths) {
           if (fs.existsSync(p)) {
             logger.info(`✅ Found static files at: ${p}`);
             app.use(express.static(p));
+            // Fallback SPA
+            app.use((req, res) => {
+              const indexPath = path.join(p, 'index.html');
+              if (fs.existsSync(indexPath)) {
+                res.sendFile(indexPath);
+              } else {
+                res.status(404).send('File not found');
+              }
+            });
+            found = true;
             break;
           }
+        }
+        
+        if (!found) {
+          logger.error('❌ No static files directory found');
+          app.get('/', (req, res) => res.send('Server is running but static files are missing'));
         }
       }
     } else {
