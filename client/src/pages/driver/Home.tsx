@@ -1,6 +1,4 @@
-// client/src/pages/driver/Home.tsx - Version corrigée
-
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React,{ useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
 import { 
