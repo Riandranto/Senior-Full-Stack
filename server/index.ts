@@ -53,7 +53,7 @@ let redisAvailable = false;
 
 // Essayer d'importer Redis, mais ignorer si erreur
 try {
-  const redisModule = await import("./lib/redis.js");
+  const redisModule = await import("./services/redis.js");
   initializeRedis = redisModule.initializeRedis || (async () => false);
   redisStore = redisModule.redisStore || null;
   logger.info('✅ Redis module loaded');
