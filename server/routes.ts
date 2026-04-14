@@ -190,6 +190,36 @@ export async function registerRoutes(
     }
   };
 
+  app.get('/api/debug/env', (req, res) => {
+    res.json({
+      nodeEnv: process.env.NODE_ENV,
+      hasSessionSecret: !!process.env.SESSION_SECRET,
+      sessionId: req.sessionID,
+      session: req.session
+    });
+  });
+
+  app.get('/api/debug/db', async (req, res) => {
+    try {
+      // Test simple de connexion
+      const result = await db.execute(sql`SELECT NOW()`);
+      const userCount = await db.select({ count: sql<number>`count(*)` }).from(users);
+      
+      res.json({
+        connected: true,
+        timestamp: result.rows[0],
+        userCount: userCount[0].count,
+        nodeEnv: process.env.NODE_ENV
+      });
+    } catch (error) {
+      console.error('DB connection error:', error);
+      res.status(500).json({ 
+        connected: false, 
+        error: String(error) 
+      });
+    }
+  });
+
   // ==================== AUTH ROUTES ====================
 
   // Remplacer la route verifyOtp existante par celle-ci :
@@ -245,51 +275,66 @@ export async function registerRoutes(
 
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
-      console.log('🔐 Backend - verifyOtp called');
-      console.log('📦 Body:', req.body);
+      console.log('🔐 verifyOtp - Session ID:', req.sessionID);
+      console.log('🔐 verifyOtp - Session exists:', !!req.session);
       
-      const input = api.auth.verifyOtp.input.parse(req.body);
+      const { phone, otp } = req.body;
       
-      if (input.otp !== "123456") {
+      if (!phone || !otp) {
+        return res.status(400).json({ message: "Phone and OTP required" });
+      }
+      
+      // Pour debug
+      console.log(`Verifying OTP for ${phone}: ${otp}`);
+      
+      // Acceptez toujours 123456 en développement
+      if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
-  
-      let user = await storage.getUserByPhone(input.phone);
+      
+      let user = await storage.getUserByPhone(phone);
       if (!user) {
+        console.log(`Creating new user for ${phone}`);
         user = await storage.createUser({ 
-          phone: input.phone, 
-          name: "User " + input.phone.slice(-4), 
+          phone: phone, 
+          name: "User " + phone.slice(-4), 
           role: "PASSENGER", 
           language: "mg" 
         });
       }
-  
+      
+      // Vérifiez que req.session existe
+      if (!req.session) {
+        console.error('❌ Session object is missing!');
+        return res.status(500).json({ message: "Session not initialized" });
+      }
+      
       req.session.userId = user.id;
       req.session.role = user.role;
       
-      await new Promise<void>((resolve, reject) => {
+      // Sauvegarde explicite de la session
+      await new Promise((resolve, reject) => {
         req.session.save((err) => {
           if (err) {
             console.error('❌ Session save error:', err);
             reject(err);
           } else {
             console.log('✅ Session saved successfully');
-            console.log('📦 Session ID:', req.session.id);
-            console.log('📦 Session user:', req.session.userId);
-            resolve();
+            resolve(null);
           }
         });
       });
-  
-      console.log('✅ User authenticated:', user.id, user.role);
+      
+      console.log(`✅ User authenticated: ${user.id} (${user.role})`);
       res.json({ user, success: true });
       
-    } catch (e) {
-      console.error('❌ Backend error:', e);
-      if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: "Données invalides" });
-      }
-      res.status(500).json({ message: "Erreur serveur" });
+    } catch (error) {
+      console.error('❌ verifyOtp error:', error);
+      // Envoyer l'erreur détaillée en développement
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
+      });
     }
   });
 
