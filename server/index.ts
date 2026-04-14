@@ -132,38 +132,22 @@ function getLocalIP(): string {
 // 1. Helmet - Sécurise les en-têtes HTTP
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) {
-  const cspDirectives = {
-    defaultSrc: ["'self'"],
-    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-    styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-    fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-    scriptSrcElem: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-    imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org", "blob:"],
-    connectSrc: [
-      "'self'", 
-      "ws:", "wss:", 
-      "https://fonts.googleapis.com",
-      "https://fonts.gstatic.com",
-      "https://*.tile.openstreetmap.org", 
-      "https://nominatim.openstreetmap.org"
-    ],
-    workerSrc: ["'self'", "blob:"],
-    mediaSrc: ["'self'", "blob:", "data:"],
-    objectSrc: ["'none'"],
-    baseUri: ["'self'"],
-    formAction: ["'self'"],
-    frameAncestors: ["'none'"],
-  };
   
   app.use(helmet({
-    contentSecurityPolicy: {
-      useDefaults: false,
-      directives: cspDirectives,
-    },
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
+    dnsPrefetchControl: false,
+    frameguard: false,
+    hidePoweredBy: false,
+    hsts: false,
+    ieNoOpen: false,
+    noSniff: false,
+    originAgentCluster: false,
+    permittedCrossDomainPolicies: false,
+    referrerPolicy: false,
+    xssFilter: false,
   }));
   
 } else {
