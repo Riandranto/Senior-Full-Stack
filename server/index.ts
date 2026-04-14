@@ -136,7 +136,7 @@ if (isProduction) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
+        styleSrc: ["'self", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com"],
         imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org"],
