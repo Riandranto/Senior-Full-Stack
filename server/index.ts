@@ -69,6 +69,9 @@ const app = express();
 let httpServer: any;
 let httpsServer: any;
 
+app.set('trust proxy', 1);
+
+const isProduction = process.env.NODE_ENV === 'production';
 const MemoryStore = createMemoryStore(session);
 
 declare module "http" {
@@ -131,7 +134,7 @@ function getLocalIP(): string {
 // ========== SECURITY MIDDLEWARES ==========
 
 // 1. Helmet - Désactivé complètement pour éviter les problèmes CSP
-const isProduction = process.env.NODE_ENV === 'production';
+//const isProduction = process.env.NODE_ENV === 'production';
 
 // DÉSACTIVER COMPLÈTEMENT HELMET - Plus de problèmes CSP
 // app.use(helmet(...)); // COMMENTÉ
@@ -142,6 +145,22 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   next();
 });
+
+app.use(session({
+  name: 'farady.sid',          // Nom personnalisé pour éviter les conflits
+  secret: process.env.SESSION_SECRET || 'farady-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  store: new MemoryStore({ checkPeriod: 86400000 }),
+  cookie: {
+    secure: isProduction,      // true en production (HTTPS)
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000,
+    sameSite: isProduction ? 'none' : 'lax', // CRUCIAL : 'none' pour cross-origin
+    domain: isProduction ? '.onrender.com' : undefined,
+    path: '/',
+  }
+}));
 
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
@@ -188,19 +207,26 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
 
 app.use(cors({
   origin: function(origin, callback) {
-    // En production, accepter l'origine du frontend
-    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
-    const isAllowed = !origin || allowedOrigins.includes(origin) || 
-                     (isProduction && origin === process.env.FRONTEND_URL);
-    
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked: ${origin}`);
-      callback(null, true); // Accepter quand même en dev
+    // Accepter toutes les origines (y compris les requêtes sans origin comme les apps mobiles)
+    // En production, on peut quand même logger l'origine pour le debug
+    if (!origin) {
+      // Requêtes sans origin (ex: apps mobiles, curl, postman)
+      return callback(null, true);
     }
+    
+    // Accepter TOUTES les origines
+    // Pour des raisons de sécurité, on peut quand même logger en production
+    if (process.env.NODE_ENV === 'production') {
+      console.log(`CORS accepting origin: ${origin}`);
+    }
+    
+    callback(null, true);
   },
-  credentials: true,
+  credentials: true,           // ESSENTIEL pour les cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'X-CSRF-Token'],
+  exposedHeaders: ['X-Total-Count', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+  maxAge: 86400,
 }));
 
 // Middleware pour forcer HTTPS en production
