@@ -9,6 +9,7 @@ import { serveStatic } from "./static.js";
 import { createServer } from "http";
 import https from "https";
 import fs from "fs";
+import path from "path";
 import os from "os";
 import cors from 'cors';
 import { initializeSession, redisAvailable as sessionRedisAvailable } from "./services/session.js";
@@ -129,45 +130,27 @@ function getLocalIP(): string {
 
 // ========== SECURITY MIDDLEWARES ==========
 
-// 1. Helmet - Sécurise les en-têtes HTTP
+// 1. Helmet - Désactivé complètement pour éviter les problèmes CSP
 const isProduction = process.env.NODE_ENV === 'production';
-if (isProduction) {
-  
-  app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: false,
-    crossOriginResourcePolicy: false,
-    dnsPrefetchControl: false,
-    frameguard: false,
-    hidePoweredBy: false,
-    hsts: false,
-    ieNoOpen: false,
-    noSniff: false,
-    originAgentCluster: false,
-    permittedCrossDomainPolicies: false,
-    referrerPolicy: false,
-    xssFilter: false,
-  }));
-  
-} else {
-  // DÉSACTIVER COMPLÈTEMENT CSP EN DÉVELOPPEMENT
-  app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: false,
-    crossOriginResourcePolicy: false,
-  }));
-}
+
+// DÉSACTIVER COMPLÈTEMENT HELMET - Plus de problèmes CSP
+// app.use(helmet(...)); // COMMENTÉ
+
+// Ajouter uniquement les en-têtes essentiels
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
-  max: process.env.NODE_ENV === 'development' ? 1000 : parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'), // Plus permissif en dev
+  max: process.env.NODE_ENV === 'development' ? 1000 : parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: 'Trop de requêtes depuis cette IP, veuillez réessayer plus tard.',
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: process.env.NODE_ENV === 'development', // Skip en dev
+  skipSuccessfulRequests: process.env.NODE_ENV === 'development',
 });
 
 // Appliquer le rate limiting à toutes les routes API
@@ -184,7 +167,7 @@ const authLimiter = rateLimit({
 // ========== MIDDLEWARES AVANT TOUT ==========
 
 // Servir les fichiers uploads statiquement
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Middleware JSON
 app.use(
@@ -198,8 +181,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: process.env.MAX_FILE_SIZE || '20mb' }));
 
-// Configuration CORS renforcée
-
+// Configuration CORS
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
   'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
 ).split(',');
@@ -249,17 +231,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware pour ajouter des en-têtes de sécurité supplémentaires
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  if (req.path.startsWith('/api')) {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.setHeader('Pragma', 'no-cache');
-  }
-  next();
-});
-
 // ========== MIDDLEWARE DE LOGGING ==========
 
 // Middleware pour mesurer les performances des requêtes
@@ -274,11 +245,9 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     
-    // Logger la requête
     const logLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     reqLogger[logLevel](`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
     
-    // En production, logger les requêtes lentes
     if (isProduction && duration > 1000) {
       reqLogger.warn(`Slow request detected`, { duration, statusCode: res.statusCode });
     }
@@ -335,6 +304,24 @@ app.get('/api/metrics', (req, res) => {
     sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore',
     environment: process.env.NODE_ENV,
     timestamp: Date.now()
+  });
+});
+
+// Debug endpoint pour vérifier les fichiers statiques
+app.get('/api/debug/static', (req, res) => {
+  const distPath = path.join(process.cwd(), 'dist', 'public');
+  let files: string[] = [];
+  
+  if (fs.existsSync(distPath)) {
+    files = fs.readdirSync(distPath);
+  }
+  
+  res.json({
+    cwd: process.cwd(),
+    distPath,
+    exists: fs.existsSync(distPath),
+    files,
+    nodeEnv: process.env.NODE_ENV,
   });
 });
 
@@ -425,8 +412,53 @@ async function startServer() {
 
     // 5. Servir les fichiers statiques en production
     if (isProduction) {
-      serveStatic(app);
-      logger.info('✅ Static files configured');
+      // Servir les fichiers statiques manuellement
+      const distPublicPath = path.join(process.cwd(), 'dist', 'public');
+      logger.info(`📁 Static files path: ${distPublicPath}`);
+      
+      if (fs.existsSync(distPublicPath)) {
+        logger.info('✅ Dist/public directory found');
+        
+        // Servir les fichiers statiques
+        app.use(express.static(distPublicPath));
+        
+        // Fallback pour SPA - toutes les routes non-API renvoient index.html
+        app.get('*', (req, res, next) => {
+          // Ne pas interférer avec les routes API
+          if (req.path.startsWith('/api')) {
+            return next();
+          }
+          
+          const indexPath = path.join(distPublicPath, 'index.html');
+          if (fs.existsSync(indexPath)) {
+            res.sendFile(indexPath);
+          } else {
+            logger.error(`Index.html not found at ${indexPath}`);
+            res.status(404).send('File not found');
+          }
+        });
+        
+        logger.info('✅ Static files configured successfully');
+      } else {
+        logger.error(`❌ Dist/public directory not found at ${distPublicPath}`);
+        logger.info('📁 Current working directory:', process.cwd());
+        
+        // Essayer de trouver le dossier dist
+        const possiblePaths = [
+          path.join(process.cwd(), 'dist', 'public'),
+          path.join(process.cwd(), '..', 'dist', 'public'),
+          path.join(__dirname, 'dist', 'public'),
+          path.join(__dirname, '..', 'dist', 'public'),
+        ];
+        
+        for (const p of possiblePaths) {
+          if (fs.existsSync(p)) {
+            logger.info(`✅ Found static files at: ${p}`);
+            app.use(express.static(p));
+            break;
+          }
+        }
+      }
     } else {
       const { setupVite } = await import("./vite");
       await setupVite(httpServer, app);
@@ -495,6 +527,7 @@ function startHttpServer(port: number, host: string) {
     if (!isProduction) {
       logger.info(`   curl http://localhost:${port}/api/debug/session-state`);
     }
+    logger.info(`   curl http://localhost:${port}/api/debug/static`);
   });
 
   httpServer.on('error', (error: any) => {
