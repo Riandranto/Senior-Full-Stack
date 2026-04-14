@@ -196,17 +196,40 @@ export async function registerRoutes(
     try {
       console.log('📞 Backend - requestOtp called');
       console.log('📦 Body:', req.body);
+      console.log('📦 Headers:', req.headers['content-type']);
       
-      const input = api.auth.requestOtp.input.parse(req.body);
-      console.log(`✅ OTP for ${input.phone} is 123456`);
+      // Validation plus robuste
+      const { phone } = req.body;
       
-      res.json({ message: "OTP sent", success: true });
+      if (!phone || typeof phone !== 'string') {
+        console.log('❌ Invalid phone number:', phone);
+        return res.status(400).json({ 
+          message: "Numéro de téléphone invalide",
+          code: "INVALID_PHONE"
+        });
+      }
+      
+      // Nettoyer le numéro (optionnel)
+      const cleanPhone = phone.replace(/\s/g, '');
+      console.log(`✅ OTP request for ${cleanPhone} - Code: 123456`);
+      
+      // Ici vous pouvez intégrer un vrai service SMS
+      // Pour l'instant, on simule l'envoi
+      
+      res.json({ 
+        message: "OTP sent", 
+        success: true,
+        // En développement, renvoyer le code pour faciliter les tests
+        ...(process.env.NODE_ENV !== 'production' && { devCode: "123456" })
+      });
+      
     } catch (e) {
       console.error('❌ OTP request error:', e);
-      if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: "Numéro de téléphone invalide" });
-      }
-      res.status(500).json({ message: "Erreur serveur" });
+      res.status(500).json({ 
+        message: "Erreur lors de l'envoi du code", 
+        code: "SERVER_ERROR",
+        details: process.env.NODE_ENV === 'development' ? String(e) : undefined
+      });
     }
   });
 

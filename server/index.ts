@@ -136,13 +136,17 @@ if (isProduction) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+        styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com"],
-        imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org"],
-        connectSrc: ["'self'", "ws:", "wss:", "http://localhost:5173", "http://localhost:5000", "https://fonts.googleapis.com", "https://fonts.gstatic.com", "https://*.tile.openstreetmap.org"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+        scriptSrcElem: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+        imgSrc: ["'self'", "data:", "https:", "http://*.tile.openstreetmap.org", "https://*.tile.openstreetmap.org", "blob:"],
+        connectSrc: ["'self'", "ws:", "wss:", "https://*.tile.openstreetmap.org", "https://nominatim.openstreetmap.org"],
+        workerSrc: ["'self'", "blob:"],
       },
     },
+    crossOriginEmbedderPolicy: false,
   }));
 } else {
   // DÉSACTIVER COMPLÈTEMENT CSP EN DÉVELOPPEMENT
@@ -195,7 +199,7 @@ app.use(express.urlencoded({ extended: false, limit: process.env.MAX_FILE_SIZE |
 // Configuration CORS renforcée
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
-  'http://localhost:5173,http://localhost:5000,https://ride-mada-mg.up.railway.app'
+  'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
 ).split(',');
 
 app.use(cors({

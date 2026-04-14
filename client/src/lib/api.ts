@@ -3,10 +3,14 @@ import { api } from '@shared/routes';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 
   (import.meta.env.MODE === 'production' 
-    ? window.location.origin 
+    ? window.location.origin  // En production, utiliser la même origine
     : 'http://localhost:5000');
 
-console.log('🌐 API_BASE_URL:', API_BASE_URL);
+// Ajouter un fallback plus robuste
+if (import.meta.env.MODE === 'production' && !import.meta.env.VITE_API_URL) {
+  console.log('🌐 Using window.location.origin:', window.location.origin);
+}
+
 
 export class ApiError extends Error {
   status: number;
