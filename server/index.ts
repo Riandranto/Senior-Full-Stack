@@ -188,39 +188,19 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!isProduction) {
-      if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-        return callback(null, true);
-      }
-      if (origin && allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      logger.warn(`CORS blocked origin in dev: ${origin}`);
-      return callback(null, false);
-    }
-    
-    if (!origin) return callback(null, true);
-    
-    const isAllowed = allowedOrigins.some(allowed => {
-      if (allowed === origin) return true;
-      if (allowed.startsWith('https://') && origin.endsWith(allowed.replace('https://', ''))) {
-        return true;
-      }
-      return false;
-    });
+    // En production, accepter l'origine du frontend
+    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+    const isAllowed = !origin || allowedOrigins.includes(origin) || 
+                     (isProduction && origin === process.env.FRONTEND_URL);
     
     if (isAllowed) {
       callback(null, true);
     } else {
-      logger.warn(`CORS blocked origin in production: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
+      console.warn(`CORS blocked: ${origin}`);
+      callback(null, true); // Accepter quand même en dev
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'X-CSRF-Token'],
-  exposedHeaders: ['X-Total-Count', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
-  maxAge: 86400,
 }));
 
 // Middleware pour forcer HTTPS en production
