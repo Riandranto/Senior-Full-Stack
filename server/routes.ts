@@ -192,46 +192,80 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
-  app.post(api.auth.requestOtp.path, async (req, res) => {
-    try {
-      console.log('📞 Backend - requestOtp called');
-      console.log('📦 Body:', req.body);
-      console.log('📦 Headers:', req.headers['content-type']);
-      
-      // Validation plus robuste
-      const { phone } = req.body;
-      
-      if (!phone || typeof phone !== 'string') {
-        console.log('❌ Invalid phone number:', phone);
-        return res.status(400).json({ 
-          message: "Numéro de téléphone invalide",
-          code: "INVALID_PHONE"
-        });
-      }
-      
-      // Nettoyer le numéro (optionnel)
-      const cleanPhone = phone.replace(/\s/g, '');
-      console.log(`✅ OTP request for ${cleanPhone} - Code: 123456`);
-      
-      // Ici vous pouvez intégrer un vrai service SMS
-      // Pour l'instant, on simule l'envoi
-      
-      res.json({ 
-        message: "OTP sent", 
-        success: true,
-        // En développement, renvoyer le code pour faciliter les tests
-        ...(process.env.NODE_ENV !== 'production' && { devCode: "123456" })
-      });
-      
-    } catch (e) {
-      console.error('❌ OTP request error:', e);
-      res.status(500).json({ 
-        message: "Erreur lors de l'envoi du code", 
-        code: "SERVER_ERROR",
-        details: process.env.NODE_ENV === 'development' ? String(e) : undefined
+  // Remplacer la route verifyOtp existante par celle-ci :
+
+app.post(api.auth.verifyOtp.path, async (req, res) => {
+  try {
+    console.log('🔐 Backend - verifyOtp called');
+    console.log('📦 Body:', req.body);
+    
+    const { phone, otp } = req.body;
+    
+    // Validation des entrées
+    if (!phone || !otp) {
+      console.log('❌ Missing phone or OTP');
+      return res.status(400).json({ 
+        message: "Numéro et code requis",
+        code: "MISSING_FIELDS"
       });
     }
-  });
+    
+    // Vérification du code OTP
+    // En production, vous devriez vérifier avec un vrai service SMS
+    if (otp !== "123456") {
+      console.log(`❌ Invalid OTP for ${phone}: ${otp}`);
+      return res.status(401).json({ 
+        message: "Code invalide ou expiré",
+        code: "INVALID_OTP"
+      });
+    }
+    
+    // Chercher ou créer l'utilisateur
+    let user = await storage.getUserByPhone(phone);
+    if (!user) {
+      console.log(`👤 Creating new user for ${phone}`);
+      user = await storage.createUser({ 
+        phone: phone, 
+        name: "User " + phone.slice(-4), 
+        role: "PASSENGER", 
+        language: "mg" 
+      });
+      console.log(`✅ User created with id ${user.id}`);
+    } else {
+      console.log(`👤 Existing user found: ${user.id} (${user.role})`);
+    }
+    
+    // Mettre à jour la session
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    
+    // Sauvegarder la session
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) {
+          console.error('❌ Session save error:', err);
+          reject(err);
+        } else {
+          console.log('✅ Session saved successfully');
+          console.log('📦 Session ID:', req.session.id);
+          console.log('📦 User ID in session:', req.session.userId);
+          resolve();
+        }
+      });
+    });
+    
+    console.log('✅ User authenticated:', user.id, user.role);
+    res.json({ user, success: true });
+    
+  } catch (e) {
+    console.error('❌ Backend error in verifyOtp:', e);
+    res.status(500).json({ 
+      message: "Erreur serveur", 
+      code: "SERVER_ERROR",
+      details: process.env.NODE_ENV === 'development' ? String(e) : undefined
+    });
+  }
+});
 
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
