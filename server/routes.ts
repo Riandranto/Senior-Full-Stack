@@ -277,6 +277,7 @@ export async function registerRoutes(
     try {
       console.log('🔐 verifyOtp - Session ID:', req.sessionID);
       console.log('🔐 verifyOtp - Session exists:', !!req.session);
+      console.log('🔐 verifyOtp - Body:', req.body);
       
       const { phone, otp } = req.body;
       
@@ -284,10 +285,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Phone and OTP required" });
       }
       
-      // Pour debug
-      console.log(`Verifying OTP for ${phone}: ${otp}`);
-      
-      // Acceptez toujours 123456 en développement
+      // Acceptez toujours 123456
       if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
@@ -303,7 +301,6 @@ export async function registerRoutes(
         });
       }
       
-      // Vérifiez que req.session existe
       if (!req.session) {
         console.error('❌ Session object is missing!');
         return res.status(500).json({ message: "Session not initialized" });
@@ -311,26 +308,43 @@ export async function registerRoutes(
       
       req.session.userId = user.id;
       req.session.role = user.role;
-      
-      // Sauvegarde explicite de la session
-      await new Promise((resolve, reject) => {
-        req.session.save((err) => {
-          if (err) {
-            console.error('❌ Session save error:', err);
-            reject(err);
-          } else {
-            console.log('✅ Session saved successfully');
-            resolve(null);
+      req.session.regenerate((err) => {
+        if (err) {
+          console.error('Session regeneration error:', err);
+          return res.status(500).json({ message: "Session error" });
+        }
+        
+        req.session.userId = user.id;
+        req.session.role = user.role;
+        
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error('Session save error:', saveErr);
+            return res.status(500).json({ message: "Failed to save session" });
           }
+          
+          console.log(`✅ Session saved successfully for user ${user.id}`);
+          console.log(`📦 Session ID after save: ${req.sessionID}`);
+          console.log(`📦 User ID in session: ${req.session.userId}`);
+          
+          // Réponse avec l'utilisateur
+          res.json({ 
+            user: {
+              id: user.id,
+              phone: user.phone,
+              name: user.name,
+              role: user.role,
+              language: user.language,
+              isApproved: user.isApproved,
+              isBlocked: user.isBlocked
+            }, 
+            success: true 
+          });
         });
       });
       
-      console.log(`✅ User authenticated: ${user.id} (${user.role})`);
-      res.json({ user, success: true });
-      
     } catch (error) {
       console.error('❌ verifyOtp error:', error);
-      // Envoyer l'erreur détaillée en développement
       res.status(500).json({ 
         message: "Erreur serveur",
         error: process.env.NODE_ENV === 'development' ? String(error) : undefined

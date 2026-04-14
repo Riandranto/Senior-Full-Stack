@@ -3,14 +3,11 @@ import { api } from '@shared/routes';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 
   (import.meta.env.MODE === 'production' 
-    ? window.location.origin  // En production, utiliser la même origine
+    ? window.location.origin
     : 'http://localhost:5000');
 
-// Ajouter un fallback plus robuste
-if (import.meta.env.MODE === 'production' && !import.meta.env.VITE_API_URL) {
-  console.log('🌐 Using window.location.origin:', window.location.origin);
-}
-
+console.log('🔧 API_BASE_URL:', API_BASE_URL);
+console.log('🔧 MODE:', import.meta.env.MODE);
 
 export class ApiError extends Error {
   status: number;
@@ -29,6 +26,8 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
   const url = endpoint.startsWith('http') 
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`;
+  
+  console.log(`🌐 [apiFetch] ${endpoint} -> ${url}`);
   
   const defaultOptions: RequestInit = {
     credentials: 'include',
@@ -51,6 +50,8 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
       ...defaultOptions,
       ...options,
     });
+    
+    console.log(`📡 [apiFetch] Response status: ${response.status} for ${endpoint}`);
     
     // Gérer les erreurs HTTP
     if (!response.ok) {
@@ -84,27 +85,5 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
       error instanceof Error ? error.message : 'Erreur inconnue',
       500
     );
-  }
-}
-
-// Version avec gestion d'erreurs et toast automatique
-export async function apiFetchWithToast(
-  endpoint: string, 
-  options: RequestInit = {},
-  toast?: any,
-  lang?: string
-): Promise<any> {
-  try {
-    const response = await apiFetch(endpoint, options);
-    return await response.json();
-  } catch (error) {
-    if (error instanceof ApiError && toast) {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message,
-      });
-    }
-    throw error;
   }
 }

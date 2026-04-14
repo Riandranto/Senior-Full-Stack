@@ -10,7 +10,7 @@ export function useAuth() {
   const { toast } = useToast();
   const { lang } = useTranslation();
 
-  // Vérification de l'authentification avec retry et refetch
+  // Vérification de l'authentification
   const { data: user, isLoading, error, refetch } = useQuery<User | null>({
     queryKey: [api.auth.me.path],
     queryFn: async () => {
@@ -23,15 +23,9 @@ export function useAuth() {
           return null;
         }
         
-        if (res.status === 500) {
-          console.warn('Server error during auth check');
-          // Don't throw, just return null
-          return null;
-        }
-        
         if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.message || "Erreur d'authentification");
+          console.log(`Auth check failed with status ${res.status}`);
+          return null;
         }
         
         const userData = await res.json();
@@ -85,7 +79,7 @@ export function useAuth() {
     },
   });
 
-  // Vérification OTP
+  // Vérification OTP et connexion
   const loginMutation = useMutation({
     mutationFn: async (data: { phone: string; otp: string }) => {
       console.log('🔐 Attempting login for:', data.phone);
@@ -95,34 +89,31 @@ export function useAuth() {
         body: JSON.stringify(data),
       });
       
-      const result = await res.json().catch(() => ({}));
       console.log('📦 Login response status:', res.status);
       
       if (!res.ok) {
-        if (res.status === 401) {
-          throw new Error(lang === 'mg'
-            ? "Kaody disy na lany daty"
-            : "Code incorrect ou expiré"
-          );
-        }
-        throw new Error(result.message || (lang === 'mg'
-          ? "Tsy afaka niditra"
-          : "Échec de connexion"
-        ));
+        let errorMessage = lang === 'mg' ? "Tsy afaka niditra" : "Échec de connexion";
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch (e) {}
+        throw new Error(errorMessage);
       }
       
+      const result = await res.json();
+      console.log('✅ Login response:', result);
       return result;
     },
     onSuccess: async (data) => {
       console.log('✅ Login successful, user:', data.user);
       
-      // Stocker l'utilisateur dans localStorage pour WebSocket
+      // Stocker l'utilisateur dans localStorage
       localStorage.setItem('user', JSON.stringify(data.user));
       
-      // Mettre à jour le cache
+      // Mettre à jour le cache React Query
       queryClient.setQueryData([api.auth.me.path], data.user);
       
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Forcer un refetch immédiat
       await refetch();
       
       toast({
@@ -131,8 +122,8 @@ export function useAuth() {
           ? "Tonga soa eto Farady"
           : "Bienvenue sur Farady",
       });
-    
-      // Redirection
+      
+      // Redirection basée sur le rôle
       if (data.user.role === 'ADMIN') {
         window.location.href = '/admin';
       } else if (data.user.role === 'DRIVER') {
@@ -167,8 +158,8 @@ export function useAuth() {
       return res.json();
     },
     onSuccess: () => {
-      // Nettoyer le cache
       queryClient.clear();
+      localStorage.removeItem('user');
       
       toast({
         title: lang === 'mg' ? "Tafivoaka" : "Déconnecté",
@@ -178,7 +169,6 @@ export function useAuth() {
     },
     onError: (error: Error) => {
       console.error('Logout error:', error);
-      // Forcer la redirection même en cas d'erreur
       window.location.href = '/login';
     },
   });
@@ -186,7 +176,7 @@ export function useAuth() {
   return {
     user,
     isLoading,
-    isAuthenticated: !!user && !user.isBlocked,
+    isAuthenticated: !!user && !user?.isBlocked,
     login: loginMutation.mutateAsync,
     requestOtp: requestOtpMutation.mutateAsync,
     logout: logoutMutation.mutateAsync,
