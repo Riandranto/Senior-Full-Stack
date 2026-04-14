@@ -222,96 +222,66 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
-  // Remplacer la route verifyOtp existante par celle-ci :
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
-      console.log('📞 Backend - requestOtp called');
-      console.log('📦 Body:', req.body);
-      
+      console.log('📞 requestOtp called, body:', req.body);
       const { phone } = req.body;
       
       if (!phone) {
-        return res.status(400).json({ 
-          message: "Numéro de téléphone requis" 
-        });
+        return res.status(400).json({ message: "Numéro requis" });
       }
       
-      // Validation du numéro (optionnel)
-      const phoneRegex = /^0[0-9]{9}$/;
-      if (!phoneRegex.test(phone)) {
-        return res.status(400).json({ 
-          message: "Numéro de téléphone invalide" 
-        });
-      }
-      
-      // En développement, toujours envoyer 123456
-      if (process.env.NODE_ENV !== 'production') {
-        console.log(`📱 OTP pour ${phone}: 123456`);
-        return res.json({ 
-          message: "Code envoyé", 
-          expiresIn: 300,
-          demo: true
-        });
-      }
-      
-      // En production, intégrer un vrai service SMS
-      // Exemple avec Twilio ou autre
-      // const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      // await sendSMS(phone, `Votre code Farady est: ${otp}`);
-      
-      // Temporairement, retourner un succès
-      res.json({ 
-        message: "Code envoyé", 
-        expiresIn: 300 
-      });
+      // Toujours retourner succès avec 123456
+      console.log(`📱 OTP pour ${phone}: 123456`);
+      res.json({ message: "Code envoyé", expiresIn: 300, demo: true });
       
     } catch (error) {
-      console.error('❌ Error in requestOtp:', error);
-      res.status(500).json({ 
-        message: "Erreur lors de l'envoi du code" 
-      });
+      console.error('❌ requestOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
-
+  
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
-      console.log('🔐 verifyOtp - Session ID:', req.sessionID);
-      console.log('🔐 verifyOtp - Session exists:', !!req.session);
-      console.log('🔐 verifyOtp - Body:', req.body);
+      console.log('🔐 verifyOtp called');
+      console.log('📦 Body:', req.body);
+      console.log('📦 Session ID avant:', req.sessionID);
       
       const { phone, otp } = req.body;
       
       if (!phone || !otp) {
-        return res.status(400).json({ message: "Phone and OTP required" });
+        return res.status(400).json({ message: "Phone et OTP requis" });
       }
       
-      // Acceptez toujours 123456
+      // Accepter 123456 pour tous les tests
       if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
       
+      // Chercher ou créer l'utilisateur
       let user = await storage.getUserByPhone(phone);
       if (!user) {
-        console.log(`Creating new user for ${phone}`);
+        console.log(`📝 Création utilisateur pour ${phone}`);
         user = await storage.createUser({ 
-          phone: phone, 
-          name: "User " + phone.slice(-4), 
+          phone, 
+          name: `User_${phone.slice(-4)}`, 
           role: "PASSENGER", 
           language: "mg" 
         });
       }
       
+      console.log(`👤 Utilisateur trouvé/créé: ${user.id} (${user.role})`);
+      
       if (!req.session) {
-        console.error('❌ Session object is missing!');
-        return res.status(500).json({ message: "Session not initialized" });
+        console.error('❌ Session non initialisée');
+        return res.status(500).json({ message: "Session non initialisée" });
       }
       
-      req.session.userId = user.id;
-      req.session.role = user.role;
+      // Régénérer la session pour éviter les conflits
       req.session.regenerate((err) => {
         if (err) {
-          console.error('Session regeneration error:', err);
-          return res.status(500).json({ message: "Session error" });
+          console.error('❌ Erreur régénération session:', err);
+          return res.status(500).json({ message: "Erreur session" });
         }
         
         req.session.userId = user.id;
@@ -319,15 +289,14 @@ export async function registerRoutes(
         
         req.session.save((saveErr) => {
           if (saveErr) {
-            console.error('Session save error:', saveErr);
-            return res.status(500).json({ message: "Failed to save session" });
+            console.error('❌ Erreur sauvegarde session:', saveErr);
+            return res.status(500).json({ message: "Erreur sauvegarde session" });
           }
           
-          console.log(`✅ Session saved successfully for user ${user.id}`);
-          console.log(`📦 Session ID after save: ${req.sessionID}`);
-          console.log(`📦 User ID in session: ${req.session.userId}`);
+          console.log(`✅ Session créée avec succès pour l'utilisateur ${user.id}`);
+          console.log(`📦 Session ID après sauvegarde: ${req.sessionID}`);
+          console.log(`📦 User ID dans session: ${req.session.userId}`);
           
-          // Réponse avec l'utilisateur
           res.json({ 
             user: {
               id: user.id,
@@ -351,48 +320,56 @@ export async function registerRoutes(
       });
     }
   });
-
+  
   app.get(api.auth.me.path, async (req, res) => {
-    console.log('👤 Backend - getMe called');
+    console.log('👤 getMe called');
+    console.log('📦 Session ID:', req.sessionID);
+    console.log('📦 Session userId:', req.session?.userId);
     
-    if (!req.session.userId) {
+    if (!req.session?.userId) {
+      console.log('❌ Pas de userId dans session');
       return res.status(401).json({ message: "Non authentifié" });
     }
     
     const user = await storage.getUser(req.session.userId);
     if (!user) {
+      console.log('❌ Utilisateur non trouvé en base');
       return res.status(401).json({ message: "Utilisateur non trouvé" });
     }
     
+    console.log(`✅ Utilisateur authentifié: ${user.id} (${user.role})`);
     res.json(user);
   });
-
+  
   app.post(api.auth.logout.path, (req, res) => {
-    console.log('🚪 Backend - logout called');
+    console.log('🚪 logout called');
     
     req.session.destroy((err) => {
       if (err) {
         console.error('❌ Logout error:', err);
         return res.status(500).json({ message: "Erreur lors de la déconnexion" });
       }
+      res.clearCookie('farady.sid');
       res.json({ message: "Déconnexion réussie" });
     });
   });
 
+
   // ==================== DEBUG ROUTES ====================
   
+  // Route de debug pour vérifier la session après login
   app.get('/api/debug/session', (req, res) => {
     console.log('🔍 Debug session:');
-    console.log('Session ID:', req.session.id);
-    console.log('Session data:', req.session);
-    console.log('User ID:', req.session.userId);
-    console.log('Role:', req.session.role);
+    console.log('Session ID:', req.sessionID);
+    console.log('Session user:', req.session?.userId);
+    console.log('Session role:', req.session?.role);
     
     res.json({
-      sessionId: req.session.id,
-      userId: req.session.userId,
-      role: req.session.role,
-      cookie: req.session.cookie
+      sessionId: req.sessionID,
+      userId: req.session?.userId,
+      role: req.session?.role,
+      hasSession: !!req.session?.userId,
+      cookie: req.headers.cookie
     });
   });
 

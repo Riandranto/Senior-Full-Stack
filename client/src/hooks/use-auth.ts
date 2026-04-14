@@ -11,28 +11,28 @@ export function useAuth() {
   const { lang } = useTranslation();
 
   // Vérification de l'authentification
-  const { data: user, isLoading, error, refetch } = useQuery<User | null>({
+  const { data: user, isLoading, refetch } = useQuery<User | null>({
     queryKey: [api.auth.me.path],
     queryFn: async () => {
       try {
-        console.log('🔍 Checking authentication...');
+        console.log('🔍 Vérification authentification...');
         const res = await apiFetch(api.auth.me.path);
         
         if (res.status === 401) {
-          console.log('👤 No active session');
+          console.log('👤 Pas de session active');
           return null;
         }
         
         if (!res.ok) {
-          console.log(`Auth check failed with status ${res.status}`);
+          console.log(`Échec vérification auth avec statut ${res.status}`);
           return null;
         }
         
         const userData = await res.json();
-        console.log('✅ User authenticated:', userData);
+        console.log('✅ Utilisateur authentifié:', userData);
         return userData;
       } catch (e) {
-        console.error("Auth check failed:", e);
+        console.error("Échec vérification auth:", e);
         return null;
       }
     },
@@ -45,7 +45,7 @@ export function useAuth() {
   // Demande d'OTP
   const requestOtpMutation = useMutation({
     mutationFn: async (phone: string) => {
-      console.log('📞 Requesting OTP for:', phone);
+      console.log('📞 Demande OTP pour:', phone);
       const res = await apiFetch(api.auth.requestOtp.path, {
         method: api.auth.requestOtp.method,
         body: JSON.stringify({ phone }),
@@ -79,17 +79,17 @@ export function useAuth() {
     },
   });
 
-  // Vérification OTP et connexion
+  // Connexion
   const loginMutation = useMutation({
     mutationFn: async (data: { phone: string; otp: string }) => {
-      console.log('🔐 Attempting login for:', data.phone);
+      console.log('🔐 Tentative de connexion pour:', data.phone);
       
       const res = await apiFetch(api.auth.verifyOtp.path, {
         method: api.auth.verifyOtp.method,
         body: JSON.stringify(data),
       });
       
-      console.log('📦 Login response status:', res.status);
+      console.log('📦 Statut réponse login:', res.status);
       
       if (!res.ok) {
         let errorMessage = lang === 'mg' ? "Tsy afaka niditra" : "Échec de connexion";
@@ -101,19 +101,15 @@ export function useAuth() {
       }
       
       const result = await res.json();
-      console.log('✅ Login response:', result);
+      console.log('✅ Connexion réussie:', result.user);
       return result;
     },
     onSuccess: async (data) => {
-      console.log('✅ Login successful, user:', data.user);
+      console.log('✅ Connexion réussie, utilisateur:', data.user);
       
-      // Stocker l'utilisateur dans localStorage
       localStorage.setItem('user', JSON.stringify(data.user));
-      
-      // Mettre à jour le cache React Query
       queryClient.setQueryData([api.auth.me.path], data.user);
       
-      // Forcer un refetch immédiat
       await refetch();
       
       toast({
@@ -123,7 +119,7 @@ export function useAuth() {
           : "Bienvenue sur Farady",
       });
       
-      // Redirection basée sur le rôle
+      // Redirection
       if (data.user.role === 'ADMIN') {
         window.location.href = '/admin';
       } else if (data.user.role === 'DRIVER') {
@@ -133,7 +129,7 @@ export function useAuth() {
       }
     },
     onError: (error: Error) => {
-      console.error('❌ Login failed:', error);
+      console.error('❌ Connexion échouée:', error);
       toast({
         variant: "destructive",
         title: lang === 'mg' ? "Tsy nety" : "Erreur",
@@ -145,7 +141,7 @@ export function useAuth() {
   // Déconnexion
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      console.log('🚪 Logging out...');
+      console.log('🚪 Déconnexion...');
       const res = await apiFetch(api.auth.logout.path, { 
         method: api.auth.logout.method,
       });
@@ -168,7 +164,7 @@ export function useAuth() {
       window.location.href = '/login';
     },
     onError: (error: Error) => {
-      console.error('Logout error:', error);
+      console.error('Erreur déconnexion:', error);
       window.location.href = '/login';
     },
   });
