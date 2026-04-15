@@ -147,30 +147,29 @@ app.use((req, res, next) => {
 });
 
 app.use(session({
-  name: 'farady.sid',          // Nom personnalisé pour éviter les conflits
-  secret: process.env.SESSION_SECRET || 'farady-secret-key',
+  name: 'farady.sid',
+  secret: process.env.SESSION_SECRET || 'fallback-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore({ checkPeriod: 86400000 }),
   cookie: {
-    secure: isProduction,      // true en production (HTTPS)
+    secure: true,              // Render utilise HTTPS
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000,
-    sameSite: isProduction ? 'none' : 'lax', // CRUCIAL : 'none' pour cross-origin
-    domain: isProduction ? '.onrender.com' : undefined,
+    sameSite: 'lax',          // Pour le même domaine, 'lax' suffit
     path: '/',
   }
 }));
 
+logger.info('✅ Session middleware configured');
+
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
-  max: process.env.NODE_ENV === 'development' ? 1000 : parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-  message: 'Trop de requêtes depuis cette IP, veuillez réessayer plus tard.',
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: process.env.NODE_ENV === 'development',
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Trop de requêtes',
 });
+app.use('/api', limiter);
 
 // Appliquer le rate limiting à toutes les routes API
 app.use('/api', limiter);
@@ -189,16 +188,8 @@ const authLimiter = rateLimit({
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Middleware JSON
-app.use(
-  express.json({
-    limit: process.env.MAX_FILE_SIZE || '20mb',
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false, limit: process.env.MAX_FILE_SIZE || '20mb' }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
 // Configuration CORS
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
@@ -206,27 +197,8 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
 ).split(',');
 
 app.use(cors({
-  origin: function(origin, callback) {
-    // Accepter toutes les origines (y compris les requêtes sans origin comme les apps mobiles)
-    // En production, on peut quand même logger l'origine pour le debug
-    if (!origin) {
-      // Requêtes sans origin (ex: apps mobiles, curl, postman)
-      return callback(null, true);
-    }
-    
-    // Accepter TOUTES les origines
-    // Pour des raisons de sécurité, on peut quand même logger en production
-    if (process.env.NODE_ENV === 'production') {
-      console.log(`CORS accepting origin: ${origin}`);
-    }
-    
-    callback(null, true);
-  },
-  credentials: true,           // ESSENTIEL pour les cookies
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With', 'X-CSRF-Token'],
-  exposedHeaders: ['X-Total-Count', 'X-RateLimit-Limit', 'X-RateLimit-Remaining'],
-  maxAge: 86400,
+  origin: true,
+  credentials: true,
 }));
 
 // Middleware pour forcer HTTPS en production
@@ -380,147 +352,32 @@ if (!isProduction) {
 
 async function startServer() {
   try {
-    // 1. Initialiser les sessions
-    const sessionMiddleware = await initializeSession();
-    app.use(sessionMiddleware);
-    logger.info('✅ Session middleware configured');
-    
-    // 2. Créer le serveur HTTP d'abord
     const port = parseInt(process.env.PORT || "5000", 10);
     const host = "0.0.0.0";
     
-    // CRITICAL: Créer httpServer AVANT d'enregistrer les routes
     httpServer = createServer(app);
-    
-    // 3. Enregistrer les routes (maintenant httpServer existe)
     await registerRoutes(httpServer, app);
     logger.info('✅ Routes registered');
 
-    // 4. Gestion des erreurs
-    app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-      const status = err.status || err.statusCode || 500;
-      
-      // Logger l'erreur
-      logError(err, { path: _req.path, method: _req.method });
-      
-      // Envoyer à Sentry si disponible
-      if (Sentry && isProduction) {
-        Sentry.captureException(err);
-      }
-      
-      // Ne pas exposer les détails d'erreur en production
-      if (isProduction) {
-        return res.status(status).json({ message: "Une erreur interne est survenue" });
-      }
-      
-      return res.status(status).json({ message: err.message, stack: err.stack });
+    // Gestion des erreurs
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      console.error('Error:', err);
+      res.status(500).json({ message: "Erreur interne" });
     });
 
-    // 5. Servir les fichiers statiques en production
-    if (isProduction) {
-      const distPublicPath = path.join(process.cwd(), 'dist', 'public');
-      logger.info(`📁 Static files path: ${distPublicPath}`);
-      
-      if (fs.existsSync(distPublicPath)) {
-        logger.info('✅ Dist/public directory found');
-        
-        // Servir les fichiers statiques
-        app.use(express.static(distPublicPath));
-        
-        // ✅ CORRECTION: Fallback pour SPA - utiliser app.use() au lieu de app.get('*')
-        app.use((req, res, next) => {
-          // Ne pas interférer avec les routes API
-          if (req.path.startsWith('/api')) {
-            return next();
-          }
-          
-          const indexPath = path.join(distPublicPath, 'index.html');
-          if (fs.existsSync(indexPath)) {
-            res.sendFile(indexPath);
-          } else {
-            logger.error(`Index.html not found at ${indexPath}`);
-            res.status(404).send('File not found');
-          }
-        });
-        
-        logger.info('✅ Static files configured successfully');
-      } else {
-        logger.error(`❌ Dist/public directory not found at ${distPublicPath}`);
-        logger.info('📁 Current working directory:', process.cwd());
-        
-        // Essayer de trouver le dossier dist
-        const possiblePaths = [
-          path.join(process.cwd(), 'dist', 'public'),
-          path.join(process.cwd(), '..', 'dist', 'public'),
-          path.join(__dirname, 'dist', 'public'),
-          path.join(__dirname, '..', 'dist', 'public'),
-        ];
-        
-        let found = false;
-        for (const p of possiblePaths) {
-          if (fs.existsSync(p)) {
-            logger.info(`✅ Found static files at: ${p}`);
-            app.use(express.static(p));
-            // Fallback SPA
-            app.use((req, res) => {
-              const indexPath = path.join(p, 'index.html');
-              if (fs.existsSync(indexPath)) {
-                res.sendFile(indexPath);
-              } else {
-                res.status(404).send('File not found');
-              }
-            });
-            found = true;
-            break;
-          }
-        }
-        
-        if (!found) {
-          logger.error('❌ No static files directory found');
-          app.get('/', (req, res) => res.send('Server is running but static files are missing'));
-        }
-      }
-    } else {
-      const { setupVite } = await import("./vite");
-      await setupVite(httpServer, app);
-      logger.info('✅ Vite dev server configured');
+    // Fichiers statiques
+    const distPublicPath = path.join(process.cwd(), 'dist', 'public');
+    if (require('fs').existsSync(distPublicPath)) {
+      app.use(express.static(distPublicPath));
+      app.use((req, res, next) => {
+        if (req.path.startsWith('/api')) return next();
+        res.sendFile(path.join(distPublicPath, 'index.html'));
+      });
     }
 
-    const enableHttps = process.env.ENABLE_HTTPS === 'true' && isProduction;
-
-    if (enableHttps && process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
-      try {
-        const sslOptions = {
-          key: fs.readFileSync(process.env.SSL_KEY_PATH),
-          cert: fs.readFileSync(process.env.SSL_CERT_PATH),
-          ...(process.env.SSL_CA_PATH && { ca: fs.readFileSync(process.env.SSL_CA_PATH) })
-        };
-        
-        httpsServer = https.createServer(sslOptions, app);
-        httpsServer.listen(443, host, () => {
-          logger.info('\n' + '='.repeat(60));
-          logger.info('🚀 HTTPS SERVER STARTED SUCCESSFULLY');
-          logger.info('='.repeat(60));
-          logger.info(`🔒 HTTPS: https://${getLocalIP()}`);
-          logger.info(`🗄️  Session store:   ${sessionRedisAvailable ? 'Redis ✅' : 'MemoryStore ⚠️'}`);
-          logger.info('='.repeat(60) + '\n');
-        });
-        
-        const httpApp = express();
-        httpApp.use((req, res) => {
-          res.redirect(301, `https://${req.headers.host}${req.url}`);
-        });
-        const redirectServer = createServer(httpApp);
-        redirectServer.listen(80);
-        logger.info('✅ HTTP to HTTPS redirect configured on port 80');
-      } catch (error) {
-        logger.error('Failed to load SSL certificates:', error);
-        logger.warn('Falling back to HTTP server');
-        startHttpServer(port, host);
-      }
-    } else {
-      startHttpServer(port, host);
-    }
+    httpServer.listen(port, host, () => {
+      logger.info(`🚀 Server running on port ${port}`);
+    });
 
   } catch (error) {
     logger.error('Failed to start server:', error);

@@ -224,19 +224,18 @@ export async function registerRoutes(
 
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
-      console.log('📞 requestOtp called, body:', req.body);
+      console.log('📞 requestOtp called');
       const { phone } = req.body;
       
       if (!phone) {
         return res.status(400).json({ message: "Numéro requis" });
       }
       
-      // Toujours retourner succès avec 123456
       console.log(`📱 OTP pour ${phone}: 123456`);
-      res.json({ message: "Code envoyé", expiresIn: 300, demo: true });
+      res.json({ message: "Code envoyé", expiresIn: 300 });
       
     } catch (error) {
-      console.error('❌ requestOtp error:', error);
+      console.error('requestOtp error:', error);
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
@@ -244,8 +243,7 @@ export async function registerRoutes(
   app.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
       console.log('🔐 verifyOtp called');
-      console.log('📦 Body:', req.body);
-      console.log('📦 Session ID avant:', req.sessionID);
+      console.log('Session ID avant:', req.sessionID);
       
       const { phone, otp } = req.body;
       
@@ -253,35 +251,25 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Phone et OTP requis" });
       }
       
-      // Accepter 123456 pour tous les tests
       if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
       
-      // Chercher ou créer l'utilisateur
       let user = await storage.getUserByPhone(phone);
       if (!user) {
-        console.log(`📝 Création utilisateur pour ${phone}`);
+        console.log(`Création utilisateur pour ${phone}`);
         user = await storage.createUser({ 
           phone, 
           name: `User_${phone.slice(-4)}`, 
-          role: "PASSENGER", 
-          language: "mg" 
+          role: "PASSENGER" 
         });
       }
       
-      console.log(`👤 Utilisateur trouvé/créé: ${user.id} (${user.role})`);
-      
-      if (!req.session) {
-        console.error('❌ Session non initialisée');
-        return res.status(500).json({ message: "Session non initialisée" });
-      }
-      
-      // Régénérer la session pour éviter les conflits
+      // Régénérer la session
       req.session.regenerate((err) => {
         if (err) {
-          console.error('❌ Erreur régénération session:', err);
-          return res.status(500).json({ message: "Erreur session" });
+          console.error('Regenerate error:', err);
+          return res.status(500).json({ message: "Session error" });
         }
         
         req.session.userId = user.id;
@@ -289,13 +277,12 @@ export async function registerRoutes(
         
         req.session.save((saveErr) => {
           if (saveErr) {
-            console.error('❌ Erreur sauvegarde session:', saveErr);
-            return res.status(500).json({ message: "Erreur sauvegarde session" });
+            console.error('Save error:', saveErr);
+            return res.status(500).json({ message: "Save error" });
           }
           
-          console.log(`✅ Session créée avec succès pour l'utilisateur ${user.id}`);
-          console.log(`📦 Session ID après sauvegarde: ${req.sessionID}`);
-          console.log(`📦 User ID dans session: ${req.session.userId}`);
+          console.log(`✅ Utilisateur ${user.id} connecté`);
+          console.log(`Session ID après: ${req.sessionID}`);
           
           res.json({ 
             user: {
@@ -303,9 +290,6 @@ export async function registerRoutes(
               phone: user.phone,
               name: user.name,
               role: user.role,
-              language: user.language,
-              isApproved: user.isApproved,
-              isBlocked: user.isBlocked
             }, 
             success: true 
           });
@@ -313,31 +297,25 @@ export async function registerRoutes(
       });
       
     } catch (error) {
-      console.error('❌ verifyOtp error:', error);
-      res.status(500).json({ 
-        message: "Erreur serveur",
-        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
-      });
+      console.error('verifyOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
   
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 getMe called');
-    console.log('📦 Session ID:', req.sessionID);
-    console.log('📦 Session userId:', req.session?.userId);
+    console.log('Session ID:', req.sessionID);
+    console.log('Session userId:', req.session?.userId);
     
     if (!req.session?.userId) {
-      console.log('❌ Pas de userId dans session');
       return res.status(401).json({ message: "Non authentifié" });
     }
     
     const user = await storage.getUser(req.session.userId);
     if (!user) {
-      console.log('❌ Utilisateur non trouvé en base');
       return res.status(401).json({ message: "Utilisateur non trouvé" });
     }
     
-    console.log(`✅ Utilisateur authentifié: ${user.id} (${user.role})`);
     res.json(user);
   });
   

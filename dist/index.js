@@ -1,5 +1,11 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -28,10 +34,6 @@ function createContextLogger(context) {
     trace: (msg, ...args) => logger.trace(`[${contextStr}] ${msg}`, ...args),
     getRequestId: () => requestId
   };
-}
-function logError(error, context) {
-  const errorMsg = typeof error === "string" ? error : error.message;
-  logger.error(`[ERROR] ${errorMsg}`, context || {});
 }
 var logger;
 var init_logger = __esm({
@@ -105,187 +107,6 @@ var init_redis = __esm({
     } else {
       logger.info("REDIS_URL not set, using memory store fallback");
     }
-  }
-});
-
-// vite.config.ts
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path2 from "path";
-import { fileURLToPath } from "url";
-import { VitePWA } from "vite-plugin-pwa";
-var __filename, __dirname2, vite_config_default;
-var init_vite_config = __esm({
-  "vite.config.ts"() {
-    "use strict";
-    __filename = fileURLToPath(import.meta.url);
-    __dirname2 = path2.dirname(__filename);
-    vite_config_default = defineConfig({
-      plugins: [
-        react(),
-        VitePWA({
-          registerType: "autoUpdate",
-          includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg"],
-          manifest: false,
-          workbox: {
-            globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}"],
-            runtimeCaching: [
-              {
-                // CORRECTION: URL pour Render.com
-                urlPattern: /^https:\/\/senior-full-stack\.onrender\.com\/api\/.*/i,
-                handler: "NetworkFirst",
-                options: {
-                  cacheName: "api-cache",
-                  expiration: {
-                    maxEntries: 50,
-                    maxAgeSeconds: 60 * 60 * 24
-                  },
-                  networkTimeoutSeconds: 10
-                }
-              },
-              {
-                urlPattern: /^https:\/\/(.*\.)?tile\.openstreetmap\.org\/.*/i,
-                handler: "CacheFirst",
-                options: {
-                  cacheName: "map-tiles-cache",
-                  expiration: {
-                    maxEntries: 200,
-                    maxAgeSeconds: 60 * 60 * 24 * 30
-                  }
-                }
-              },
-              // Ajout pour Google Fonts
-              {
-                urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
-                handler: "CacheFirst",
-                options: {
-                  cacheName: "google-fonts-cache",
-                  expiration: {
-                    maxEntries: 30,
-                    maxAgeSeconds: 60 * 60 * 24 * 30
-                  }
-                }
-              }
-            ],
-            navigateFallback: "/offline.html",
-            navigateFallbackDenylist: [/^\/api\//, /^\/ws\//, /^\/@vite\/client/]
-          }
-        })
-      ],
-      resolve: {
-        alias: {
-          "@": path2.resolve(__dirname2, "client", "src"),
-          "@shared": path2.resolve(__dirname2, "shared")
-        }
-      },
-      root: path2.resolve(__dirname2, "client"),
-      build: {
-        outDir: path2.resolve(__dirname2, "dist/public"),
-        emptyOutDir: true,
-        assetsDir: "assets",
-        sourcemap: true,
-        rollupOptions: {
-          output: {
-            manualChunks: {
-              vendor: ["react", "react-dom", "wouter"],
-              ui: ["framer-motion", "lucide-react"],
-              maps: ["leaflet", "react-leaflet"]
-            }
-          }
-        }
-      },
-      server: {
-        port: 5173,
-        strictPort: false,
-        host: true,
-        // Permet l'accès depuis le réseau local
-        fs: {
-          strict: false,
-          // Désactiver pour le développement
-          allow: [".."]
-        },
-        proxy: {
-          "/api": {
-            target: "http://localhost:5000",
-            changeOrigin: true,
-            secure: false
-          },
-          "/uploads": {
-            target: "http://localhost:5000",
-            changeOrigin: true
-          },
-          "/ws": {
-            target: "ws://localhost:5000",
-            ws: true
-          }
-        }
-      },
-      base: "/",
-      optimizeDeps: {
-        include: ["react", "react-dom", "framer-motion", "lucide-react", "leaflet", "react-leaflet"],
-        force: true
-      }
-    });
-  }
-});
-
-// server/vite.ts
-var vite_exports = {};
-__export(vite_exports, {
-  setupVite: () => setupVite
-});
-import { createServer as createViteServer, createLogger } from "vite";
-import fs2 from "fs";
-import path3 from "path";
-import { nanoid } from "nanoid";
-async function setupVite(server, app2) {
-  const serverOptions = {
-    middlewareMode: true,
-    hmr: { server, path: "/vite-hmr" },
-    allowedHosts: true
-  };
-  const vite = await createViteServer({
-    ...vite_config_default,
-    configFile: false,
-    customLogger: {
-      ...viteLogger,
-      error: (msg, options) => {
-        viteLogger.error(msg, options);
-        process.exit(1);
-      }
-    },
-    server: serverOptions,
-    appType: "custom"
-  });
-  app2.use(vite.middlewares);
-  app2.use("/{*path}", async (req, res, next) => {
-    const url = req.originalUrl;
-    try {
-      const clientTemplate = path3.resolve(
-        import.meta.dirname,
-        "..",
-        "client",
-        "index.html"
-      );
-      let template = await fs2.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`
-      );
-      const page = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(page);
-    } catch (e) {
-      vite.ssrFixStacktrace(e);
-      next(e);
-    }
-  });
-}
-var viteLogger;
-var init_vite = __esm({
-  "server/vite.ts"() {
-    "use strict";
-    init_vite_config();
-    viteLogger = createLogger();
   }
 });
 
@@ -1504,23 +1325,22 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.post(api.auth.requestOtp.path, async (req, res) => {
     try {
-      console.log("\u{1F4DE} requestOtp called, body:", req.body);
+      console.log("\u{1F4DE} requestOtp called");
       const { phone } = req.body;
       if (!phone) {
         return res.status(400).json({ message: "Num\xE9ro requis" });
       }
       console.log(`\u{1F4F1} OTP pour ${phone}: 123456`);
-      res.json({ message: "Code envoy\xE9", expiresIn: 300, demo: true });
+      res.json({ message: "Code envoy\xE9", expiresIn: 300 });
     } catch (error) {
-      console.error("\u274C requestOtp error:", error);
+      console.error("requestOtp error:", error);
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
   app2.post(api.auth.verifyOtp.path, async (req, res) => {
     try {
       console.log("\u{1F510} verifyOtp called");
-      console.log("\u{1F4E6} Body:", req.body);
-      console.log("\u{1F4E6} Session ID avant:", req.sessionID);
+      console.log("Session ID avant:", req.sessionID);
       const { phone, otp } = req.body;
       if (!phone || !otp) {
         return res.status(400).json({ message: "Phone et OTP requis" });
@@ -1530,70 +1350,54 @@ async function registerRoutes(httpServer2, app2) {
       }
       let user = await storage.getUserByPhone(phone);
       if (!user) {
-        console.log(`\u{1F4DD} Cr\xE9ation utilisateur pour ${phone}`);
+        console.log(`Cr\xE9ation utilisateur pour ${phone}`);
         user = await storage.createUser({
           phone,
           name: `User_${phone.slice(-4)}`,
-          role: "PASSENGER",
-          language: "mg"
+          role: "PASSENGER"
         });
-      }
-      console.log(`\u{1F464} Utilisateur trouv\xE9/cr\xE9\xE9: ${user.id} (${user.role})`);
-      if (!req.session) {
-        console.error("\u274C Session non initialis\xE9e");
-        return res.status(500).json({ message: "Session non initialis\xE9e" });
       }
       req.session.regenerate((err) => {
         if (err) {
-          console.error("\u274C Erreur r\xE9g\xE9n\xE9ration session:", err);
-          return res.status(500).json({ message: "Erreur session" });
+          console.error("Regenerate error:", err);
+          return res.status(500).json({ message: "Session error" });
         }
         req.session.userId = user.id;
         req.session.role = user.role;
         req.session.save((saveErr) => {
           if (saveErr) {
-            console.error("\u274C Erreur sauvegarde session:", saveErr);
-            return res.status(500).json({ message: "Erreur sauvegarde session" });
+            console.error("Save error:", saveErr);
+            return res.status(500).json({ message: "Save error" });
           }
-          console.log(`\u2705 Session cr\xE9\xE9e avec succ\xE8s pour l'utilisateur ${user.id}`);
-          console.log(`\u{1F4E6} Session ID apr\xE8s sauvegarde: ${req.sessionID}`);
-          console.log(`\u{1F4E6} User ID dans session: ${req.session.userId}`);
+          console.log(`\u2705 Utilisateur ${user.id} connect\xE9`);
+          console.log(`Session ID apr\xE8s: ${req.sessionID}`);
           res.json({
             user: {
               id: user.id,
               phone: user.phone,
               name: user.name,
-              role: user.role,
-              language: user.language,
-              isApproved: user.isApproved,
-              isBlocked: user.isBlocked
+              role: user.role
             },
             success: true
           });
         });
       });
     } catch (error) {
-      console.error("\u274C verifyOtp error:", error);
-      res.status(500).json({
-        message: "Erreur serveur",
-        error: process.env.NODE_ENV === "development" ? String(error) : void 0
-      });
+      console.error("verifyOtp error:", error);
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
   app2.get(api.auth.me.path, async (req, res) => {
     console.log("\u{1F464} getMe called");
-    console.log("\u{1F4E6} Session ID:", req.sessionID);
-    console.log("\u{1F4E6} Session userId:", req.session?.userId);
+    console.log("Session ID:", req.sessionID);
+    console.log("Session userId:", req.session?.userId);
     if (!req.session?.userId) {
-      console.log("\u274C Pas de userId dans session");
       return res.status(401).json({ message: "Non authentifi\xE9" });
     }
     const user = await storage.getUser(req.session.userId);
     if (!user) {
-      console.log("\u274C Utilisateur non trouv\xE9 en base");
       return res.status(401).json({ message: "Utilisateur non trouv\xE9" });
     }
-    console.log(`\u2705 Utilisateur authentifi\xE9: ${user.id} (${user.role})`);
     res.json(user);
   });
   app2.post(api.auth.logout.path, (req, res) => {
@@ -3290,10 +3094,8 @@ async function registerRoutes(httpServer2, app2) {
 
 // server/index.ts
 import { createServer } from "http";
-import https from "https";
-import fs3 from "fs";
-import path4 from "path";
-import os from "os";
+import fs2 from "fs";
+import path2 from "path";
 import cors from "cors";
 
 // server/services/session.ts
@@ -3303,32 +3105,6 @@ import createMemoryStore from "memorystore";
 var MemoryStore = createMemoryStore(session);
 var isProduction = process.env.NODE_ENV === "production";
 var redisAvailable = false;
-async function getSessionStore() {
-  let store;
-  if (redisStore) {
-    try {
-      console.log("\u{1F504} Tentative de connexion \xE0 Redis...");
-      if (redisStore.client && redisStore.client.connected) {
-        store = redisStore;
-        redisAvailable = true;
-        console.log("\u2705 Redis session store initialized");
-      } else {
-        console.warn("\u26A0\uFE0F Redis not connected, falling back to MemoryStore");
-      }
-    } catch (err) {
-      console.error("\u274C Redis connection error:", err);
-      console.warn("\u26A0\uFE0F Falling back to MemoryStore");
-    }
-  }
-  if (!store) {
-    console.log("\u{1F4E6} Using MemoryStore for sessions");
-    store = new MemoryStore({
-      checkPeriod: 864e5
-      // Nettoyer les sessions expirées toutes les 24h
-    });
-  }
-  return store;
-}
 var sessionConfig = {
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   resave: false,
@@ -3349,26 +3125,6 @@ var sessionConfig = {
   proxy: isProduction
   // Trust proxy en production
 };
-async function createSessionMiddleware() {
-  const store = await getSessionStore();
-  const config = {
-    ...sessionConfig,
-    store
-  };
-  console.log("\u{1F4E6} Session config:", {
-    store: redisAvailable ? "Redis" : "MemoryStore",
-    secure: config.cookie.secure,
-    sameSite: config.cookie.sameSite,
-    proxy: config.proxy,
-    env: process.env.NODE_ENV
-  });
-  return session(config);
-}
-var sessionMiddleware = null;
-async function initializeSession() {
-  sessionMiddleware = await createSessionMiddleware();
-  return sessionMiddleware;
-}
 
 // server/index.ts
 init_logger();
@@ -3417,46 +3173,9 @@ try {
 }
 var app = express2();
 var httpServer;
-var httpsServer;
 app.set("trust proxy", 1);
 var isProduction2 = process.env.NODE_ENV === "production";
 var MemoryStore2 = createMemoryStore2(session2);
-function getLocalIP() {
-  try {
-    const nets = os.networkInterfaces();
-    const results = [];
-    logger.info("\n\u{1F4E1} Interfaces r\xE9seau disponibles:");
-    logger.info("=".repeat(50));
-    for (const name of Object.keys(nets)) {
-      for (const net of nets[name] || []) {
-        if (net.family === "IPv4") {
-          const type = net.internal ? "\u{1F512} Interne" : "\u{1F30D} Externe";
-          logger.info(`${type} - ${name}: ${net.address}`);
-          if (!net.internal) {
-            results.push({
-              address: net.address,
-              name,
-              family: net.family
-            });
-          }
-        }
-      }
-    }
-    logger.info("=".repeat(50) + "\n");
-    const preferred = results.find((r) => r.address.startsWith("192.168.1."));
-    if (preferred) {
-      logger.info(`\u2705 IP s\xE9lectionn\xE9e: ${preferred.address} (${preferred.name})`);
-      return preferred.address;
-    }
-    if (results.length > 0) {
-      logger.info(`\u26A0\uFE0F IP s\xE9lectionn\xE9e: ${results[0].address} (${results[0].name})`);
-      return results[0].address;
-    }
-  } catch (error) {
-    logger.error("Erreur:", error);
-  }
-  return "192.168.1.101";
-}
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -3464,30 +3183,27 @@ app.use((req, res, next) => {
 });
 app.use(session2({
   name: "farady.sid",
-  // Nom personnalisé pour éviter les conflits
-  secret: process.env.SESSION_SECRET || "farady-secret-key",
+  secret: process.env.SESSION_SECRET || "fallback-secret-key-change-this",
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore2({ checkPeriod: 864e5 }),
   cookie: {
-    secure: isProduction2,
-    // true en production (HTTPS)
+    secure: true,
+    // Render utilise HTTPS
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1e3,
-    sameSite: isProduction2 ? "none" : "lax",
-    // CRUCIAL : 'none' pour cross-origin
-    domain: isProduction2 ? ".onrender.com" : void 0,
+    sameSite: "lax",
+    // Pour le même domaine, 'lax' suffit
     path: "/"
   }
 }));
+logger.info("\u2705 Session middleware configured");
 var limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000"),
-  max: process.env.NODE_ENV === "development" ? 1e3 : parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
-  message: "Trop de requ\xEAtes depuis cette IP, veuillez r\xE9essayer plus tard.",
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: process.env.NODE_ENV === "development"
+  windowMs: 15 * 60 * 1e3,
+  max: 100,
+  message: "Trop de requ\xEAtes"
 });
+app.use("/api", limiter);
 app.use("/api", limiter);
 var authLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
@@ -3495,33 +3211,13 @@ var authLimiter = rateLimit({
   message: "Trop de tentatives de connexion, veuillez r\xE9essayer dans 15 minutes.",
   skipSuccessfulRequests: true
 });
-app.use("/uploads", express2.static(path4.join(process.cwd(), "uploads")));
-app.use(
-  express2.json({
-    limit: process.env.MAX_FILE_SIZE || "20mb",
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    }
-  })
-);
-app.use(express2.urlencoded({ extended: false, limit: process.env.MAX_FILE_SIZE || "20mb" }));
+app.use("/uploads", express2.static(path2.join(process.cwd(), "uploads")));
+app.use(express2.json({ limit: "20mb" }));
+app.use(express2.urlencoded({ extended: false, limit: "20mb" }));
 var allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com").split(",");
 app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
-    if (process.env.NODE_ENV === "production") {
-      console.log(`CORS accepting origin: ${origin}`);
-    }
-    callback(null, true);
-  },
-  credentials: true,
-  // ESSENTIEL pour les cookies
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With", "X-CSRF-Token"],
-  exposedHeaders: ["X-Total-Count", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
-  maxAge: 86400
+  origin: true,
+  credentials: true
 }));
 app.use((req, res, next) => {
   if (isProduction2 && req.headers["x-forwarded-proto"] !== "https" && process.env.ENABLE_HTTPS !== "false") {
@@ -3587,15 +3283,15 @@ app.get("/api/metrics", (req, res) => {
   });
 });
 app.get("/api/debug/static", (req, res) => {
-  const distPath = path4.join(process.cwd(), "dist", "public");
+  const distPath = path2.join(process.cwd(), "dist", "public");
   let files = [];
-  if (fs3.existsSync(distPath)) {
-    files = fs3.readdirSync(distPath);
+  if (fs2.existsSync(distPath)) {
+    files = fs2.readdirSync(distPath);
   }
   res.json({
     cwd: process.cwd(),
     distPath,
-    exists: fs3.existsSync(distPath),
+    exists: fs2.existsSync(distPath),
     files,
     nodeEnv: process.env.NODE_ENV
   });
@@ -3641,146 +3337,29 @@ if (!isProduction2) {
 }
 async function startServer() {
   try {
-    const sessionMiddleware2 = await initializeSession();
-    app.use(sessionMiddleware2);
-    logger.info("\u2705 Session middleware configured");
     const port = parseInt(process.env.PORT || "5000", 10);
     const host = "0.0.0.0";
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
     logger.info("\u2705 Routes registered");
-    app.use((err, _req, res, next) => {
-      const status = err.status || err.statusCode || 500;
-      logError(err, { path: _req.path, method: _req.method });
-      if (Sentry && isProduction2) {
-        Sentry.captureException(err);
-      }
-      if (isProduction2) {
-        return res.status(status).json({ message: "Une erreur interne est survenue" });
-      }
-      return res.status(status).json({ message: err.message, stack: err.stack });
+    app.use((err, _req, res, _next) => {
+      console.error("Error:", err);
+      res.status(500).json({ message: "Erreur interne" });
     });
-    if (isProduction2) {
-      const distPublicPath = path4.join(process.cwd(), "dist", "public");
-      logger.info(`\u{1F4C1} Static files path: ${distPublicPath}`);
-      if (fs3.existsSync(distPublicPath)) {
-        logger.info("\u2705 Dist/public directory found");
-        app.use(express2.static(distPublicPath));
-        app.use((req, res, next) => {
-          if (req.path.startsWith("/api")) {
-            return next();
-          }
-          const indexPath = path4.join(distPublicPath, "index.html");
-          if (fs3.existsSync(indexPath)) {
-            res.sendFile(indexPath);
-          } else {
-            logger.error(`Index.html not found at ${indexPath}`);
-            res.status(404).send("File not found");
-          }
-        });
-        logger.info("\u2705 Static files configured successfully");
-      } else {
-        logger.error(`\u274C Dist/public directory not found at ${distPublicPath}`);
-        logger.info("\u{1F4C1} Current working directory:", process.cwd());
-        const possiblePaths = [
-          path4.join(process.cwd(), "dist", "public"),
-          path4.join(process.cwd(), "..", "dist", "public"),
-          path4.join(__dirname, "dist", "public"),
-          path4.join(__dirname, "..", "dist", "public")
-        ];
-        let found = false;
-        for (const p of possiblePaths) {
-          if (fs3.existsSync(p)) {
-            logger.info(`\u2705 Found static files at: ${p}`);
-            app.use(express2.static(p));
-            app.use((req, res) => {
-              const indexPath = path4.join(p, "index.html");
-              if (fs3.existsSync(indexPath)) {
-                res.sendFile(indexPath);
-              } else {
-                res.status(404).send("File not found");
-              }
-            });
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          logger.error("\u274C No static files directory found");
-          app.get("/", (req, res) => res.send("Server is running but static files are missing"));
-        }
-      }
-    } else {
-      const { setupVite: setupVite2 } = await Promise.resolve().then(() => (init_vite(), vite_exports));
-      await setupVite2(httpServer, app);
-      logger.info("\u2705 Vite dev server configured");
+    const distPublicPath = path2.join(process.cwd(), "dist", "public");
+    if (__require("fs").existsSync(distPublicPath)) {
+      app.use(express2.static(distPublicPath));
+      app.use((req, res, next) => {
+        if (req.path.startsWith("/api")) return next();
+        res.sendFile(path2.join(distPublicPath, "index.html"));
+      });
     }
-    const enableHttps = process.env.ENABLE_HTTPS === "true" && isProduction2;
-    if (enableHttps && process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
-      try {
-        const sslOptions = {
-          key: fs3.readFileSync(process.env.SSL_KEY_PATH),
-          cert: fs3.readFileSync(process.env.SSL_CERT_PATH),
-          ...process.env.SSL_CA_PATH && { ca: fs3.readFileSync(process.env.SSL_CA_PATH) }
-        };
-        httpsServer = https.createServer(sslOptions, app);
-        httpsServer.listen(443, host, () => {
-          logger.info("\n" + "=".repeat(60));
-          logger.info("\u{1F680} HTTPS SERVER STARTED SUCCESSFULLY");
-          logger.info("=".repeat(60));
-          logger.info(`\u{1F512} HTTPS: https://${getLocalIP()}`);
-          logger.info(`\u{1F5C4}\uFE0F  Session store:   ${redisAvailable ? "Redis \u2705" : "MemoryStore \u26A0\uFE0F"}`);
-          logger.info("=".repeat(60) + "\n");
-        });
-        const httpApp = express2();
-        httpApp.use((req, res) => {
-          res.redirect(301, `https://${req.headers.host}${req.url}`);
-        });
-        const redirectServer = createServer(httpApp);
-        redirectServer.listen(80);
-        logger.info("\u2705 HTTP to HTTPS redirect configured on port 80");
-      } catch (error) {
-        logger.error("Failed to load SSL certificates:", error);
-        logger.warn("Falling back to HTTP server");
-        startHttpServer(port, host);
-      }
-    } else {
-      startHttpServer(port, host);
-    }
+    httpServer.listen(port, host, () => {
+      logger.info(`\u{1F680} Server running on port ${port}`);
+    });
   } catch (error) {
     logger.error("Failed to start server:", error);
     process.exit(1);
   }
-}
-function startHttpServer(port, host) {
-  httpServer.listen(port, host, () => {
-    const localIP = getLocalIP();
-    logger.info("\n" + "=".repeat(60));
-    logger.info("\u{1F680} SERVER STARTED SUCCESSFULLY");
-    logger.info("=".repeat(60));
-    logger.info(`\u{1F4E1} Local access:    http://localhost:${port}`);
-    logger.info(`\u{1F30D} Network access:  http://${localIP}:${port}`);
-    logger.info(`\u{1F5C4}\uFE0F  Session store:   ${redisAvailable ? "Redis \u2705" : "MemoryStore \u26A0\uFE0F"}`);
-    logger.info(`\u{1F512} HTTPS:           ${isProduction2 ? "Disabled" : "Disabled (development)"}`);
-    logger.info(`\u{1F4CA} Metrics:         http://localhost:${port}/api/metrics`);
-    logger.info("=".repeat(60) + "\n");
-    logger.info("\u{1F4DD} Test avec:");
-    logger.info(`   curl http://localhost:${port}/api/test`);
-    logger.info(`   curl http://localhost:${port}/api/health`);
-    logger.info(`   curl http://localhost:${port}/api/metrics`);
-    if (!isProduction2) {
-      logger.info(`   curl http://localhost:${port}/api/debug/session-state`);
-    }
-    logger.info(`   curl http://localhost:${port}/api/debug/static`);
-  });
-  httpServer.on("error", (error) => {
-    if (error.code === "EADDRINUSE") {
-      logger.error(`Port ${port} is already in use!`);
-      process.exit(1);
-    } else {
-      logger.error("Server error:", error);
-      process.exit(1);
-    }
-  });
 }
 startServer();

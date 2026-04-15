@@ -7,22 +7,14 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
     const fullUrl = `${API_BASE_URL}${url}`;
     console.log(`🌐 [OVERRIDE] ${url} -> ${fullUrl}`);
     
-    const isFormData = options?.body instanceof FormData;
-    
-    // Ne pas modifier les headers pour FormData
-    const headers: HeadersInit = {
-      ...options?.headers,
-    };
-    
-    if (!isFormData) {
-      headers['Content-Type'] = 'application/json';
-      headers['Accept'] = 'application/json';
-    }
-
     const newOptions: RequestInit = {
       ...options,
-      credentials: 'include',
-      headers: headers,
+      credentials: 'include',  // ESSENTIEL
+      headers: {
+        ...options?.headers,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
     };
     
     return originalFetch(fullUrl, newOptions);
@@ -30,5 +22,3 @@ window.fetch = function(url: RequestInfo | URL, options?: RequestInit): Promise<
   
   return originalFetch(url, options);
 };
-
-console.log('✅ Fetch override installed');
