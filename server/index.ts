@@ -139,10 +139,16 @@ function getLocalIP(): string {
 // DÉSACTIVER COMPLÈTEMENT HELMET - Plus de problèmes CSP
 // app.use(helmet(...)); // COMMENTÉ
 
-// Ajouter uniquement les en-têtes essentiels
 app.use((req, res, next) => {
+  // Supprimer toute CSP existante
+  res.removeHeader('Content-Security-Policy');
+  res.removeHeader('X-Content-Security-Policy');
+  
+  // En-têtes de sécurité basiques uniquement
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  
   next();
 });
 

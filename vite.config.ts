@@ -19,7 +19,6 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
         runtimeCaching: [
           {
-            // CORRECTION: URL pour Render.com
             urlPattern: /^https:\/\/senior-full-stack\.onrender\.com\/api\/.*/i,
             handler: 'NetworkFirst',
             options: {
@@ -42,7 +41,6 @@ export default defineConfig({
               }
             }
           },
-          // Ajout pour Google Fonts
           {
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
             handler: 'CacheFirst',
@@ -85,9 +83,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
-    host: true, // Permet l'accès depuis le réseau local
+    host: true,
     fs: {
-      strict: false, // Désactiver pour le développement
+      strict: false,
       allow: ['..']
     },
     proxy: {
@@ -107,8 +105,10 @@ export default defineConfig({
     }
   },
   base: '/',
+  // SOLUTION: Désactiver l'optimisation des dépendances en développement
   optimizeDeps: {
-    include: ['react', 'react-dom', 'framer-motion', 'lucide-react', 'leaflet', 'react-leaflet'],
-    force: true
+    disabled: true,  // ← Désactive complètement l'optimisation
+    include: [],
+    force: false
   }
 });
