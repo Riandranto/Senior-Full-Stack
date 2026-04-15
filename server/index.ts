@@ -148,15 +148,15 @@ app.use((req, res, next) => {
 
 app.use(session({
   name: 'farady.sid',
-  secret: process.env.SESSION_SECRET || 'fallback-secret-key-change-this',
+  secret: process.env.SESSION_SECRET || 'farady-secret-key',
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore({ checkPeriod: 86400000 }),
   cookie: {
-    secure: true,              // Render utilise HTTPS
+    secure: true,
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000,
-    sameSite: 'lax',          // Pour le même domaine, 'lax' suffit
+    sameSite: 'lax',
     path: '/',
   }
 }));
@@ -352,13 +352,13 @@ if (!isProduction) {
 
 async function startServer() {
   try {
-    const port = parseInt(process.env.PORT || "5000", 10);
+    // ⭐ CRITIQUE: Utiliser process.env.PORT (Render utilise 10000)
+    const port = parseInt(process.env.PORT || "10000", 10);
     const host = "0.0.0.0";
     
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
-    logger.info('✅ Routes registered');
-
+    
     // Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
       console.error('Error:', err);
@@ -367,7 +367,7 @@ async function startServer() {
 
     // Fichiers statiques
     const distPublicPath = path.join(process.cwd(), 'dist', 'public');
-    if (require('fs').existsSync(distPublicPath)) {
+    if (fs.existsSync(distPublicPath)) {
       app.use(express.static(distPublicPath));
       app.use((req, res, next) => {
         if (req.path.startsWith('/api')) return next();
@@ -376,11 +376,11 @@ async function startServer() {
     }
 
     httpServer.listen(port, host, () => {
-      logger.info(`🚀 Server running on port ${port}`);
+      console.log(`🚀 Server running on port ${port}`);
     });
 
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   }
 }

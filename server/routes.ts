@@ -240,16 +240,9 @@ export async function registerRoutes(
     }
   });
   
-  app.post(api.auth.verifyOtp.path, async (req, res) => {
+  app.post('/api/auth/verify-otp', async (req, res) => {
     try {
-      console.log('🔐 verifyOtp called');
-      console.log('Session ID avant:', req.sessionID);
-      
       const { phone, otp } = req.body;
-      
-      if (!phone || !otp) {
-        return res.status(400).json({ message: "Phone et OTP requis" });
-      }
       
       if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
@@ -257,7 +250,6 @@ export async function registerRoutes(
       
       let user = await storage.getUserByPhone(phone);
       if (!user) {
-        console.log(`Création utilisateur pour ${phone}`);
         user = await storage.createUser({ 
           phone, 
           name: `User_${phone.slice(-4)}`, 
@@ -265,35 +257,18 @@ export async function registerRoutes(
         });
       }
       
-      // Régénérer la session
-      req.session.regenerate((err) => {
+      // Sauvegarde directe sans regenerate
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      
+      req.session.save((err) => {
         if (err) {
-          console.error('Regenerate error:', err);
-          return res.status(500).json({ message: "Session error" });
+          console.error('Session save error:', err);
+          return res.status(500).json({ message: "Erreur session" });
         }
         
-        req.session.userId = user.id;
-        req.session.role = user.role;
-        
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error('Save error:', saveErr);
-            return res.status(500).json({ message: "Save error" });
-          }
-          
-          console.log(`✅ Utilisateur ${user.id} connecté`);
-          console.log(`Session ID après: ${req.sessionID}`);
-          
-          res.json({ 
-            user: {
-              id: user.id,
-              phone: user.phone,
-              name: user.name,
-              role: user.role,
-            }, 
-            success: true 
-          });
-        });
+        console.log(`✅ User ${user.id} logged in, session ID: ${req.sessionID}`);
+        res.json({ user, success: true });
       });
       
     } catch (error) {
