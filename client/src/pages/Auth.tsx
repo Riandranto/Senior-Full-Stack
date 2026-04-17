@@ -1,3 +1,4 @@
+// client/src/pages/auth/Auth.tsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { useLocation } from 'wouter';
@@ -5,10 +6,12 @@ import { useTranslation } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, Shield, Loader2, WifiOff } from 'lucide-react';
+import { Phone, Mail, Shield, Loader2, WifiOff, AtSign, Lock } from 'lucide-react';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { apiFetch } from '@/lib/api';
 
 // Animation du logo
 const LogoAnimation = () => (
@@ -82,7 +85,9 @@ const InputField = ({
   placeholder, 
   type = 'text',
   maxLength,
-  testId 
+  icon: Icon,
+  testId,
+  error
 }: any) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
@@ -90,32 +95,51 @@ const InputField = ({
     transition={{ duration: 0.4 }}
   >
     <label className="text-sm font-semibold mb-1.5 block text-foreground">{label}</label>
-    <motion.div
-      whileHover={{ scale: 1.01 }}
-      whileTap={{ scale: 0.99 }}
-    >
-      <Input 
-        value={value} 
-        onChange={onChange} 
-        placeholder={placeholder}
-        type={type}
-        maxLength={maxLength}
-        className="h-12 rounded-xl bg-secondary/50 border-transparent focus:border-primary focus:ring-primary/20 transition-all"
-        data-testid={testId}
-      />
-    </motion.div>
+    <div className="relative">
+      {Icon && (
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+          <Icon className="w-4 h-4" />
+        </div>
+      )}
+      <motion.div
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.99 }}
+      >
+        <Input 
+          value={value} 
+          onChange={onChange} 
+          placeholder={placeholder}
+          type={type}
+          maxLength={maxLength}
+          className={`h-12 rounded-xl bg-secondary/50 border-transparent focus:border-primary focus:ring-primary/20 transition-all ${Icon ? 'pl-10' : ''} ${error ? 'border-red-500' : ''}`}
+          data-testid={testId}
+        />
+      </motion.div>
+    </div>
+    {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
   </motion.div>
 );
 
 export default function Auth() {
+  // États pour la connexion par téléphone
   const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [offlineCredentials, setOfflineCredentials] = useState<{phone: string, timestamp: number} | null>(null);
+  const [phoneOtp, setPhoneOtp] = useState('');
+  const [phoneStep, setPhoneStep] = useState<'phone' | 'otp'>('phone');
   
-  const { requestOtp, login, isLoginPending } = useAuth();
+  // États pour la connexion par email
+  const [email, setEmail] = useState('');
+  const [emailOtp, setEmailOtp] = useState('');
+  const [emailStep, setEmailStep] = useState<'email' | 'otp'>('email');
+  
+  const [activeTab, setActiveTab] = useState<'phone' | 'email'>('phone');
+  const [offlineCredentials, setOfflineCredentials] = useState<{phone: string, timestamp: number} | null>(null);
+  const [isRequestingOtp, setIsRequestingOtp] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  
+  const { user, login, refetch } = useAuth();
   const [, setLocation] = useLocation();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { toast } = useToast();
   const { isConnected } = useNetworkStatus();
 
@@ -125,7 +149,6 @@ export default function Auth() {
     if (saved) {
       try {
         const creds = JSON.parse(saved);
-        // Vérifier si moins de 7 jours
         if (Date.now() - creds.timestamp < 7 * 24 * 60 * 60 * 1000) {
           setOfflineCredentials(creds);
         } else {
@@ -135,11 +158,23 @@ export default function Auth() {
     }
   }, []);
 
-  const handleRequestOtp = async (e: React.FormEvent) => {
+  // Rediriger si déjà connecté
+  useEffect(() => {
+    if (user) {
+      if (user.role === 'DRIVER') {
+        setLocation('/driver');
+      } else if (user.role === 'ADMIN') {
+        setLocation('/admin');
+      } else {
+        setLocation('/passenger');
+      }
+    }
+  }, [user, setLocation]);
+
+  const handleRequestPhoneOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone) return;
     
-    // Vérifier la connexion Internet
     if (!isConnected) {
       toast({ 
         variant: "destructive", 
@@ -149,23 +184,38 @@ export default function Auth() {
       return;
     }
     
+    setIsRequestingOtp(true);
+    setOtpError(null);
+    
     try {
-      await requestOtp(phone);
-      setStep('otp');
+      const res = await apiFetch('/api/auth/request-otp', {
+        method: 'POST',
+        body: JSON.stringify({ phone }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || "Erreur lors de l'envoi");
+      }
+      
+      setPhoneStep('otp');
       toast({ 
         title: "OTP Envoyé!", 
-        description: "Vérifiez votre téléphone pour le code.",
+        description: `Code envoyé au ${phone}`,
       });
     } catch (err: any) {
+      setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsRequestingOtp(false);
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handlePhoneLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otp) return;
+    if (!phoneOtp) return;
     
-    // Vérifier la connexion Internet
     if (!isConnected) {
       toast({ 
         variant: "destructive", 
@@ -175,40 +225,160 @@ export default function Auth() {
       return;
     }
     
+    setIsVerifying(true);
+    setOtpError(null);
+    
     try {
-      const res = await login({ phone, otp });
+      const res = await apiFetch('/api/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({ phone, otp: phoneOtp }),
+      });
       
-      // SAUVEGARDER POUR LE MODE HORS-LIGNE
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || "Code invalide");
+      }
+      
       localStorage.setItem('offline_credentials', JSON.stringify({
         phone: phone,
         timestamp: Date.now()
       }));
       sessionStorage.removeItem('offline_mode');
       
-      // Animation de transition avant redirection
-      await new Promise(resolve => setTimeout(resolve, 300));
-      if (res.user.role === 'DRIVER') {
+      await refetch();
+      
+      toast({ 
+        title: "Connecté!", 
+        description: "Bienvenue sur Farady" 
+      });
+      
+      if (data.user.role === 'DRIVER') {
         setLocation('/driver');
-      } else if (res.user.role === 'ADMIN') {
+      } else if (data.user.role === 'ADMIN') {
         setLocation('/admin');
       } else {
         setLocation('/passenger');
       }
     } catch (err: any) {
+      setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleRequestEmailOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
+    
+    if (!isConnected) {
+      toast({ 
+        variant: "destructive", 
+        title: "Pas de connexion", 
+        description: "Vérifiez votre connexion Internet pour recevoir le code." 
+      });
+      return;
+    }
+    
+    // Validation email basique
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setOtpError("Email invalide");
+      return;
+    }
+    
+    setIsRequestingOtp(true);
+    setOtpError(null);
+    
+    try {
+      const res = await apiFetch('/api/auth/request-email-otp', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || "Erreur lors de l'envoi");
+      }
+      
+      setEmailStep('otp');
+      toast({ 
+        title: "Code envoyé!", 
+        description: `Code envoyé à ${email}`,
+      });
+    } catch (err: any) {
+      setOtpError(err.message);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsRequestingOtp(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailOtp) return;
+    
+    if (!isConnected) {
+      toast({ 
+        variant: "destructive", 
+        title: "Pas de connexion", 
+        description: "Vérifiez votre connexion Internet pour vous connecter." 
+      });
+      return;
+    }
+    
+    setIsVerifying(true);
+    setOtpError(null);
+    
+    try {
+      const res = await apiFetch('/api/auth/verify-email-otp', {
+        method: 'POST',
+        body: JSON.stringify({ email, otp: emailOtp }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.message || "Code invalide");
+      }
+      
+      localStorage.setItem('offline_credentials', JSON.stringify({
+        phone: data.user?.phone || email,
+        timestamp: Date.now()
+      }));
+      sessionStorage.removeItem('offline_mode');
+      
+      await refetch();
+      
+      toast({ 
+        title: "Connecté!", 
+        description: "Bienvenue sur Farady" 
+      });
+      
+      if (data.user.role === 'DRIVER') {
+        setLocation('/driver');
+      } else if (data.user.role === 'ADMIN') {
+        setLocation('/admin');
+      } else {
+        setLocation('/passenger');
+      }
+    } catch (err: any) {
+      setOtpError(err.message);
+      toast({ variant: "destructive", title: "Erreur", description: err.message });
+    } finally {
+      setIsVerifying(false);
     }
   };
 
   const handleOfflineAccess = () => {
     if (offlineCredentials) {
-      // Mode hors-ligne - accès limité
       toast({
         title: "Mode hors-ligne",
         description: "Accès limité. Reconnectez-vous pour utiliser toutes les fonctionnalités."
       });
-      // Stocker qu'on est en mode hors-ligne
       sessionStorage.setItem('offline_mode', 'true');
-      // Rediriger vers l'accueil passager (mode dégradé)
       setLocation('/passenger');
     }
   };
@@ -217,7 +387,6 @@ export default function Auth() {
     <div className="min-h-screen w-full flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4 relative overflow-hidden">
       <BackgroundAnimation />
       
-      {/* Bannière hors-ligne si besoin */}
       {isConnected === false && (
         <div className="absolute top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-sm z-20 flex items-center justify-center gap-2">
           <WifiOff className="w-4 h-4" />
@@ -231,8 +400,8 @@ export default function Auth() {
         transition={{ duration: 0.5, ease: "easeOut" }}
         className="w-full max-w-md z-10"
       >
-        <Card className="p-8 shadow-float border-0 bg-background/80 backdrop-blur-xl rounded-3xl">
-          <div className="text-center mb-8">
+        <Card className="p-6 shadow-float border-0 bg-background/80 backdrop-blur-xl rounded-3xl">
+          <div className="text-center mb-6">
             <LogoAnimation />
             
             <motion.h1 
@@ -241,7 +410,7 @@ export default function Auth() {
               transition={{ delay: 0.2, duration: 0.4 }}
               className="text-3xl font-bold font-display text-foreground"
             >
-              {t('welcome')}
+              Farady
             </motion.h1>
             
             <motion.p 
@@ -250,113 +419,236 @@ export default function Auth() {
               transition={{ delay: 0.3, duration: 0.4 }}
               className="text-muted-foreground mt-2"
             >
-              {step === 'phone' ? 'Connectez-vous pour continuer' : 'Entrez le code reçu par SMS'}
+              Connectez-vous pour continuer
             </motion.p>
           </div>
 
-          <AnimatePresence mode="wait">
-            {step === 'phone' ? (
-              <motion.form 
-                key="phone-form"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                transition={{ duration: 0.3 }}
-                onSubmit={handleRequestOtp} 
-                className="space-y-4"
-              >
-                <InputField 
-                  label={t('login_phone')}
-                  value={phone}
-                  onChange={(e: any) => setPhone(e.target.value)}
-                  placeholder="+261 34 00 000 00"
-                  testId="input-phone"
-                />
-                
-                <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <Button 
-                    type="submit" 
-                    className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
-                    data-testid="button-send-otp"
-                    disabled={!isConnected}
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'phone' | 'email')} className="w-full">
+            <TabsList className="grid w-full grid-cols-2 rounded-xl mb-6">
+              <TabsTrigger value="phone" className="rounded-lg flex items-center gap-2">
+                <Phone className="w-4 h-4" />
+                Téléphone
+              </TabsTrigger>
+              <TabsTrigger value="email" className="rounded-lg flex items-center gap-2">
+                <Mail className="w-4 h-4" />
+                Email
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Connexion par téléphone */}
+            <TabsContent value="phone">
+              <AnimatePresence mode="wait">
+                {phoneStep === 'phone' ? (
+                  <motion.form 
+                    key="phone-form"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.3 }}
+                    onSubmit={handleRequestPhoneOtp} 
+                    className="space-y-4"
                   >
-                    <motion.span
-                      animate={{ x: [0, 5, 0] }}
-                      transition={{ duration: 1, repeat: Infinity, repeatDelay: 3 }}
-                      className="mr-2"
+                    <InputField 
+                      label="Numéro de téléphone"
+                      value={phone}
+                      onChange={(e: any) => setPhone(e.target.value)}
+                      placeholder="034 00 000 00"
+                      icon={Phone}
+                      testId="input-phone"
+                      error={otpError}
+                    />
+                    
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                     >
-                      →
-                    </motion.span>
-                    Continuer
-                  </Button>
-                </motion.div>
-              </motion.form>
-            ) : (
-              <motion.form 
-                key="otp-form"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3 }}
-                onSubmit={handleLogin} 
-                className="space-y-4"
-              >
-                <InputField 
-                  label={t('login_otp')}
-                  value={otp}
-                  onChange={(e: any) => setOtp(e.target.value)}
-                  placeholder="123456"
-                  type="text"
-                  maxLength={6}
-                  testId="input-otp"
-                />
-                
-                <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <Button 
-                    disabled={isLoginPending || !isConnected} 
-                    type="submit" 
-                    className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
-                    data-testid="button-verify-otp"
-                  >
-                    {isLoginPending ? (
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                        className="flex items-center gap-2"
+                      <Button 
+                        type="submit" 
+                        className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
+                        disabled={!isConnected || isRequestingOtp}
                       >
-                        <Loader2 className="w-5 h-5" />
-                        <span>Vérification...</span>
-                      </motion.div>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Shield className="w-4 h-4" />
-                        {t('login_btn')}
-                      </span>
-                    )}
-                  </Button>
-                </motion.div>
-                
-                <motion.button
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                  type="button"
-                  onClick={() => setStep('phone')}
-                  className="w-full text-center text-xs text-muted-foreground hover:text-primary transition-colors"
-                >
-                  ← Changer de numéro
-                </motion.button>
-              </motion.form>
-            )}
-          </AnimatePresence>
+                        {isRequestingOtp ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <>
+                            <span className="mr-2">→</span>
+                            Continuer
+                          </>
+                        )}
+                      </Button>
+                    </motion.div>
+                  </motion.form>
+                ) : (
+                  <motion.form 
+                    key="phone-otp-form"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.3 }}
+                    onSubmit={handlePhoneLogin} 
+                    className="space-y-4"
+                  >
+                    <InputField 
+                      label="Code OTP"
+                      value={phoneOtp}
+                      onChange={(e: any) => setPhoneOtp(e.target.value)}
+                      placeholder="123456"
+                      type="text"
+                      maxLength={6}
+                      icon={Shield}
+                      testId="input-otp"
+                      error={otpError}
+                    />
+                    
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Button 
+                        disabled={isVerifying || !isConnected} 
+                        type="submit" 
+                        className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
+                      >
+                        {isVerifying ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <Shield className="w-4 h-4" />
+                            Se connecter
+                          </span>
+                        )}
+                      </Button>
+                    </motion.div>
+                    
+                    <motion.button
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2 }}
+                      type="button"
+                      onClick={() => {
+                        setPhoneStep('phone');
+                        setPhoneOtp('');
+                        setOtpError(null);
+                      }}
+                      className="w-full text-center text-xs text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      ← Changer de numéro
+                    </motion.button>
+                  </motion.form>
+                )}
+              </AnimatePresence>
+            </TabsContent>
+
+            {/* Connexion par email */}
+            <TabsContent value="email">
+              <AnimatePresence mode="wait">
+                {emailStep === 'email' ? (
+                  <motion.form 
+                    key="email-form"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.3 }}
+                    onSubmit={handleRequestEmailOtp} 
+                    className="space-y-4"
+                  >
+                    <InputField 
+                      label="Adresse email"
+                      value={email}
+                      onChange={(e: any) => setEmail(e.target.value)}
+                      placeholder="exemple@email.com"
+                      icon={AtSign}
+                      testId="input-email"
+                      error={otpError}
+                    />
+                    
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Button 
+                        type="submit" 
+                        className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
+                        disabled={!isConnected || isRequestingOtp}
+                      >
+                        {isRequestingOtp ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <>
+                            <span className="mr-2">→</span>
+                            Continuer
+                          </>
+                        )}
+                      </Button>
+                    </motion.div>
+                  </motion.form>
+                ) : (
+                  <motion.form 
+                    key="email-otp-form"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.3 }}
+                    onSubmit={handleEmailLogin} 
+                    className="space-y-4"
+                  >
+                    <InputField 
+                      label="Code OTP"
+                      value={emailOtp}
+                      onChange={(e: any) => setEmailOtp(e.target.value)}
+                      placeholder="123456"
+                      type="text"
+                      maxLength={6}
+                      icon={Lock}
+                      testId="input-email-otp"
+                      error={otpError}
+                    />
+                    
+                    <p className="text-xs text-muted-foreground text-center">
+                      Un code de vérification a été envoyé à votre adresse email
+                    </p>
+                    
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Button 
+                        disabled={isVerifying || !isConnected} 
+                        type="submit" 
+                        className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
+                      >
+                        {isVerifying ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <Shield className="w-4 h-4" />
+                            Se connecter
+                          </span>
+                        )}
+                      </Button>
+                    </motion.div>
+                    
+                    <motion.button
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2 }}
+                      type="button"
+                      onClick={() => {
+                        setEmailStep('email');
+                        setEmailOtp('');
+                        setOtpError(null);
+                      }}
+                      className="w-full text-center text-xs text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      ← Changer d'email
+                    </motion.button>
+                  </motion.form>
+                )}
+              </AnimatePresence>
+            </TabsContent>
+          </Tabs>
           
-          {/* Bouton d'accès hors-ligne si des identifiants sont sauvegardés */}
+          {/* Bouton d'accès hors-ligne */}
           {isConnected === false && offlineCredentials && (
             <motion.div
               initial={{ opacity: 0 }}

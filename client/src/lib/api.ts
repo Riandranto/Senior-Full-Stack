@@ -1,24 +1,40 @@
-// src/lib/api.ts
+// client/src/lib/api.ts - CORRECTION COMPLÈTE
 import { api } from '@shared/routes';
 
-// CORRECTION : Détection améliorée de l'environnement
+// Détection de l'environnement Capacitor pour APK
+const isCapacitor = !!(window as any).Capacitor?.isNativePlatform();
 const isLocalDev = window.location.hostname === 'localhost' || 
                    window.location.hostname === '127.0.0.1' ||
                    window.location.hostname.includes('192.168.') ||
                    window.location.hostname.includes('172.') ||
                    window.location.hostname.includes('10.');
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 
-  (isLocalDev 
-    ? 'http://localhost:5000'
-    : window.location.origin);
+// IMPORTANT: Priorité: VITE_API_URL > détection auto > fallback
+// Pour le développement local, forcer localhost
+let apiUrl = import.meta.env.VITE_API_URL;
 
+// Si pas de VITE_API_URL ou si c'est l'URL de production en développement local
+if (!apiUrl || (isLocalDev && apiUrl.includes('onrender.com'))) {
+  if (isCapacitor) {
+    // Pour APK, utiliser l'URL du serveur (à modifier)
+    apiUrl = 'https://senior-full-stack.onrender.com'; // À remplacer par votre URL
+  } else if (isLocalDev) {
+    apiUrl = 'http://localhost:5000';
+  } else {
+    apiUrl = window.location.origin;
+  }
+}
+
+export const API_BASE_URL = apiUrl;
+
+console.log('🔧 ========== API CONFIG ==========');
 console.log('🔧 API_BASE_URL:', API_BASE_URL);
 console.log('🔧 MODE:', import.meta.env.MODE);
 console.log('🔧 Hostname:', window.location.hostname);
 console.log('🔧 isLocalDev:', isLocalDev);
-console.log('🔧 import.meta.env.DEV:', import.meta.env.DEV);
-console.log('🔧 import.meta.env.MODE:', import.meta.env.MODE);
+console.log('🔧 isCapacitor:', isCapacitor);
+console.log('🔧 VITE_API_URL from env:', import.meta.env.VITE_API_URL);
+console.log('🔧 =================================');
 
 export class ApiError extends Error {
   status: number;
@@ -64,7 +80,6 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     
     console.log(`📡 [apiFetch] Response status: ${response.status} for ${endpoint}`);
     
-    // Gérer les erreurs HTTP
     if (!response.ok) {
       let errorData;
       try {
@@ -83,7 +98,6 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
       throw error;
     }
     
-    // Erreur réseau
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       throw new ApiError(
         'Impossible de se connecter au serveur. Vérifiez votre connexion.',
@@ -99,13 +113,12 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
   }
 }
 
-// Helper pour les requêtes GET
+// Le reste du code reste identique...
 export async function apiGet<T>(endpoint: string): Promise<T> {
   const response = await apiFetch(endpoint);
   return response.json();
 }
 
-// Helper pour les requêtes POST
 export async function apiPost<T>(endpoint: string, data?: any): Promise<T> {
   const response = await apiFetch(endpoint, {
     method: 'POST',
@@ -114,7 +127,6 @@ export async function apiPost<T>(endpoint: string, data?: any): Promise<T> {
   return response.json();
 }
 
-// Helper pour les requêtes PUT
 export async function apiPut<T>(endpoint: string, data?: any): Promise<T> {
   const response = await apiFetch(endpoint, {
     method: 'PUT',
@@ -123,7 +135,6 @@ export async function apiPut<T>(endpoint: string, data?: any): Promise<T> {
   return response.json();
 }
 
-// Helper pour les requêtes PATCH
 export async function apiPatch<T>(endpoint: string, data?: any): Promise<T> {
   const response = await apiFetch(endpoint, {
     method: 'PATCH',
@@ -132,7 +143,6 @@ export async function apiPatch<T>(endpoint: string, data?: any): Promise<T> {
   return response.json();
 }
 
-// Helper pour les requêtes DELETE
 export async function apiDelete<T>(endpoint: string): Promise<T> {
   const response = await apiFetch(endpoint, {
     method: 'DELETE',
@@ -156,6 +166,16 @@ export async function getCurrentUser() {
 
 export async function logout() {
   return apiPost(api.auth.logout.path);
+}
+
+// ==================== EMAIL AUTH ROUTES ====================
+
+export async function requestEmailOtp(email: string) {
+  return apiPost('/api/auth/request-email-otp', { email });
+}
+
+export async function verifyEmailOtp(email: string, otp: string) {
+  return apiPost('/api/auth/verify-email-otp', { email, otp });
 }
 
 // ==================== PASSENGER ROUTES ====================
@@ -503,9 +523,17 @@ export async function getDriverLocation(driverId: number) {
 // ==================== WEBSOCKET ====================
 
 export function createWebSocketConnection(): WebSocket {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = isLocalDev ? 'localhost:5000' : window.location.host;
-  const wsUrl = `${wsProtocol}//${wsHost}/ws`;
+  // Utiliser la même logique que pour API_BASE_URL
+  let wsUrl: string;
+  
+  if (isCapacitor) {
+    wsUrl = `wss://ton-serveur-render.com/ws`;
+  } else if (isLocalDev) {
+    wsUrl = `ws://localhost:5000/ws`;
+  } else {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsUrl = `${protocol}//${window.location.host}/ws`;
+  }
   
   console.log('🔌 Creating WebSocket connection to:', wsUrl);
   return new WebSocket(wsUrl);

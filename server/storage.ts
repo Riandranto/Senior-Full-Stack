@@ -104,6 +104,10 @@ export interface IStorage {
   // Additional
   getDriverActiveRide(driverId: number): Promise<Ride | undefined>;
   updateRideEta(id: number, additionalMinutes: number): Promise<Ride>;
+
+  // Nouveaux méthodes pour email
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByName(name: string): Promise<User | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -134,6 +138,20 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  //=================== MAIL ====================
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    if (!email) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+  
+  async getUserByName(name: string): Promise<User | undefined> {
+    if (!name) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.name, name));
+    return user;
+  }
+  
+
   // ==================== USERS ====================
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -145,9 +163,11 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  // Surcharger createUser pour supporter email
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values({
       phone: insertUser.phone,
+      email: insertUser.email || null,
       name: insertUser.name,
       role: insertUser.role || "PASSENGER",
       language: insertUser.language || "mg",

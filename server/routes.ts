@@ -6,7 +6,7 @@ import { api } from "@shared/routes";
 import { 
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
   advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages,
-  passengerDocuments, bookings, bookingOffers
+  passengerDocuments, bookings, bookingOffers, emailOtps
 } from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
@@ -15,6 +15,7 @@ import multer from "multer";
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { sendEmailOtp, generateOtp } from "./services/email.js";
 
 // Configuration multer pour l'upload des fichiers
 const uploadStorage = multer.diskStorage({
@@ -33,7 +34,6 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// Configuration spécifique pour les publicités
 const adUpload = multer({
   storage: uploadStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -113,11 +113,9 @@ export async function registerRoutes(
           console.log(`✅ WebSocket authenticated for user ${userId}`);
         }
         
-        // Gestion des messages de chat
         if (data.type === 'CHAT_MESSAGE' && userId) {
-          const { rideId, message: msg, fromName, toUserId, timestamp } = data.payload;
+          const { rideId, message: msg, fromName, toUserId } = data.payload;
           
-          // Sauvegarder en base de données
           try {
             const [savedMessage] = await db.insert(chatMessages).values({
               rideId,
@@ -127,7 +125,6 @@ export async function registerRoutes(
               isRead: false,
             }).returning();
             
-            // Envoyer au destinataire
             const target = clients.get(toUserId);
             if (target && target.readyState === WebSocket.OPEN) {
               target.send(JSON.stringify({
@@ -143,13 +140,9 @@ export async function registerRoutes(
               }));
             }
             
-            // Confirmer l'envoi à l'expéditeur
             ws.send(JSON.stringify({
               type: 'CHAT_MESSAGE_SENT',
-              payload: {
-                id: savedMessage.id,
-                success: true
-              }
+              payload: { id: savedMessage.id, success: true }
             }));
           } catch (error) {
             console.error('❌ Error saving chat message:', error);
@@ -190,6 +183,8 @@ export async function registerRoutes(
     }
   };
 
+  // ==================== DEBUG ROUTES ====================
+  
   app.get('/api/debug/env', (req, res) => {
     res.json({
       nodeEnv: process.env.NODE_ENV,
@@ -201,7 +196,6 @@ export async function registerRoutes(
 
   app.get('/api/debug/db', async (req, res) => {
     try {
-      // Test simple de connexion
       const result = await db.execute(sql`SELECT NOW()`);
       const userCount = await db.select({ count: sql<number>`count(*)` }).from(users);
       
@@ -220,103 +214,7 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== AUTH ROUTES ====================
-
-  app.post(api.auth.requestOtp.path, async (req, res) => {
-    try {
-      console.log('📞 requestOtp called');
-      const { phone } = req.body;
-      
-      if (!phone) {
-        return res.status(400).json({ message: "Numéro requis" });
-      }
-      
-      console.log(`📱 OTP pour ${phone}: 123456`);
-      res.json({ message: "Code envoyé", expiresIn: 300 });
-      
-    } catch (error) {
-      console.error('requestOtp error:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-  
-  app.post('/api/auth/verify-otp', async (req, res) => {
-    try {
-      const { phone, otp } = req.body;
-      
-      if (otp !== "123456") {
-        return res.status(401).json({ message: "Code invalide" });
-      }
-      
-      let user = await storage.getUserByPhone(phone);
-      if (!user) {
-        user = await storage.createUser({ 
-          phone, 
-          name: `User_${phone.slice(-4)}`, 
-          role: "PASSENGER" 
-        });
-      }
-      
-      // Sauvegarde directe sans regenerate
-      req.session.userId = user.id;
-      req.session.role = user.role;
-      
-      req.session.save((err) => {
-        if (err) {
-          console.error('Session save error:', err);
-          return res.status(500).json({ message: "Erreur session" });
-        }
-        
-        console.log(`✅ User ${user.id} logged in, session ID: ${req.sessionID}`);
-        res.json({ user, success: true });
-      });
-      
-    } catch (error) {
-      console.error('verifyOtp error:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-  
-  app.get(api.auth.me.path, async (req, res) => {
-    console.log('👤 getMe called');
-    console.log('Session ID:', req.sessionID);
-    console.log('Session userId:', req.session?.userId);
-    
-    if (!req.session?.userId) {
-      return res.status(401).json({ message: "Non authentifié" });
-    }
-    
-    const user = await storage.getUser(req.session.userId);
-    if (!user) {
-      return res.status(401).json({ message: "Utilisateur non trouvé" });
-    }
-    
-    res.json(user);
-  });
-  
-  app.post(api.auth.logout.path, (req, res) => {
-    console.log('🚪 logout called');
-    
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('❌ Logout error:', err);
-        return res.status(500).json({ message: "Erreur lors de la déconnexion" });
-      }
-      res.clearCookie('farady.sid');
-      res.json({ message: "Déconnexion réussie" });
-    });
-  });
-
-
-  // ==================== DEBUG ROUTES ====================
-  
-  // Route de debug pour vérifier la session après login
   app.get('/api/debug/session', (req, res) => {
-    console.log('🔍 Debug session:');
-    console.log('Session ID:', req.sessionID);
-    console.log('Session user:', req.session?.userId);
-    console.log('Session role:', req.session?.role);
-    
     res.json({
       sessionId: req.sessionID,
       userId: req.session?.userId,
@@ -380,6 +278,331 @@ export async function registerRoutes(
     });
   });
 
+  app.get('/api/metrics', (req, res) => {
+    res.json({
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      cpu: process.cpuUsage(),
+      environment: process.env.NODE_ENV,
+      timestamp: Date.now()
+    });
+  });
+
+  // ==================== AUTH ROUTES ====================
+
+  app.post(api.auth.requestOtp.path, async (req, res) => {
+    try {
+      console.log('📞 requestOtp called');
+      const { phone } = req.body;
+      
+      if (!phone) {
+        return res.status(400).json({ message: "Numéro requis" });
+      }
+      
+      console.log(`📱 OTP pour ${phone}: 123456`);
+      res.json({ message: "Code envoyé", expiresIn: 300 });
+      
+    } catch (error) {
+      console.error('requestOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+  
+  app.post('/api/auth/verify-otp', async (req, res) => {
+    try {
+      const { phone, otp } = req.body;
+      
+      if (otp !== "123456") {
+        return res.status(401).json({ message: "Code invalide" });
+      }
+      
+      let user = await storage.getUserByPhone(phone);
+      if (!user) {
+        user = await storage.createUser({ 
+          phone, 
+          name: `User_${phone.slice(-4)}`, 
+          role: "PASSENGER" 
+        });
+      }
+      
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+          return res.status(500).json({ message: "Erreur session" });
+        }
+        
+        console.log(`✅ User ${user.id} logged in, session ID: ${req.sessionID}`);
+        
+        res.json({ 
+          user: {
+            id: user.id,
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            role: user.role,
+            language: user.language,
+            isApproved: user.isApproved,
+            isBlocked: user.isBlocked,
+          }, 
+          success: true 
+        });
+      });
+      
+    } catch (error) {
+      console.error('verifyOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+  
+  app.get(api.auth.me.path, async (req, res) => {
+    console.log('👤 getMe called');
+    console.log('Session ID:', req.sessionID);
+    console.log('Session userId:', req.session?.userId);
+    
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    
+    const user = await storage.getUser(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ message: "Utilisateur non trouvé" });
+    }
+    
+    res.json(user);
+  });
+  
+  app.post(api.auth.logout.path, (req, res) => {
+    console.log('🚪 logout called');
+    
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('❌ Logout error:', err);
+        return res.status(500).json({ message: "Erreur lors de la déconnexion" });
+      }
+      res.clearCookie('farady.sid');
+      res.json({ message: "Déconnexion réussie" });
+    });
+  });
+
+  // ==================== EMAIL OTP ROUTES ====================
+
+  app.post('/api/auth/request-email-otp', async (req, res) => {
+    try {
+      console.log('📧 Email OTP request received:', req.body);
+      const { email, language = 'fr' } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Format d'email invalide" });
+      }
+      
+      // Supprimer les anciens OTP non utilisés pour cet email
+      await db.delete(emailOtps)
+        .where(and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.isUsed, false)
+        ));
+      
+      const otp = generateOtp();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      
+      // Sauvegarder l'OTP
+      const [savedOtp] = await db.insert(emailOtps).values({
+        email,
+        otp,
+        expiresAt,
+        isUsed: false,
+      }).returning();
+      
+      console.log(`📧 OTP generated for ${email}: ${otp}, expires at ${expiresAt.toISOString()}`);
+      
+      // Envoyer l'email
+      let emailSent = false;
+      try {
+        emailSent = await sendEmailOtp(email, otp, language);
+      } catch (emailError) {
+        console.error('Email sending error:', emailError);
+      }
+      
+      // En développement, toujours retourner l'OTP pour faciliter les tests
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`⚠️ [DEV] OTP for ${email}: ${otp}`);
+        return res.json({ 
+          message: "Code envoyé", 
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      
+      if (!emailSent) {
+        return res.status(500).json({ 
+          message: "Erreur lors de l'envoi de l'email. Veuillez réessayer." 
+        });
+      }
+      
+      res.json({ message: "Code envoyé par email", expiresIn: 300 });
+      
+    } catch (error) {
+      console.error('requestEmailOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  app.post('/api/auth/verify-email-otp', async (req, res) => {
+    try {
+      console.log('🔐 Email OTP verification request:', { email: req.body.email, otp: req.body.otp });
+      const { email, otp } = req.body;
+      
+      if (!email || !otp) {
+        return res.status(400).json({ message: "Email et code requis" });
+      }
+      
+      // Récupérer l'OTP non utilisé et non expiré
+      const [validOtp] = await db.select().from(emailOtps)
+        .where(and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.otp, otp),
+          eq(emailOtps.isUsed, false)
+        ))
+        .limit(1);
+      
+      // Vérifier si l'OTP existe
+      if (!validOtp) {
+        console.log(`❌ No OTP found for email ${email} with code ${otp}`);
+        return res.status(401).json({ message: "Code invalide" });
+      }
+      
+      // Vérifier si l'OTP est expiré
+      const now = new Date();
+      const expiresAt = new Date(validOtp.expiresAt);
+      
+      if (now > expiresAt) {
+        console.log(`❌ OTP expired for ${email}: ${expiresAt} < ${now}`);
+        return res.status(401).json({ message: "Code expiré. Veuillez en demander un nouveau." });
+      }
+      
+      console.log(`✅ OTP valid for ${email}, expires at ${expiresAt}`);
+      
+      // Marquer l'OTP comme utilisé
+      await db.update(emailOtps)
+        .set({ isUsed: true })
+        .where(eq(emailOtps.id, validOtp.id));
+      
+      // Chercher ou créer l'utilisateur
+      let user = await storage.getUserByEmail(email);
+      
+      if (!user) {
+        const tempName = email.split('@')[0];
+        let finalName = tempName;
+        let counter = 1;
+        const existingUser = await storage.getUserByName(finalName);
+        if (existingUser) {
+          finalName = `${tempName}${counter}`;
+          counter++;
+        }
+        
+        user = await storage.createUser({ 
+          email,
+          phone: `EMAIL_${Date.now()}`,
+          name: finalName,
+          role: "PASSENGER",
+          language: "fr"
+        });
+        
+        console.log(`✅ New user created with email: ${email}, ID: ${user.id}`);
+      }
+      
+      if (user.isBlocked) {
+        return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
+      }
+      
+      // Sauvegarder la session
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+          return res.status(500).json({ message: "Erreur session" });
+        }
+        
+        console.log(`✅ User ${user.id} logged in via email, session ID: ${req.sessionID}`);
+        
+        const userResponse = {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          language: user.language,
+          isApproved: user.isApproved,
+          isBlocked: user.isBlocked,
+        };
+        
+        res.json({ user: userResponse, success: true });
+      });
+      
+    } catch (error) {
+      console.error('verifyEmailOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  app.post('/api/auth/resend-email-otp', async (req, res) => {
+    try {
+      const { email, language = 'fr' } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      
+      await db.delete(emailOtps)
+        .where(and(
+          eq(emailOtps.email, email),
+          eq(emailOtps.isUsed, false)
+        ));
+      
+      const otp = generateOtp();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+      
+      const [savedOtp] = await db.insert(emailOtps).values({
+        email,
+        otp,
+        expiresAt,
+        isUsed: false,
+      }).returning();
+      
+      console.log(`📧 New OTP for ${email}: ${otp}`);
+      
+      const emailSent = await sendEmailOtp(email, otp, language);
+      
+      if (!emailSent && process.env.NODE_ENV === 'development') {
+        return res.json({ 
+          message: "Code renvoyé", 
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      
+      if (!emailSent) {
+        return res.status(500).json({ message: "Erreur lors de l'envoi" });
+      }
+      
+      res.json({ message: "Code renvoyé par email", expiresIn: 300 });
+      
+    } catch (error) {
+      console.error('resendEmailOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
   // ==================== CHAT HISTORY ROUTES ====================
   
   app.get('/api/chat/history/:rideId', async (req, res) => {
@@ -397,7 +620,6 @@ export async function registerRoutes(
         .where(eq(chatMessages.rideId, rideId))
         .orderBy(sql`${chatMessages.createdAt} ASC`);
       
-      // Marquer les messages reçus comme lus
       await db.update(chatMessages)
         .set({ isRead: true })
         .where(and(
@@ -406,7 +628,6 @@ export async function registerRoutes(
           eq(chatMessages.isRead, false)
         ));
       
-      // Transformer pour le frontend
       const formattedMessages = messages.map(msg => ({
         id: msg.id,
         rideId: msg.rideId,
@@ -445,7 +666,6 @@ export async function registerRoutes(
         isRead: false,
       }).returning();
       
-      // Envoyer via WebSocket en temps réel
       const sender = await storage.getUser(req.session.userId);
       
       if (toUserId) {
@@ -510,7 +730,6 @@ export async function registerRoutes(
 
   // ==================== ADVERTISEMENT ROUTES ====================
 
-  // GET /api/ads - Récupérer les publicités pour les utilisateurs
   app.get('/api/ads', async (req, res) => {
     try {
       const { screen, userRole } = req.query;
@@ -548,7 +767,6 @@ export async function registerRoutes(
       
       const ads = await query;
       
-      // Enregistrer les impressions
       if (req.session.userId && ads.length > 0) {
         for (const ad of ads) {
           await db.insert(adStats).values({
@@ -567,7 +785,6 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/admin/ads - Récupérer toutes les publicités (admin)
   app.get('/api/admin/ads', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -582,11 +799,7 @@ export async function registerRoutes(
     }
   });
 
-  // POST /api/admin/ads - Créer une publicité
   app.post('/api/admin/ads', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Creating ad - body:', req.body);
-    console.log('📢 Creating ad - file:', req.file);
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
@@ -622,7 +835,6 @@ export async function registerRoutes(
         clickCount: 0,
       }).returning();
       
-      console.log('✅ Ad created:', newAd);
       res.status(201).json(newAd);
     } catch (error) {
       console.error('❌ Error creating ad:', error);
@@ -630,11 +842,7 @@ export async function registerRoutes(
     }
   });
 
-  // PUT /api/admin/ads/:id - Modifier une publicité
   app.put('/api/admin/ads/:id', adUpload.single('image'), async (req, res) => {
-    console.log('📢 Updating ad - body:', req.body);
-    console.log('📢 Updating ad - file:', req.file);
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
@@ -676,7 +884,6 @@ export async function registerRoutes(
         .where(eq(advertisements.id, id))
         .returning();
       
-      console.log('✅ Ad updated:', updatedAd);
       res.json(updatedAd);
     } catch (error) {
       console.error('❌ Error updating ad:', error);
@@ -684,7 +891,6 @@ export async function registerRoutes(
     }
   });
 
-  // DELETE /api/admin/ads/:id - Supprimer une publicité
   app.delete('/api/admin/ads/:id', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -704,7 +910,6 @@ export async function registerRoutes(
     }
   });
 
-  // POST /api/ads/:id/click - Enregistrer un clic
   app.post('/api/ads/:id/click', async (req, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -733,7 +938,6 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/admin/ads/:id/stats - Statistiques d'une publicité
   app.get('/api/admin/ads/:id/stats', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -888,7 +1092,6 @@ export async function registerRoutes(
     res.json({ viewCount: count });
   });
 
-  // ==================== ROUTE /api/rides/active CORRIGÉE ====================
   app.get('/api/rides/active', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
@@ -897,11 +1100,9 @@ export async function registerRoutes(
     try {
       console.log(`🔍 Fetching active ride for user ${req.session.userId}`);
       
-      // Récupérer toutes les courses de l'utilisateur
       const allRides = await storage.getRideHistory(req.session.userId);
       console.log(`📋 Found ${allRides.length} rides total`);
       
-      // Filtrer les courses actives (non terminées et non annulées)
       const activeRide = allRides.find(r => 
         r.status !== 'COMPLETED' && 
         r.status !== 'CANCELED'
@@ -914,7 +1115,6 @@ export async function registerRoutes(
       
       console.log(`✅ Found active ride ${activeRide.id} with status ${activeRide.status}`);
       
-      // Ajouter les détails du conducteur/passager
       let otherUser = null;
       try {
         if (activeRide.driverId === req.session.userId) {
@@ -992,8 +1192,6 @@ export async function registerRoutes(
     }
   });
   
-
-  // POST /api/driver/register - Enregistrer un conducteur
   app.post('/api/driver/register', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
@@ -1002,15 +1200,12 @@ export async function registerRoutes(
     try {
       const { vehicleType, vehicleNumber, licenseNumber } = req.body;
       
-      // Vérifier si l'utilisateur a déjà un profil conducteur
       let existingProfile = await storage.getDriverProfile(req.session.userId);
       
       if (existingProfile) {
-        // Mettre à jour le profil existant
         await storage.updateDriverStatus(existingProfile.id, "PENDING");
         await storage.updateDriverOnline(req.session.userId, false);
         
-        // Mettre à jour les informations du véhicule
         await db.update(driverProfiles)
           .set({
             vehicleNumber: vehicleNumber || existingProfile.vehicleNumber,
@@ -1024,10 +1219,8 @@ export async function registerRoutes(
         return res.json(updatedProfile);
       }
       
-      // Mettre à jour le rôle de l'utilisateur
       await storage.updateUserRole(req.session.userId, "DRIVER");
       
-      // Créer le profil conducteur
       const profile = await storage.createDriverProfile({
         userId: req.session.userId,
         vehicleType: vehicleType || "TAXI",
@@ -1037,7 +1230,6 @@ export async function registerRoutes(
         online: false,
       });
       
-      // Mettre à jour la session
       req.session.role = "DRIVER";
       await new Promise((resolve, reject) => {
         req.session.save((err) => {
@@ -1128,25 +1320,24 @@ export async function registerRoutes(
     }
   });
 
- app.get(api.driver.getProfile.path, async (req, res) => {
-  if (!req.session.userId) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-  
-  try {
-    const profile = await storage.getDriverProfile(req.session.userId);
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
+  app.get(api.driver.getProfile.path, async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
     }
     
-    const docs = await storage.getDriverDocuments(profile.id);
-    res.json({ ...profile, documents: docs });
-  } catch (error) {
-    console.error('❌ Error fetching driver profile:', error);
-    res.status(500).json({ message: "Erreur serveur" });
-  }
-});
-
+    try {
+      const profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        return res.status(404).json({ message: "Profile not found" });
+      }
+      
+      const docs = await storage.getDriverDocuments(profile.id);
+      res.json({ ...profile, documents: docs });
+    } catch (error) {
+      console.error('❌ Error fetching driver profile:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
 
   app.get(api.driver.getRequests.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
@@ -1297,7 +1488,6 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== RIDE STATUS UPDATE (UNIFIED) ====================
   app.patch('/api/rides/:id/status', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -1394,7 +1584,6 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== ETA UPDATE (UNIFIED) ====================
   app.post('/api/rides/:id/eta', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -1462,26 +1651,6 @@ export async function registerRoutes(
       res.json(stats);
     } catch (error) {
       console.error('❌ Error getting stats:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-
-  // GET /api/driver/documents - Récupérer les documents du conducteur
-  app.get('/api/driver/documents', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Non authentifié" });
-    }
-    
-    try {
-      const profile = await storage.getDriverProfile(req.session.userId);
-      if (!profile) {
-        return res.json([]);
-      }
-      
-      const docs = await storage.getDriverDocuments(profile.id);
-      res.json(docs);
-    } catch (error) {
-      console.error('❌ Error fetching driver documents:', error);
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
@@ -2197,6 +2366,89 @@ export async function registerRoutes(
     }
   });
 
+  app.get('/api/driver/bookings/upcoming', async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'DRIVER') {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const bookings = await db.select().from(bookings)
+        .where(and(
+          eq(bookings.driverId, req.session.userId),
+          or(
+            eq(bookings.status, 'CONFIRMED'),
+            eq(bookings.status, 'ASSIGNED')
+          ),
+          sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
+        ))
+        .orderBy(sql`${bookings.scheduledFor} ASC`);
+      
+      const enriched = await Promise.all(bookings.map(async b => {
+        const passenger = await storage.getUser(b.passengerId);
+        return { ...b, passenger };
+      }));
+      
+      res.json(enriched);
+    } catch (error) {
+      console.error('❌ Error fetching upcoming bookings:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  app.post('/api/bookings/:id/start-ride', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    if (req.session.role !== 'DRIVER') {
+      return res.status(403).json({ message: "Seuls les conducteurs peuvent démarrer une réservation" });
+    }
+    
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de réservation invalide" });
+    }
+    
+    try {
+      const booking = await storage.getBooking(id);
+      if (!booking) {
+        return res.status(404).json({ message: "Réservation non trouvée" });
+      }
+      
+      if (booking.driverId !== req.session.userId) {
+        return res.status(403).json({ message: "Vous n'êtes pas le conducteur assigné" });
+      }
+      
+      if (booking.status !== 'CONFIRMED') {
+        return res.status(400).json({ message: "La réservation n'est pas confirmée" });
+      }
+      
+      const scheduledFor = new Date(booking.scheduledFor);
+      const now = new Date();
+      const hoursDiff = (scheduledFor.getTime() - now.getTime()) / (1000 * 60 * 60);
+      
+      if (hoursDiff > 2) {
+        return res.status(400).json({ 
+          message: `Vous ne pouvez démarrer que 2h avant l'heure prévue (${hoursDiff.toFixed(1)}h restantes)` 
+        });
+      }
+      
+      const ride = await storage.createRideFromBooking(booking.id, req.session.userId);
+      
+      await storage.updateBookingStatus(id, 'IN_PROGRESS', booking.driverId);
+      
+      sendToUser(booking.passengerId, {
+        type: WS_EVENTS.RIDE_STATUS_CHANGED,
+        payload: ride
+      });
+      
+      res.status(201).json(ride);
+    } catch (error) {
+      console.error('❌ Error starting ride from booking:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
   app.get('/api/admin/bookings', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
@@ -2294,126 +2546,6 @@ export async function registerRoutes(
     }
     await storage.deleteCustomPlace(id);
     res.json({ message: "Deleted" });
-  });
-
-  async function sendNotificationToUser(userId: number, title: string, message: string, type: string, rideId?: number) {
-    await storage.createNotification({
-      userId,
-      title,
-      message,
-      type,
-      rideId,
-    });
-    
-    const ws = clients.get(userId);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'NOTIFICATION',
-        payload: {
-          id: Date.now(),
-          title,
-          message,
-          type,
-          rideId,
-          createdAt: new Date().toISOString(),
-          isRead: false,
-        }
-      }));
-    }
-  }
-
-  // ==================== BOOKING TO RIDE CONVERSION ====================
-
-  // Convertir une réservation acceptée en course
-  app.post('/api/bookings/:id/start-ride', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    if (req.session.role !== 'DRIVER') {
-      return res.status(403).json({ message: "Seuls les conducteurs peuvent démarrer une réservation" });
-    }
-    
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de réservation invalide" });
-    }
-    
-    try {
-      // Récupérer la réservation
-      const booking = await storage.getBooking(id);
-      if (!booking) {
-        return res.status(404).json({ message: "Réservation non trouvée" });
-      }
-      
-      // Vérifier que le conducteur est bien assigné
-      if (booking.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Vous n'êtes pas le conducteur assigné" });
-      }
-      
-      // Vérifier le statut
-      if (booking.status !== 'CONFIRMED') {
-        return res.status(400).json({ message: "La réservation n'est pas confirmée" });
-      }
-      
-      // Vérifier que la date n'est pas trop loin dans le futur
-      const scheduledFor = new Date(booking.scheduledFor);
-      const now = new Date();
-      const hoursDiff = (scheduledFor.getTime() - now.getTime()) / (1000 * 60 * 60);
-      
-      if (hoursDiff > 2) {
-        return res.status(400).json({ 
-          message: `Vous ne pouvez démarrer que 2h avant l'heure prévue (${hoursDiff.toFixed(1)}h restantes)` 
-        });
-      }
-      
-      // Créer une course à partir de la réservation
-      const ride = await storage.createRideFromBooking(booking.id, req.session.userId);
-      
-      // Mettre à jour le statut de la réservation
-      await storage.updateBookingStatus(id, 'IN_PROGRESS', booking.driverId);
-      
-      // Notifier le passager
-      sendToUser(booking.passengerId, {
-        type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: ride
-      });
-      
-      res.status(201).json(ride);
-    } catch (error) {
-      console.error('❌ Error starting ride from booking:', error);
-      res.status(500).json({ message: "Erreur interne" });
-    }
-  });
-
-  // Récupérer les réservations du conducteur (confirmées et à venir)
-  app.get('/api/driver/bookings/upcoming', async (req, res) => {
-    if (!req.session.userId || req.session.role !== 'DRIVER') {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    try {
-      const bookings = await db.select().from(bookings)
-        .where(and(
-          eq(bookings.driverId, req.session.userId),
-          or(
-            eq(bookings.status, 'CONFIRMED'),
-            eq(bookings.status, 'ASSIGNED')
-          ),
-          sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
-        ))
-        .orderBy(sql`${bookings.scheduledFor} ASC`);
-      
-      const enriched = await Promise.all(bookings.map(async b => {
-        const passenger = await storage.getUser(b.passengerId);
-        return { ...b, passenger };
-      }));
-      
-      res.json(enriched);
-    } catch (error) {
-      console.error('❌ Error fetching upcoming bookings:', error);
-      res.status(500).json({ message: "Erreur interne" });
-    }
   });
 
   // ==================== SEED DATABASE ====================

@@ -1,11 +1,5 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -139,6 +133,7 @@ __export(schema_exports, {
   driverDocuments: () => driverDocuments,
   driverLocations: () => driverLocations,
   driverProfiles: () => driverProfiles,
+  emailOtps: () => emailOtps2,
   insertBookingOfferSchema: () => insertBookingOfferSchema,
   insertBookingSchema: () => insertBookingSchema,
   insertChatMessageSchema: () => insertChatMessageSchema,
@@ -174,6 +169,7 @@ var users = pgTable("users", {
   id: serial("id").primaryKey(),
   phone: text("phone").notNull().unique(),
   name: text("name").notNull(),
+  email: text("email").unique(),
   role: text("role").notNull().default("PASSENGER"),
   language: text("language").notNull().default("mg"),
   otpAuth: text("otp_auth"),
@@ -353,6 +349,14 @@ var chatMessages = pgTable("chat_messages", {
   isRead: boolean("is_read").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow()
 });
+var emailOtps2 = pgTable("email_otps", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull(),
+  otp: text("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  isUsed: boolean("is_used").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow()
+});
 var insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 var insertDriverProfileSchema = createInsertSchema(driverProfiles).omit({ id: true });
 var insertRideSchema = createInsertSchema(rides).omit({ id: true, createdAt: true, updatedAt: true });
@@ -431,6 +435,17 @@ var DatabaseStorage = class {
     }).where(eq(appConfig.id, existing.id)).returning();
     return updated;
   }
+  //=================== MAIL ====================
+  async getUserByEmail(email) {
+    if (!email) return void 0;
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+  async getUserByName(name) {
+    if (!name) return void 0;
+    const [user] = await db.select().from(users).where(eq(users.name, name));
+    return user;
+  }
   // ==================== USERS ====================
   async getUser(id) {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -440,9 +455,11 @@ var DatabaseStorage = class {
     const [user] = await db.select().from(users).where(eq(users.phone, phone));
     return user;
   }
+  // Surcharger createUser pour supporter email
   async createUser(insertUser) {
     const [user] = await db.insert(users).values({
       phone: insertUser.phone,
+      email: insertUser.email || null,
       name: insertUser.name,
       role: insertUser.role || "PASSENGER",
       language: insertUser.language || "mg"
@@ -1337,50 +1354,29 @@ async function registerRoutes(httpServer2, app2) {
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
-  app2.post(api.auth.verifyOtp.path, async (req, res) => {
+  app2.post("/api/auth/verify-otp", async (req, res) => {
     try {
-      console.log("\u{1F510} verifyOtp called");
-      console.log("Session ID avant:", req.sessionID);
       const { phone, otp } = req.body;
-      if (!phone || !otp) {
-        return res.status(400).json({ message: "Phone et OTP requis" });
-      }
       if (otp !== "123456") {
         return res.status(401).json({ message: "Code invalide" });
       }
       let user = await storage.getUserByPhone(phone);
       if (!user) {
-        console.log(`Cr\xE9ation utilisateur pour ${phone}`);
         user = await storage.createUser({
           phone,
           name: `User_${phone.slice(-4)}`,
           role: "PASSENGER"
         });
       }
-      req.session.regenerate((err) => {
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      req.session.save((err) => {
         if (err) {
-          console.error("Regenerate error:", err);
-          return res.status(500).json({ message: "Session error" });
+          console.error("Session save error:", err);
+          return res.status(500).json({ message: "Erreur session" });
         }
-        req.session.userId = user.id;
-        req.session.role = user.role;
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error("Save error:", saveErr);
-            return res.status(500).json({ message: "Save error" });
-          }
-          console.log(`\u2705 Utilisateur ${user.id} connect\xE9`);
-          console.log(`Session ID apr\xE8s: ${req.sessionID}`);
-          res.json({
-            user: {
-              id: user.id,
-              phone: user.phone,
-              name: user.name,
-              role: user.role
-            },
-            success: true
-          });
-        });
+        console.log(`\u2705 User ${user.id} logged in, session ID: ${req.sessionID}`);
+        res.json({ user, success: true });
       });
     } catch (error) {
       console.error("verifyOtp error:", error);
@@ -1410,6 +1406,151 @@ async function registerRoutes(httpServer2, app2) {
       res.clearCookie("farady.sid");
       res.json({ message: "D\xE9connexion r\xE9ussie" });
     });
+  });
+  app2.post("/api/auth/request-email-otp", async (req, res) => {
+    try {
+      console.log("\u{1F4E7} Email OTP request received:", req.body);
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Format d'email invalide" });
+      }
+      const otp = generateOtp();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1e3);
+      await db.delete(emailOtps).where(and2(
+        eq2(emailOtps.email, email),
+        eq2(emailOtps.isUsed, false),
+        sql2`${emailOtps.expiresAt} < NOW()`
+      ));
+      const [savedOtp] = await db.insert(emailOtps).values({
+        email,
+        otp,
+        expiresAt,
+        isUsed: false
+      }).returning();
+      console.log(`\u{1F4E7} OTP generated for ${email}: ${otp} (expires at ${expiresAt})`);
+      const emailSent = await sendEmailOtp(email, otp, "fr");
+      if (!emailSent && process.env.NODE_ENV === "development") {
+        console.log(`\u26A0\uFE0F [DEV] Email not sent, OTP for ${email}: ${otp}`);
+        return res.json({
+          message: "Code envoy\xE9",
+          expiresIn: 300,
+          devOtp: otp
+          // Seulement en développement
+        });
+      }
+      if (!emailSent) {
+        return res.status(500).json({
+          message: "Erreur lors de l'envoi de l'email. Veuillez r\xE9essayer."
+        });
+      }
+      res.json({ message: "Code envoy\xE9 par email", expiresIn: 300 });
+    } catch (error) {
+      console.error("requestEmailOtp error:", error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+  app2.post("/api/auth/verify-email-otp", async (req, res) => {
+    try {
+      console.log("\u{1F510} Email OTP verification request:", { email: req.body.email });
+      const { email, otp } = req.body;
+      if (!email || !otp) {
+        return res.status(400).json({ message: "Email et code requis" });
+      }
+      const [validOtp] = await db.select().from(emailOtps).where(and2(
+        eq2(emailOtps.email, email),
+        eq2(emailOtps.otp, otp),
+        eq2(emailOtps.isUsed, false),
+        sql2`${emailOtps.expiresAt} > NOW()`
+      )).limit(1);
+      if (!validOtp) {
+        return res.status(401).json({ message: "Code invalide ou expir\xE9" });
+      }
+      await db.update(emailOtps).set({ isUsed: true }).where(eq2(emailOtps.id, validOtp.id));
+      let user = await storage.getUserByEmail(email);
+      if (!user) {
+        const tempName = email.split("@")[0];
+        let finalName = tempName;
+        let counter = 1;
+        while (await storage.getUserByName(finalName)) {
+          finalName = `${tempName}${counter}`;
+          counter++;
+        }
+        user = await storage.createUser({
+          email,
+          phone: `EMAIL_${Date.now()}`,
+          // Phone temporaire unique
+          name: finalName,
+          role: "PASSENGER",
+          language: "fr"
+        });
+        console.log(`\u2705 New user created with email: ${email}, ID: ${user.id}`);
+      }
+      if (user.isBlocked) {
+        return res.status(403).json({ message: "Compte bloqu\xE9. Contactez l'administrateur." });
+      }
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      req.session.save((err) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.status(500).json({ message: "Erreur session" });
+        }
+        console.log(`\u2705 User ${user.id} logged in via email, session ID: ${req.sessionID}`);
+        const userResponse = {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          role: user.role,
+          language: user.language,
+          isApproved: user.isApproved,
+          isBlocked: user.isBlocked
+        };
+        res.json({ user: userResponse, success: true });
+      });
+    } catch (error) {
+      console.error("verifyEmailOtp error:", error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+  app2.post("/api/auth/resend-email-otp", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      await db.delete(emailOtps).where(and2(
+        eq2(emailOtps.email, email),
+        eq2(emailOtps.isUsed, false)
+      ));
+      const otp = generateOtp();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1e3);
+      const [savedOtp] = await db.insert(emailOtps).values({
+        email,
+        otp,
+        expiresAt,
+        isUsed: false
+      }).returning();
+      const emailSent = await sendEmailOtp(email, otp);
+      if (!emailSent && process.env.NODE_ENV === "development") {
+        return res.json({
+          message: "Code renvoy\xE9",
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      if (!emailSent) {
+        return res.status(500).json({ message: "Erreur lors de l'envoi" });
+      }
+      res.json({ message: "Code renvoy\xE9 par email", expiresIn: 300 });
+    } catch (error) {
+      console.error("resendEmailOtp error:", error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
   });
   app2.get("/api/debug/session", (req, res) => {
     console.log("\u{1F50D} Debug session:");
@@ -3096,6 +3237,7 @@ async function registerRoutes(httpServer2, app2) {
 import { createServer } from "http";
 import fs2 from "fs";
 import path2 from "path";
+import os from "os";
 import cors from "cors";
 
 // server/services/session.ts
@@ -3176,24 +3318,61 @@ var httpServer;
 app.set("trust proxy", 1);
 var isProduction2 = process.env.NODE_ENV === "production";
 var MemoryStore2 = createMemoryStore2(session2);
+function getLocalIP() {
+  try {
+    const nets = os.networkInterfaces();
+    const results = [];
+    logger.info("\n\u{1F4E1} Interfaces r\xE9seau disponibles:");
+    logger.info("=".repeat(50));
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === "IPv4") {
+          const type = net.internal ? "\u{1F512} Interne" : "\u{1F30D} Externe";
+          logger.info(`${type} - ${name}: ${net.address}`);
+          if (!net.internal) {
+            results.push({
+              address: net.address,
+              name,
+              family: net.family
+            });
+          }
+        }
+      }
+    }
+    logger.info("=".repeat(50) + "\n");
+    const preferred = results.find((r) => r.address.startsWith("192.168.1."));
+    if (preferred) {
+      logger.info(`\u2705 IP s\xE9lectionn\xE9e: ${preferred.address} (${preferred.name})`);
+      return preferred.address;
+    }
+    if (results.length > 0) {
+      logger.info(`\u26A0\uFE0F IP s\xE9lectionn\xE9e: ${results[0].address} (${results[0].name})`);
+      return results[0].address;
+    }
+  } catch (error) {
+    logger.error("Erreur:", error);
+  }
+  return "192.168.1.101";
+}
 app.use((req, res, next) => {
+  res.removeHeader("Content-Security-Policy");
+  res.removeHeader("X-Content-Security-Policy");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "0");
   next();
 });
 app.use(session2({
   name: "farady.sid",
-  secret: process.env.SESSION_SECRET || "fallback-secret-key-change-this",
+  secret: process.env.SESSION_SECRET || "farady-secret-key",
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore2({ checkPeriod: 864e5 }),
   cookie: {
     secure: true,
-    // Render utilise HTTPS
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1e3,
     sameSite: "lax",
-    // Pour le même domaine, 'lax' suffit
     path: "/"
   }
 }));
@@ -3337,17 +3516,17 @@ if (!isProduction2) {
 }
 async function startServer() {
   try {
-    const port = parseInt(process.env.PORT || "5000", 10);
+    const port = parseInt(process.env.PORT || "10000", 10);
     const host = "0.0.0.0";
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
-    logger.info("\u2705 Routes registered");
+    startHttpServer(port, host);
     app.use((err, _req, res, _next) => {
       console.error("Error:", err);
       res.status(500).json({ message: "Erreur interne" });
     });
     const distPublicPath = path2.join(process.cwd(), "dist", "public");
-    if (__require("fs").existsSync(distPublicPath)) {
+    if (fs2.existsSync(distPublicPath)) {
       app.use(express2.static(distPublicPath));
       app.use((req, res, next) => {
         if (req.path.startsWith("/api")) return next();
@@ -3355,11 +3534,42 @@ async function startServer() {
       });
     }
     httpServer.listen(port, host, () => {
-      logger.info(`\u{1F680} Server running on port ${port}`);
+      console.log(`\u{1F680} Server running on port ${port}`);
     });
   } catch (error) {
-    logger.error("Failed to start server:", error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   }
+}
+function startHttpServer(port, host) {
+  httpServer.listen(port, host, () => {
+    const localIP = getLocalIP();
+    logger.info("\n" + "=".repeat(60));
+    logger.info("\u{1F680} SERVER STARTED SUCCESSFULLY");
+    logger.info("=".repeat(60));
+    logger.info(`\u{1F4E1} Local access:    http://localhost:${port}`);
+    logger.info(`\u{1F30D} Network access:  http://${localIP}:${port}`);
+    logger.info(`\u{1F5C4}\uFE0F  Session store:   ${redisAvailable ? "Redis \u2705" : "MemoryStore \u26A0\uFE0F"}`);
+    logger.info(`\u{1F512} HTTPS:           ${isProduction2 ? "Disabled" : "Disabled (development)"}`);
+    logger.info(`\u{1F4CA} Metrics:         http://localhost:${port}/api/metrics`);
+    logger.info("=".repeat(60) + "\n");
+    logger.info("\u{1F4DD} Test avec:");
+    logger.info(`   curl http://localhost:${port}/api/test`);
+    logger.info(`   curl http://localhost:${port}/api/health`);
+    logger.info(`   curl http://localhost:${port}/api/metrics`);
+    if (!isProduction2) {
+      logger.info(`   curl http://localhost:${port}/api/debug/session-state`);
+    }
+    logger.info(`   curl http://localhost:${port}/api/debug/static`);
+  });
+  httpServer.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      logger.error(`Port ${port} is already in use!`);
+      process.exit(1);
+    } else {
+      logger.error("Server error:", error);
+      process.exit(1);
+    }
+  });
 }
 startServer();

@@ -1,3 +1,4 @@
+// client/src/pages/passenger/Profile.tsx (version améliorée avec affichage des documents)
 import React, { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { useAuth } from '@/hooks/use-auth';
@@ -8,12 +9,25 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@shared/routes';
-import { User, ShieldCheck, Car, FileText, CheckCircle2, Clock, ChevronLeft, ChevronRight, Loader2, Trash2, Eye } from 'lucide-react';
+import { User, ShieldCheck, Car, FileText, CheckCircle2, Clock, ChevronLeft, ChevronRight, Loader2, Trash2, Eye, X, Upload, Mail, Phone, MapPin, Star, Award } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '@/lib/api';
 import { useLocation } from 'wouter';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 
 const DOCS_PAGE_SIZE = 5;
+
+// Types de documents avec leurs labels
+const DOCUMENT_TYPES: Record<string, { mg: string; fr: string; icon: any; required: boolean }> = {
+  CIN: { mg: 'Carte d\'identité', fr: 'Carte d\'identité', icon: FileText, required: true },
+  PERMIS: { mg: 'Permis de conduire', fr: 'Permis de conduire', icon: FileText, required: true },
+  VEHICLE: { mg: 'Carte grise', fr: 'Carte grise', icon: Car, required: true },
+  PHOTO: { mg: 'Photo de profil', fr: 'Photo de profil', icon: User, required: false },
+  ATTESTATION: { mg: 'Attestation', fr: 'Attestation', icon: Award, required: false },
+};
 
 export default function ProfilePage() {
   const { user, refetch: refetchUser } = useAuth();
@@ -32,8 +46,10 @@ export default function ProfilePage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadType, setUploadType] = useState<string>('');
   const [showDriverForm, setShowDriverForm] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Récupérer les documents passager (nouvelle table)
+  // Récupérer les documents passager
   const { data: passengerDocuments = [], refetch: refetchPassengerDocs } = useQuery({
     queryKey: ['/api/passenger/documents'],
     queryFn: async () => {
@@ -50,7 +66,7 @@ export default function ProfilePage() {
     enabled: user?.role === 'PASSENGER',
   });
 
-  // Récupérer le profil conducteur si l'utilisateur est DRIVER
+  // Récupérer le profil conducteur
   const { data: driverProfile, refetch: refetchDriverProfile } = useQuery({
     queryKey: [api.driver.getProfile.path],
     queryFn: async () => {
@@ -99,7 +115,6 @@ export default function ProfilePage() {
     if (user?.name) setName(user.name);
   }, [user]);
 
-  // Remplir les champs avec les données du profil conducteur
   useEffect(() => {
     if (driverProfile) {
       setVehicleNum(driverProfile.vehicleNumber || '');
@@ -134,27 +149,44 @@ export default function ProfilePage() {
     }
   });
 
-  // Upload document passager
+  // Upload document passager avec progression
   const uploadPassengerDocument = useMutation({
     mutationFn: async ({ file, type }: { file: File; type: string }) => {
       setIsUploading(true);
       setUploadType(type);
+      setUploadProgress(0);
       
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', type);
       
-      const res = await apiFetch('/api/passenger/documents', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      });
+      // Simuler progression
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 10, 90));
+      }, 200);
       
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({}));
-        throw new Error(error.message || "Failed to upload");
+      try {
+        const res = await apiFetch('/api/passenger/documents', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+        
+        clearInterval(progressInterval);
+        setUploadProgress(100);
+        
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          throw new Error(error.message || "Failed to upload");
+        }
+        return res.json();
+      } finally {
+        setTimeout(() => {
+          setIsUploading(false);
+          setUploadType('');
+          setUploadProgress(0);
+        }, 500);
       }
-      return res.json();
     },
     onSuccess: () => {
       toast({ 
@@ -171,10 +203,6 @@ export default function ProfilePage() {
         description: error.message || (lang === 'mg' ? "Tsy afaka nampiditra ny antontan-taratasy" : "Impossible de télécharger le document")
       });
     },
-    onSettled: () => {
-      setIsUploading(false);
-      setUploadType('');
-    }
   });
 
   // Upload document conducteur
@@ -319,6 +347,36 @@ export default function ProfilePage() {
     }
   };
 
+  const getStatusColor = (status?: string) => {
+    switch(status) {
+      case 'APPROVED': return 'text-green-500 bg-green-500/10';
+      case 'PENDING': return 'text-amber-500 bg-amber-500/10';
+      case 'REJECTED': return 'text-red-500 bg-red-500/10';
+      case 'SUSPENDED': return 'text-gray-500 bg-gray-500/10';
+      default: return 'text-muted-foreground bg-muted/20';
+    }
+  };
+
+  const getStatusLabel = (status?: string) => {
+    if (lang === 'mg') {
+      switch(status) {
+        case 'APPROVED': return 'Nekenina';
+        case 'PENDING': return 'Miandry';
+        case 'REJECTED': return 'Nolavina';
+        case 'SUSPENDED': return 'Voasambotra';
+        default: return 'Tsy fantatra';
+      }
+    } else {
+      switch(status) {
+        case 'APPROVED': return 'Approuvé';
+        case 'PENDING': return 'En attente';
+        case 'REJECTED': return 'Rejeté';
+        case 'SUSPENDED': return 'Suspendu';
+        default: return 'Inconnu';
+      }
+    }
+  };
+
   // Pagination des documents
   const docsToShow = user?.role === 'PASSENGER' ? passengerDocs : driverDocs;
   const paginatedDocs = docsToShow.slice((docsPage - 1) * DOCS_PAGE_SIZE, docsPage * DOCS_PAGE_SIZE);
@@ -340,54 +398,89 @@ export default function ProfilePage() {
     <MobileLayout role={role}>
       <div className="h-full overflow-y-auto">
         <div className="p-4 pt-20 pb-32 space-y-6">
-          {/* En-tête profil */}
+          {/* En-tête profil amélioré */}
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center space-x-4"
+            className="relative"
           >
-            <div className="relative group">
-              <div className="w-20 h-20 bg-primary rounded-3xl flex items-center justify-center text-primary-foreground shadow-lg overflow-hidden">
-                {avatar ? <img src={avatar} className="w-full h-full object-cover" /> : <User className="w-10 h-10" />}
+            <Card className="p-6 rounded-3xl border-0 shadow-soft bg-gradient-to-br from-primary/5 to-primary/10 overflow-hidden">
+              <div className="flex items-center space-x-4">
+                <div className="relative group">
+                  <Avatar className="w-20 h-20 border-4 border-white shadow-lg">
+                    <AvatarImage src={avatar} />
+                    <AvatarFallback className="bg-primary/20 text-primary text-2xl">
+                      {user.name?.charAt(0)?.toUpperCase() || 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity">
+                    <Upload className="w-5 h-5 text-white" />
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setAvatar(URL.createObjectURL(file));
+                        }
+                      }} 
+                    />
+                  </label>
+                </div>
+                <div className="flex-1">
+                  <input 
+                    className="text-2xl font-bold font-display bg-transparent border-none p-0 focus:ring-0 w-full"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onBlur={() => updateUserInfo.mutate({ name })}
+                    data-testid="input-profile-name"
+                  />
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <Badge variant="outline" className="text-xs flex items-center gap-1">
+                      {user.role === 'PASSENGER' ? '🚶 Passager' : user.role === 'DRIVER' ? '🚗 Chauffeur' : '👑 Admin'}
+                    </Badge>
+                    {user.isApproved ? (
+                      <Badge className="bg-green-500/20 text-green-700 border-green-200">
+                        <ShieldCheck className="w-3 h-3 mr-1" /> Vérifié
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-amber-500/20 text-amber-700 border-amber-200">
+                        <Clock className="w-3 h-3 mr-1" /> En attente
+                      </Badge>
+                    )}
+                  </div>
+                </div>
               </div>
-              <label className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 rounded-3xl cursor-pointer transition-opacity">
-                <span className="text-[10px] text-white font-bold">{lang === 'mg' ? 'Hanova' : 'Changer'}</span>
-                <input 
-                  type="file" 
-                  className="hidden" 
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setAvatar(URL.createObjectURL(file));
-                    }
-                  }} 
-                />
-              </label>
-            </div>
-            <div className="flex-1">
-              <input 
-                className="text-2xl font-bold font-display bg-transparent border-none p-0 focus:ring-0 w-full"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onBlur={() => updateUserInfo.mutate({ name })}
-                data-testid="input-profile-name"
-              />
-              <p className="text-muted-foreground">{user.phone}</p>
-              <div className="flex items-center mt-1">
-                {user.isApproved ? (
-                  <span className="flex items-center text-xs font-bold text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
-                    <ShieldCheck className="w-3 h-3 mr-1" /> 
-                    {lang === 'mg' ? 'Voamarina' : 'Vérifié'}
-                  </span>
-                ) : (
-                  <span className="flex items-center text-xs font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">
-                    <Clock className="w-3 h-3 mr-1" /> 
-                    {lang === 'mg' ? 'Miandry fanamarinana' : 'En attente'}
-                  </span>
-                )}
-              </div>
-            </div>
+              
+              {/* Statistiques pour conducteur */}
+              {user.role === 'DRIVER' && driverProfile && (
+                <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-border/20">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-primary">
+                      {driverProfile.ratingAvg ? parseFloat(driverProfile.ratingAvg).toFixed(1) : '0.0'}
+                    </div>
+                    <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" /> Note
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-primary">
+                      {driverProfile.ratingCount || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Avis</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-primary">
+                      {driverProfile.online ? '✅' : '⭕'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {driverProfile.online ? 'En ligne' : 'Hors ligne'}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
           </motion.div>
 
           {/* Upload de documents - POUR PASSAGERS */}
@@ -405,8 +498,9 @@ export default function ProfilePage() {
                 
                 <div className="space-y-4">
                   <div>
-                    <label className="text-sm font-semibold mb-1.5 block">
-                      {lang === 'mg' ? 'Sary CIN / Karatra mpianatra' : 'Photo CIN / Carte étudiant'}
+                    <label className="text-sm font-semibold mb-1.5 block flex items-center justify-between">
+                      <span>{lang === 'mg' ? 'Sary CIN / Karatra mpianatra' : 'Photo CIN / Carte étudiant'}</span>
+                      <span className="text-xs text-red-500">*Requis</span>
                     </label>
                     <div className="border-2 border-dashed rounded-xl p-4 text-center hover:bg-muted/50 transition-colors cursor-pointer relative">
                       <input 
@@ -419,17 +513,23 @@ export default function ProfilePage() {
                         }} 
                       />
                       {isUploading && uploadType === 'CIN' ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                        <div className="space-y-2">
+                          <Loader2 className="w-6 h-6 animate-spin text-primary mx-auto" />
+                          <Progress value={uploadProgress} className="w-full h-1" />
                           <p className="text-xs text-muted-foreground">
-                            {lang === 'mg' ? 'Mandefa...' : 'Téléchargement...'}
+                            {lang === 'mg' ? 'Mandefa...' : 'Téléchargement...'} {uploadProgress}%
                           </p>
                         </div>
                       ) : (
                         <>
-                          <FileText className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                          <p className="text-xs text-muted-foreground">
-                            {lang === 'mg' ? 'Tsindrio eto raha handefa sary' : 'Cliquez pour télécharger'}
+                          <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-primary/10 flex items-center justify-center">
+                            <Upload className="w-6 h-6 text-primary" />
+                          </div>
+                          <p className="text-sm font-medium">
+                            {lang === 'mg' ? 'Tsindrio raha handefa sary' : 'Cliquez pour télécharger'}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            JPEG, PNG ou PDF (max 10MB)
                           </p>
                         </>
                       )}
@@ -440,7 +540,7 @@ export default function ProfilePage() {
             </motion.div>
           )}
 
-          {/* Liste des documents soumis (pour passagers) */}
+          {/* Liste des documents soumis (pour passagers) - AMÉLIORÉE */}
           {user.role === 'PASSENGER' && passengerDocs.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -448,9 +548,10 @@ export default function ProfilePage() {
               transition={{ delay: 0.15 }}
             >
               <Card className="p-6 rounded-3xl border-0 shadow-soft bg-card/50 backdrop-blur-sm space-y-4">
-                <h2 className="text-lg font-bold flex items-center">
-                  <CheckCircle2 className="w-5 h-5 mr-2 text-green-500" />
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-500" />
                   {lang === 'mg' ? 'Antontan-taratasy nampidirina' : 'Documents soumis'}
+                  <Badge variant="secondary" className="ml-2">{passengerDocs.length}</Badge>
                 </h2>
                 
                 <div className="space-y-2">
@@ -460,34 +561,40 @@ export default function ProfilePage() {
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: idx * 0.05 }}
-                      className="flex items-center justify-between p-3 bg-muted/20 rounded-xl"
+                      className="flex items-center justify-between p-3 bg-muted/20 rounded-xl hover:bg-muted/30 transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <FileText className="w-4 h-4 text-primary" />
+                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                          <FileText className="w-5 h-5 text-primary" />
+                        </div>
                         <div>
                           <p className="text-sm font-medium">
-                            {doc.type === 'CIN' ? (lang === 'mg' ? 'CIN / Karatra' : 'CIN / Carte') : doc.type}
+                            {DOCUMENT_TYPES[doc.type]?.[lang === 'mg' ? 'mg' : 'fr'] || doc.type}
                           </p>
                           <p className="text-[10px] text-muted-foreground">
-                            {new Date(doc.uploadedAt).toLocaleDateString()}
+                            {new Date(doc.uploadedAt).toLocaleDateString(lang === 'mg' ? 'mg-MG' : 'fr-FR', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         {doc.url && (
-                          <a 
-                            href={doc.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="p-1.5 hover:bg-muted rounded-full"
+                          <button
+                            onClick={() => setPreviewDoc(doc)}
+                            className="p-2 hover:bg-muted rounded-full transition-colors"
                             title={lang === 'mg' ? 'Hijery' : 'Voir'}
                           >
                             <Eye className="w-4 h-4 text-primary" />
-                          </a>
+                          </button>
                         )}
                         <button
                           onClick={() => deletePassengerDocument.mutate(doc.id)}
-                          className="p-1.5 hover:bg-red-100 rounded-full transition-colors"
+                          className="p-2 hover:bg-red-100 rounded-full transition-colors"
                           title={lang === 'mg' ? 'Fafana' : 'Supprimer'}
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
@@ -528,7 +635,7 @@ export default function ProfilePage() {
             </motion.div>
           )}
 
-          {/* Section pour conducteurs - infos véhicule (CORRIGÉE) */}
+          {/* Section pour conducteurs - infos véhicule AMÉLIORÉE */}
           {user.role === 'DRIVER' && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -540,6 +647,21 @@ export default function ProfilePage() {
                   <Car className="w-5 h-5 mr-2 text-primary" /> 
                   {lang === 'mg' ? 'Mombamomba ny fiara' : 'Informations véhicule'}
                 </h2>
+                
+                {/* Statut du profil conducteur */}
+                {driverProfile && (
+                  <div className={`p-3 rounded-xl ${getStatusColor(driverProfile.status)} flex items-center justify-between`}>
+                    <span className="text-sm font-medium">
+                      {lang === 'mg' ? 'Status:' : 'Statut:'} {getStatusLabel(driverProfile.status)}
+                    </span>
+                    {driverProfile.status === 'PENDING' && (
+                      <Clock className="w-4 h-4 animate-pulse" />
+                    )}
+                    {driverProfile.status === 'APPROVED' && (
+                      <CheckCircle2 className="w-4 h-4" />
+                    )}
+                  </div>
+                )}
                 
                 <div className="space-y-4">
                   <div>
@@ -554,16 +676,6 @@ export default function ProfilePage() {
                       disabled={driverProfile?.status === 'PENDING' && driverProfile?.vehicleNumber}
                       data-testid="input-vehicle-number"
                     />
-                    {driverProfile?.status === 'PENDING' && !driverProfile?.vehicleNumber && (
-                      <p className="text-xs text-amber-500 mt-1">
-                        {lang === 'mg' ? 'Ampidiro ny matricule' : 'Entrez la plaque'}
-                      </p>
-                    )}
-                    {driverProfile?.status === 'PENDING' && driverProfile?.vehicleNumber && (
-                      <p className="text-xs text-amber-500 mt-1">
-                        {lang === 'mg' ? 'Miandry fankatoavana' : 'En attente de validation'}
-                      </p>
-                    )}
                   </div>
                   
                   <div>
@@ -580,7 +692,7 @@ export default function ProfilePage() {
                     />
                   </div>
                   
-                  {/* Bouton de mise à jour pour le conducteur */}
+                  {/* Bouton de mise à jour */}
                   {(!driverProfile?.vehicleNumber || !driverProfile?.licenseNumber) && (
                     <Button 
                       className="w-full h-12 rounded-xl font-bold"
@@ -602,9 +714,11 @@ export default function ProfilePage() {
                   )}
                   
                   {driverProfile?.status === 'SUSPENDED' && (
-                    <p className="text-xs text-red-500 text-center">
-                      {lang === 'mg' ? 'Voasambotra ny kaontinao. Mifandraisa amin\'ny admin.' : 'Votre compte est suspendu. Contactez l\'administrateur.'}
-                    </p>
+                    <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-xl text-center">
+                      <p className="text-sm text-red-600">
+                        {lang === 'mg' ? 'Voasambotra ny kaontinao. Mifandraisa amin\'ny admin.' : 'Votre compte est suspendu. Contactez l\'administrateur.'}
+                      </p>
+                    </div>
                   )}
                   
                   <div>
@@ -622,22 +736,80 @@ export default function ProfilePage() {
                         }} 
                       />
                       {isUploading && uploadType === 'PERMIS' ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                        <div className="space-y-2">
+                          <Loader2 className="w-6 h-6 animate-spin text-primary mx-auto" />
                           <p className="text-xs text-muted-foreground">
                             {lang === 'mg' ? 'Mandefa...' : 'Téléchargement...'}
                           </p>
                         </div>
                       ) : (
                         <>
-                          <FileText className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                          <p className="text-xs text-muted-foreground">
-                            {lang === 'mg' ? 'Tsindrio eto raha handefa sary' : 'Cliquez pour télécharger'}
+                          <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-primary/10 flex items-center justify-center">
+                            <Upload className="w-6 h-6 text-primary" />
+                          </div>
+                          <p className="text-sm font-medium">
+                            {lang === 'mg' ? 'Tsindrio raha handefa sary' : 'Cliquez pour télécharger'}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            JPEG, PNG ou PDF (max 10MB)
                           </p>
                         </>
                       )}
                     </div>
                   </div>
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Liste des documents conducteur */}
+          {user.role === 'DRIVER' && driverDocs.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+            >
+              <Card className="p-6 rounded-3xl border-0 shadow-soft bg-card/50 backdrop-blur-sm space-y-4">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-primary" />
+                  {lang === 'mg' ? 'Antontan-taratasy nampidirina' : 'Documents soumis'}
+                  <Badge variant="secondary" className="ml-2">{driverDocs.length}</Badge>
+                </h2>
+                
+                <div className="space-y-2">
+                  {driverDocs.map((doc, idx) => (
+                    <motion.div
+                      key={doc.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="flex items-center justify-between p-3 bg-muted/20 rounded-xl hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                          <FileText className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">
+                            {DOCUMENT_TYPES[doc.type]?.[lang === 'mg' ? 'mg' : 'fr'] || doc.type}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {new Date(doc.uploadedAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {doc.url && (
+                          <button
+                            onClick={() => setPreviewDoc(doc)}
+                            className="p-2 hover:bg-muted rounded-full transition-colors"
+                          >
+                            <Eye className="w-4 h-4 text-primary" />
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
                 </div>
               </Card>
             </motion.div>
@@ -650,12 +822,12 @@ export default function ProfilePage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
             >
-              <Card className="p-6 rounded-3xl border-0 shadow-soft bg-primary/10 space-y-4">
+              <Card className="p-6 rounded-3xl border-0 shadow-soft bg-gradient-to-r from-primary/5 to-primary/10 space-y-4">
                 <h2 className="text-lg font-bold flex items-center text-primary">
                   <Car className="w-5 h-5 mr-2" /> 
                   {lang === 'mg' ? 'Te ho mpamily?' : 'Devenir chauffeur?'}
                 </h2>
-                <p className="text-sm">
+                <p className="text-sm text-muted-foreground">
                   {lang === 'mg' 
                     ? 'Ampidiro ny mombamomba ny fiaranao dia ho lasa mpamily ianao rehefa voamarina.'
                     : 'Ajoutez les informations de votre véhicule et devenez chauffeur après validation.'}
@@ -709,6 +881,35 @@ export default function ProfilePage() {
           <div className="h-4" />
         </div>
       </div>
+
+      {/* Modal de prévisualisation des documents */}
+      <Dialog open={!!previewDoc} onOpenChange={() => setPreviewDoc(null)}>
+        <DialogContent className="max-w-2xl rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-display">
+              {previewDoc && DOCUMENT_TYPES[previewDoc.type]?.[lang === 'mg' ? 'mg' : 'fr'] || 'Document'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-center min-h-[300px] bg-muted/20 rounded-xl overflow-hidden">
+            {previewDoc?.url ? (
+              previewDoc.url.endsWith('.pdf') ? (
+                <iframe src={previewDoc.url} className="w-full h-[500px]" title="PDF" />
+              ) : (
+                <img 
+                  src={previewDoc.url} 
+                  alt="Document" 
+                  className="max-w-full max-h-[500px] object-contain rounded-lg"
+                />
+              )
+            ) : (
+              <div className="p-8 text-center text-muted-foreground">
+                <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>Aucun fichier disponible</p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </MobileLayout>
   );
 }

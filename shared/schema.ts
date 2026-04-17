@@ -31,6 +31,7 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   phone: text("phone").notNull().unique(),
   name: text("name").notNull(),
+  email: text("email").unique(),
   role: text("role").notNull().default("PASSENGER"),
   language: text("language").notNull().default("mg"),
   otpAuth: text("otp_auth"),
@@ -229,6 +230,16 @@ export const chatMessages = pgTable("chat_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Table pour les OTP email
+export const emailOtps = pgTable("email_otps", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull(),
+  otp: text("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  isUsed: boolean("is_used").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Types TypeScript
 export type Advertisement = typeof advertisements.$inferSelect;
 export type InsertAdvertisement = typeof advertisements.$inferInsert;
@@ -242,6 +253,8 @@ export type Booking = typeof bookings.$inferSelect;
 export type InsertBooking = typeof bookings.$inferInsert;
 export type BookingOffer = typeof bookingOffers.$inferSelect;
 export type InsertBookingOffer = typeof bookingOffers.$inferInsert;
+export type EmailOtp = typeof emailOtps.$inferSelect;
+export type InsertEmailOtp = typeof emailOtps.$inferInsert;
 
 // Zod schemas
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });

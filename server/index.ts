@@ -2,7 +2,6 @@ import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
-import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes.js";
 import { serveStatic } from "./static.js";
@@ -159,7 +158,7 @@ app.use(session({
   saveUninitialized: false,
   store: new MemoryStore({ checkPeriod: 86400000 }),
   cookie: {
-    secure: true,
+    secure: false, 
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000,
     sameSite: 'lax',
@@ -172,8 +171,9 @@ logger.info('✅ Session middleware configured');
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'development' ? 1000 : 100, // Augmenté pour le développement
   message: 'Trop de requêtes',
+  skip: (req) => process.env.NODE_ENV === 'development' // Ignorer en développement
 });
 app.use('/api', limiter);
 
@@ -183,9 +183,10 @@ app.use('/api', limiter);
 // Rate limiting plus strict pour les routes d'authentification
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'development' ? 50 : 5,
+  max: process.env.NODE_ENV === 'development' ? 100 : 5, // 100 requêtes en développement
   message: 'Trop de tentatives de connexion, veuillez réessayer dans 15 minutes.',
   skipSuccessfulRequests: true,
+  skip: (req) => process.env.NODE_ENV === 'development' // Ignorer en développement
 });
 
 // ========== MIDDLEWARES AVANT TOUT ==========
@@ -364,6 +365,8 @@ async function startServer() {
     
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
+
+    startHttpServer(port,host);
     
     // Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

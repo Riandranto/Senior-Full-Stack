@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist/public',  // Changé de 'dist' à 'dist/public' pour correspondre à votre build
   server: {
     androidScheme: 'https',
-    url: 'https://ride-mada-mg.up.railway.app',
+    url: 'https://senior-full-stack.onrender.com',
     cleartext: true,  // Ajouté pour permettre les connexions HTTP en développement
     allowNavigation: ['*']
   },
