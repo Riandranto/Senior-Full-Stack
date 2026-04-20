@@ -389,71 +389,76 @@ export async function registerRoutes(
 
   // ==================== EMAIL OTP ROUTES ====================
 
-  app.post('/api/auth/request-email-otp', async (req, res) => {
-    try {
-      console.log('📧 Email OTP request received:', req.body);
-      const { email, language = 'fr' } = req.body;
-      
-      if (!email) {
-        return res.status(400).json({ message: "Email requis" });
-      }
-      
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({ message: "Format d'email invalide" });
-      }
-      
-      // Supprimer les anciens OTP non utilisés pour cet email
-      await db.delete(emailOtps)
-        .where(and(
-          eq(emailOtps.email, email),
-          eq(emailOtps.isUsed, false)
-        ));
-      
-      const otp = generateOtp();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-      
-      // Sauvegarder l'OTP
-      const [savedOtp] = await db.insert(emailOtps).values({
-        email,
-        otp,
-        expiresAt,
-        isUsed: false,
-      }).returning();
-      
-      console.log(`📧 OTP generated for ${email}: ${otp}, expires at ${expiresAt.toISOString()}`);
-      
-      // Envoyer l'email
-      let emailSent = false;
-      try {
-        emailSent = await sendEmailOtp(email, otp, language);
-      } catch (emailError) {
-        console.error('Email sending error:', emailError);
-      }
-      
-      // En développement, toujours retourner l'OTP pour faciliter les tests
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`⚠️ [DEV] OTP for ${email}: ${otp}`);
-        return res.json({ 
-          message: "Code envoyé", 
-          expiresIn: 300,
-          devOtp: otp
-        });
-      }
-      
-      if (!emailSent) {
-        return res.status(500).json({ 
-          message: "Erreur lors de l'envoi de l'email. Veuillez réessayer." 
-        });
-      }
-      
-      res.json({ message: "Code envoyé par email", expiresIn: 300 });
-      
-    } catch (error) {
-      console.error('requestEmailOtp error:', error);
-      res.status(500).json({ message: "Erreur serveur" });
+  // Dans routes.ts, modifier la route request-email-otp
+app.post('/api/auth/request-email-otp', async (req, res) => {
+  try {
+    console.log('📧 Email OTP request received:', req.body);
+    const { email, language = 'fr' } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ message: "Email requis" });
     }
-  });
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Format d'email invalide" });
+    }
+    
+    // Supprimer les anciens OTP non utilisés pour cet email
+    await db.delete(emailOtps)
+      .where(and(
+        eq(emailOtps.email, email),
+        eq(emailOtps.isUsed, false)
+      ));
+    
+    const otp = generateOtp();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    
+    // Sauvegarder l'OTP
+    const [savedOtp] = await db.insert(emailOtps).values({
+      email,
+      otp,
+      expiresAt,
+      isUsed: false,
+    }).returning();
+    
+    console.log(`📧 OTP generated for ${email}: ${otp}, expires at ${expiresAt.toISOString()}`);
+    
+    // Envoyer l'email
+    let emailSent = false;
+    try {
+      emailSent = await sendEmailOtp(email, otp, language);
+    } catch (emailError) {
+      console.error('Email sending error:', emailError);
+    }
+    
+    // En développement ou si l'email n'a pas pu être envoyé, retourner l'OTP
+    // pour faciliter les tests (mais seulement si ce n'est pas une vraie production)
+    const isDevOrNoEmail = process.env.NODE_ENV === 'development' || !emailSent;
+    
+    if (isDevOrNoEmail && process.env.NODE_ENV !== 'production') {
+      console.log(`⚠️ [DEV] OTP for ${email}: ${otp}`);
+      return res.json({ 
+        message: "Code envoyé", 
+        expiresIn: 300,
+        devOtp: otp
+      });
+    }
+    
+    // En production, si l'email n'a pas été envoyé, retourner une erreur
+    if (!emailSent && process.env.NODE_ENV === 'production') {
+      return res.status(500).json({ 
+        message: "Erreur lors de l'envoi de l'email. Veuillez réessayer." 
+      });
+    }
+    
+    res.json({ message: "Code envoyé par email", expiresIn: 300 });
+    
+  } catch (error) {
+    console.error('requestEmailOtp error:', error);
+    res.status(500).json({ message: "Erreur serveur" });
+  }
+});
 
   app.post('/api/auth/verify-email-otp', async (req, res) => {
     try {
