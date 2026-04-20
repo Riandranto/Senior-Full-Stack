@@ -294,7 +294,7 @@ export default function Auth() {
     try {
       const res = await apiFetch('/api/auth/request-email-otp', {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, language: lang }),
       });
       
       const data = await res.json();
@@ -304,10 +304,22 @@ export default function Auth() {
       }
       
       setEmailStep('otp');
-      toast({ 
-        title: "Code envoyé!", 
-        description: `Code envoyé à ${email}`,
-      });
+      
+      // Afficher l'OTP directement dans la notification s'il est retourné
+      if (data.devOtp) {
+        toast({ 
+          title: "📧 Code de vérification", 
+          description: `Votre code OTP est : ${data.devOtp}`,
+          duration: 15000, // 15 secondes
+        });
+        // Optionnel : auto-remplir le champ OTP
+        setEmailOtp(data.devOtp);
+      } else {
+        toast({ 
+          title: "Code envoyé!", 
+          description: `Un code a été envoyé à ${email}`,
+        });
+      }
     } catch (err: any) {
       setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
