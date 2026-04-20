@@ -341,6 +341,10 @@ export default function PassengerHome() {
       try {
         const res = await fetch('/api/rides/active', { credentials: 'include' });
         if (res.status === 404) return null;
+        if (res.status === 429) {
+          console.warn('Rate limited, skipping');
+          return null;
+        }
         if (res.status === 500) {
           console.warn('Server error fetching active ride');
           return null;
@@ -354,11 +358,11 @@ export default function PassengerHome() {
         return null;
       }
     },
-    refetchInterval: 5000,
-    refetchIntervalInBackground: true,
-    staleTime: 0,
-    retry: 2,
-    retryDelay: 1000,
+    refetchInterval: 15000, // 15 secondes au lieu de 5
+    refetchIntervalInBackground: false,
+    staleTime: 10000,
+    retry: 1,
+    retryDelay: 5000,
   });
 
   useEffect(() => {

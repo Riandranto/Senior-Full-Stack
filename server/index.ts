@@ -170,10 +170,10 @@ logger.info('✅ Session middleware configured');
 
 // 2. Rate Limiting - Protection contre les attaques par force brute
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'development' ? 1000 : 100, // Augmenté pour le développement
+  windowMs: 60 * 1000, // 1 minute au lieu de 15
+  max: process.env.NODE_ENV === 'development' ? 1000 : 300, // 300 requêtes/minute
   message: 'Trop de requêtes',
-  skip: (req) => process.env.NODE_ENV === 'development' // Ignorer en développement
+  skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/ws' || req.path.includes('/api/rides/') // Ignorer certaines routes
 });
 app.use('/api', limiter);
 

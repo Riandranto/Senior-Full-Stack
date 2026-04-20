@@ -1137,9 +1137,11 @@ export async function registerRoutes(
     try {
       console.log(`🔍 Fetching active ride for user ${req.session.userId}`);
       
+      // Récupérer toutes les courses de l'utilisateur
       const allRides = await storage.getRideHistory(req.session.userId);
       console.log(`📋 Found ${allRides.length} rides total`);
       
+      // Filtrer les courses actives
       const activeRide = allRides.find(r => 
         r.status !== 'COMPLETED' && 
         r.status !== 'CANCELED'
@@ -1178,10 +1180,8 @@ export async function registerRoutes(
       res.json(response);
     } catch (error) {
       console.error('❌ Error fetching active ride:', error);
-      res.status(500).json({ 
-        message: "Erreur interne",
-        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
-      });
+      // Retourner 404 au lieu de 500 pour éviter les erreurs
+      res.status(404).json({ message: "Aucune course active" });
     }
   });
 

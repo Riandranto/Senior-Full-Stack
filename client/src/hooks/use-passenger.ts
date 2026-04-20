@@ -1,3 +1,4 @@
+// client/src/hooks/use-passenger.ts
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { type Ride, type Offer, type CreateRideRequest, type RateRideRequest } from "@shared/schema";
@@ -33,8 +34,8 @@ export function useCreateRide() {
       if (!res.ok) {
         if (result.message?.includes("faritra")) {
           throw new Error(lang === 'mg'
-            ? "Tsy ao anatin'ny faritry Fort-Dauphin"
-            : "Hors zone Fort-Dauphin"
+            ? "Tsy ao anatin'ny faritry ny serivisy"
+            : "Hors zone de service"
           );
         }
         throw new Error(result.message || (lang === 'mg'
@@ -65,7 +66,7 @@ export function useCreateRide() {
   });
 }
 
-// Détails d'une course avec polling intelligent - FIXED
+// Détails d'une course avec polling intelligent - OPTIMISÉ
 export function useRide(id: number | null) {
   const { toast } = useToast();
   const { lang } = useTranslation();
@@ -84,7 +85,9 @@ export function useRide(id: number | null) {
       });
       
       if (!res.ok) {
-        if (res.status === 404) {
+        if (res.status === 404) return null;
+        if (res.status === 429) {
+          console.warn('Rate limited, skipping fetch');
           return null;
         }
         if (res.status === 500) {
@@ -98,15 +101,33 @@ export function useRide(id: number | null) {
       return res.json();
     },
     enabled: !!id,
-    // FIX: Use a simple number for refetchInterval instead of a function
-    refetchInterval: 5000,
-    refetchIntervalInBackground: true,
-    staleTime: 0,
-    retry: 2,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    // Polling conditionnel : s'arrête quand la course est terminée
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 15000;
+      // Arrêter le polling quand la course est terminée ou annulée
+      if (data.status === 'COMPLETED' || data.status === 'CANCELED') {
+        return false;
+      }
+      // Polling plus lent pour les statuts qui changent moins
+      if (data.status === 'ASSIGNED' || data.status === 'DRIVER_EN_ROUTE' || data.status === 'DRIVER_ARRIVED') {
+        return 15000;
+      }
+      if (data.status === 'IN_PROGRESS') {
+        return 20000;
+      }
+      return 10000;
+    },
+    refetchIntervalInBackground: false,
+    staleTime: 8000,
+    retry: (failureCount, error) => {
+      if (error?.message?.includes('429')) return false;
+      return failureCount < 2;
+    },
+    retryDelay: 5000,
     onError: (error: Error) => {
       console.error('Error fetching ride:', error);
-      if (!error.message?.includes('500')) {
+      if (!error.message?.includes('429') && !error.message?.includes('500')) {
         toast({
           variant: "destructive",
           title: lang === 'mg' ? "Tsy nety" : "Erreur",
@@ -117,7 +138,7 @@ export function useRide(id: number | null) {
   });
 }
 
-// Offres pour une course
+// Offres pour une course - OPTIMISÉ
 export function useRideOffers(rideId: number | null) {
   return useQuery<any[]>({
     queryKey: [api.passenger.getOffers.path, rideId],
@@ -133,14 +154,25 @@ export function useRideOffers(rideId: number | null) {
       });
       
       if (!res.ok) {
+        if (res.status === 429) return [];
         return [];
       }
       
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 5000,
-    staleTime: 2000,
+    // Polling plus lent pour les offres
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 15000;
+      // Arrêter si des offres ont été acceptées ou si la course n'est plus en attente
+      const hasAcceptedOffer = data.some((o: any) => o.status === 'ACCEPTED');
+      if (hasAcceptedOffer) {
+        return false;
+      }
+      return 15000;
+    },
+    staleTime: 8000,
   });
 }
 
@@ -292,7 +324,7 @@ export function useRateRide(rideId: number) {
   });
 }
 
-// Historique des courses
+// Historique des courses - OPTIMISÉ
 export function useRideHistory() {
   return useQuery<Ride[]>({
     queryKey: [api.passenger.history.path],
@@ -307,11 +339,12 @@ export function useRideHistory() {
       
       return res.json();
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 5 * 60 * 1000, // 5 minutes - pas de polling fréquent
+    refetchOnWindowFocus: false,
   });
 }
 
-// Vue count
+// Vue count - OPTIMISÉ
 export function useRideViews(rideId: number | null) {
   return useQuery<{ viewCount: number }>({
     queryKey: ['/api/rides', rideId, 'views'],
@@ -323,12 +356,58 @@ export function useRideViews(rideId: number | null) {
       });
       
       if (!res.ok) {
+        if (res.status === 429) return { viewCount: 0 };
         return { viewCount: 0 };
       }
       
       return res.json();
     },
     enabled: !!rideId,
-    refetchInterval: 10000,
+    refetchInterval: 30000, // 30 secondes au lieu de 10
+    staleTime: 20000,
+  });
+}
+
+// Course active du passager - OPTIMISÉ
+export function usePassengerActiveRide() {
+  return useQuery({
+    queryKey: ['/api/rides/active'],
+    queryFn: async () => {
+      try {
+        const res = await apiFetch('/api/rides/active', {
+          credentials: 'include',
+        });
+        
+        if (res.status === 404) {
+          return null;
+        }
+        
+        if (res.status === 429) {
+          console.warn('Rate limited, skipping');
+          return null;
+        }
+        
+        if (!res.ok) {
+          return null;
+        }
+        
+        return res.json();
+      } catch (error) {
+        console.error('Error fetching active ride:', error);
+        return null;
+      }
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      // Arrêter le polling si une course active est trouvée
+      if (data && data.id) {
+        return false; // On utilise WebSocket pour les mises à jour
+      }
+      return 30000; // 30 secondes quand pas de course
+    },
+    refetchIntervalInBackground: false,
+    staleTime: 20000,
+    retry: 1,
+    retryDelay: 10000,
   });
 }

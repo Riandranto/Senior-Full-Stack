@@ -1,11 +1,9 @@
-// src/hooks/use-websocket.ts
+// src/hooks/use-websocket.ts - Version corrigée
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useToast } from "./use-toast";
-import { useTranslation } from "@/lib/i18n";
 
-const MAX_RECONNECT_ATTEMPTS = 5; // Reduced from 10
-const BASE_RECONNECT_DELAY = 2000; // Increased from 1000
+const MAX_RECONNECT_ATTEMPTS = 3; // Réduit à 3
+const BASE_RECONNECT_DELAY = 5000; // 5 secondes
 
 export function useWebSocket() {
   const [connected, setConnected] = useState(false);
@@ -14,15 +12,12 @@ export function useWebSocket() {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<NodeJS.Timeout>();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { lang } = useTranslation();
   const mountedRef = useRef(true);
+  const isConnectingRef = useRef(false);
 
   const getWebSocketUrl = useCallback(() => {
-    // Always use secure WebSocket in production
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
-    // Remove any path from host (like /ws if it's already there)
     const cleanHost = host.split('/')[0];
     return `${protocol}//${cleanHost}/ws`;
   }, []);
@@ -48,19 +43,25 @@ export function useWebSocket() {
   }, []);
 
   const connect = useCallback(() => {
+    // Éviter les connexions simultanées
+    if (isConnectingRef.current) {
+      console.log("Already connecting, skipping...");
+      return;
+    }
+    
     if (!mountedRef.current) return;
     
-    // Éviter les reconnexions trop rapides
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       console.warn("Max WebSocket reconnection attempts reached");
       return;
     }
   
+    isConnectingRef.current = true;
+    
     try {
       const wsUrl = getWebSocketUrl();
       console.log(`🔌 WebSocket connecting to: ${wsUrl}`);
       
-      // Fermer l'ancienne connexion
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.close();
       }
@@ -68,12 +69,13 @@ export function useWebSocket() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
   
-      // Timeout de connexion
       const timeout = setTimeout(() => {
         if (ws.readyState !== WebSocket.OPEN) {
+          console.log("WebSocket connection timeout");
           ws.close();
+          isConnectingRef.current = false;
         }
-      }, 5000);
+      }, 10000);
   
       ws.onopen = () => {
         clearTimeout(timeout);
@@ -83,26 +85,26 @@ export function useWebSocket() {
           reconnectAttemptsRef.current = 0;
           sendAuth();
         }
+        isConnectingRef.current = false;
       };
   
       ws.onclose = (event) => {
         clearTimeout(timeout);
-        console.log(`🔌 WebSocket closed: code=${event.code}`);
+        console.log(`🔌 WebSocket closed: code=${event.code}, reason=${event.reason}`);
         
         if (mountedRef.current) {
           setConnected(false);
         }
+        isConnectingRef.current = false;
         
-        // Ne pas reconnecter pour les fermetures propres
         if (event.code === 1000 || event.code === 1001) {
           console.log("Clean close, not reconnecting");
           return;
         }
         
-        // Reconnecter avec backoff exponentiel
         if (mountedRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-          const delay = Math.min(2000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
-          console.log(`Reconnecting in ${delay}ms...`);
+          const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
           
           if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = setTimeout(() => {
@@ -114,18 +116,36 @@ export function useWebSocket() {
   
       ws.onerror = (error) => {
         console.error("WebSocket error:", error);
+        // Ne pas reconnecter immédiatement, laisser onclose gérer
       };
   
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
-          // ... reste du code
+          const { type, payload } = msg;
+          
+          if (handlersRef.current.has(type)) {
+            handlersRef.current.get(type)?.forEach(handler => {
+              try {
+                handler(payload);
+              } catch (err) {
+                console.error(`Error in handler for ${type}:`, err);
+              }
+            });
+          }
+          
+          // Invalider les requêtes pertinentes
+          if (type === 'RIDE_STATUS_CHANGED' || type === 'OFFER_ACCEPTED') {
+            queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+          }
         } catch (err) {
           console.error("Failed to parse WS message", err);
         }
       };
     } catch (error) {
       console.error("Error creating WebSocket:", error);
+      isConnectingRef.current = false;
     }
   }, [queryClient, getWebSocketUrl, sendAuth]);
   
