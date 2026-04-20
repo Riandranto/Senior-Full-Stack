@@ -57,44 +57,81 @@ export default function PassengerRide() {
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       try {
-        setCurrentUser(JSON.parse(storedUser));
+        const user = JSON.parse(storedUser);
+        setCurrentUser(user);
       } catch (e) {}
     }
   }, []);
 
+  // Fermer le chat quand la course est terminée ou annulée
   useEffect(() => {
-    // Fermer le chat quand la course est terminée ou annulée
     if (ride && (ride.status === 'COMPLETED' || ride.status === 'CANCELED')) {
       setShowChat(false);
+      setChatMinimized(false);
     }
   }, [ride]);
 
-  // ⚠️ ATTENTION: isBidding et autres variables doivent être définies APRÈS tous les hooks
-  // mais AVANT leur utilisation dans les useEffect qui en dépendent.
-  // Nous allons les définir à partir de ride, qui est chargé asynchrone.
+  // Écouter l'événement OFFER_ACCEPTED pour ouvrir le chat immédiatement
+  useEffect(() => {
+    if (!connected) return;
+    
+    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
+      console.log('🎉 OFFER_ACCEPTED received in Ride.tsx:', data);
+      
+      if (data.rideId === rideId) {
+        console.log('✅ Matching ride, opening chat for driver:', data.driverName);
+        setOtherUserName(data.driverName || 'Chauffeur');
+        setOtherUserId(data.driverId);
+        setShowChat(true);
+        setChatMinimized(false);
+        
+        toast({
+          title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
+          description: lang === 'mg' 
+            ? `Ny mpamily ${data.driverName} dia ho tonga`
+            : `Le chauffeur ${data.driverName} va arriver`,
+        });
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [connected, rideId, toast, lang]);
 
-  // useEffect pour le polling actif - FIXED
+  // Ouvrir le chat automatiquement quand la course est assignée (fallback)
+  useEffect(() => {
+    if (!ride) return;
+    
+    const activeStatuses = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'];
+    const isActive = activeStatuses.includes(ride.status);
+    
+    if (isActive && ride.driverId && !showChat) {
+      console.log('📱 Opening chat for active ride (fallback):', {
+        status: ride.status,
+        driverId: ride.driverId,
+        driverName: ride.driver?.name
+      });
+      
+      setOtherUserName(ride.driver?.name || 'Chauffeur');
+      setOtherUserId(ride.driverId);
+      setShowChat(true);
+      setChatMinimized(false);
+    }
+  }, [ride, showChat]);
+
+  // SUPPRIMER le polling manuel (causait des doublons avec React Query)
+  // useEffect avec setInterval a été supprimé car useRide gère déjà le polling
+
+  // useEffect pour recharger les offres périodiquement
   useEffect(() => {
     if (!rideId) return;
-    
-    const interval = setInterval(() => {
-      refetchRide();
-    }, 3000);
-    
-    return () => clearInterval(interval);
-  }, [rideId, refetchRide]);
-
-  // useEffect pour recharger les offres périodiquement - FIXED (vérifie ride après chargement)
-  useEffect(() => {
-    if (!rideId) return;
-    if (!ride) return; // Attendre que ride soit chargé
+    if (!ride) return;
     
     const isBidding = ride.status === 'REQUESTED' || ride.status === 'BIDDING';
     if (!isBidding) return;
     
     const interval = setInterval(() => {
       queryClient.invalidateQueries({ queryKey: ['/api/rides', rideId, 'offers'] });
-    }, 5000);
+    }, 10000); // 10 secondes au lieu de 5
     
     return () => clearInterval(interval);
   }, [rideId, ride, queryClient]);
@@ -113,20 +150,22 @@ export default function PassengerRide() {
     queryKey: ['/api/rides', rideId, 'views'],
     queryFn: async () => {
       const res = await fetch(`/api/rides/${rideId}/views`, { credentials: 'include' });
+      if (res.status === 429) return { viewCount: 0 };
       return res.json();
     },
     enabled: !!rideId && !!ride && (ride?.status === 'REQUESTED' || ride?.status === 'BIDDING'),
-    refetchInterval: 10000,
+    refetchInterval: 30000, // 30 secondes
   });
 
   const { data: driverLocData } = useQuery({
     queryKey: ['/api/driver', ride?.driverId, 'location'],
     queryFn: async () => {
       const res = await fetch(`/api/driver/${ride?.driverId}/location`, { credentials: 'include' });
+      if (res.status === 429) return null;
       return res.json();
     },
     enabled: !!ride?.driverId && !!ride && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride?.status || ''),
-    refetchInterval: 5000,
+    refetchInterval: 15000, // 15 secondes
   });
 
   useEffect(() => {
@@ -153,15 +192,6 @@ export default function PassengerRide() {
     });
     return unsub;
   }, [subscribe, rideId, refetchRide]);
-
-  // Ouvrir le chat automatiquement quand la course est assignée
-  useEffect(() => {
-    if (ride && (ride.status === 'ASSIGNED' || ride.status === 'DRIVER_EN_ROUTE' || ride.status === 'DRIVER_ARRIVED' || ride.status === 'IN_PROGRESS')) {
-      setOtherUserName(ride.driver?.name || 'Chauffeur');
-      setOtherUserId(ride.driverId);
-      setShowChat(true);
-    }
-  }, [ride]);
 
   const handleSubmitRating = () => {
     if (selectedRating === 0) return;
@@ -614,7 +644,7 @@ export default function PassengerRide() {
 
       {/* Chat Box */}
       {showChat && rideId && currentUser && (
-          <ChatBox
+        <ChatBox
           rideId={rideId}
           currentUserId={currentUser.id}
           otherUserId={otherUserId}

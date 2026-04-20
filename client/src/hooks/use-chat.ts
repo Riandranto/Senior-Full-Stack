@@ -186,13 +186,13 @@ export function useChat(rideId: number, currentUserId: number, otherUserName?: s
     loadHistory();
   }, [loadHistory]);
 
-  // Polling pour les messages (fallback si WebSocket est down)
+  // Polling pour les messages (fallback si WebSocket est down) - RÉDUIT
   useEffect(() => {
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && Date.now() - lastRefreshRef.current > 3000) {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefreshRef.current > 10000) {
         loadHistory();
       }
-    }, 5000);
+    }, 15000);
     
     return () => clearInterval(interval);
   }, [loadHistory]);
