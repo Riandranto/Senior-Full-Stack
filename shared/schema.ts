@@ -266,6 +266,7 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ i
 export const insertPassengerDocumentSchema = createInsertSchema(passengerDocuments).omit({ id: true, uploadedAt: true });
 export const insertBookingSchema = createInsertSchema(bookings).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertBookingOfferSchema = createInsertSchema(bookingOffers).omit({ id: true, createdAt: true });
+export const insertEmailOtpSchema = createInsertSchema(emailOtps).omit({ id: true, createdAt: true });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;

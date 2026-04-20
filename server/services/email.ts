@@ -1,4 +1,4 @@
-// server/services/email.ts (modifié)
+// server/services/email.ts
 import nodemailer from 'nodemailer';
 import { logger } from '../utils/logger.js';
 
@@ -67,15 +67,12 @@ export async function sendEmailOtp(email: string, otp: string, language: string 
   // En production sans SMTP, on retourne true et on log l'OTP
   if (process.env.NODE_ENV === 'production' && !process.env.SMTP_USER) {
     logger.info(`[NO SMTP] OTP for ${email}: ${otp}`);
-    // Pour permettre les tests en production, on retourne true
-    // Le frontend utilisera devOtp si disponible
     return true;
   }
   
   const transport = getTransporter();
   if (!transport) {
     logger.warn('Email transporter not available, skipping email send');
-    // En développement, on log l'OTP quand même
     if (process.env.NODE_ENV === 'development') {
       logger.info(`[DEV] OTP for ${email}: ${otp}`);
       return true;
@@ -196,7 +193,6 @@ export async function sendEmailOtp(email: string, otp: string, language: string 
     
     logger.info(`Email OTP sent to ${email}: ${info.messageId}`);
     
-    // En mode développement, afficher l'URL de prévisualisation Ethereal
     if (process.env.NODE_ENV === 'development' && (info as any).getTestMessageUrl) {
       logger.info(`📧 Preview URL: ${(info as any).getTestMessageUrl()}`);
     }
