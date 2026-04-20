@@ -153,15 +153,15 @@ app.use((req, res, next) => {
 
 app.use(session({
   name: 'farady.sid',
-  secret: process.env.SESSION_SECRET || 'farady-secret-key',
+  secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
   store: new MemoryStore({ checkPeriod: 86400000 }),
   cookie: {
-    secure: false, 
+    secure: process.env.NODE_ENV === 'production', // true en production
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000,
-    sameSite: 'lax',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     path: '/',
   }
 }));
