@@ -22,7 +22,7 @@ import fs from "fs";
 
 // Générer un OTP à 6 chiffres
 function generateOtp(): string {
-  return Math.floor(100000 + Math.random() 900000).toString();
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 // Stockage temporaire en mémoire pour les OTP (pour les tests)
