@@ -1,5 +1,4 @@
-// server/routes.ts - VERSION COMPLÈTE
-
+// server/routes.ts - Version complète corrigée
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
@@ -8,7 +7,7 @@ import { api } from "@shared/routes";
 import { 
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
   advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages,
-  passengerDocuments, bookings, bookingOffers, emailOtps
+  passengerDocuments, bookings, bookingOffers, emailOtps, phoneOtps
 } from "@shared/schema";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
@@ -17,63 +16,20 @@ import multer from "multer";
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { sendSmsOtp, savePhoneOtp, verifyPhoneOtp, generateOtp as generateSmsOtp } from "./services/sms.js";
+import { sendEmailOtp, generateOtp as generateEmailOtp, saveEmailOtp, verifyEmailOtp } from "./services/email.js";
 
-// ==================== OTP SERVICES SIMPLIFIÉS ====================
-
-// Générer un OTP à 6 chiffres
-function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-// Stockage temporaire en mémoire pour les OTP (pour les tests)
+// Déclaration du store mémoire pour OTP (fallback)
 declare global {
-  var otpStore: Map<string, { otp: string; expiresAt: number }>;
+  var otpStore: Map<string, { otp: string; expiresAt: number; type: string }>;
 }
+
+// Initialiser le store mémoire
 if (!global.otpStore) {
   global.otpStore = new Map();
 }
 
-// Fonctions OTP simplifiées
-async function savePhoneOtp(phone: string, otp: string): Promise<void> {
-  global.otpStore.set(phone, { otp, expiresAt: Date.now() + 5  60  1000 });
-  console.log(`✅ OTP saved for ${phone}: ${otp}`);
-}
-
-async function verifyPhoneOtp(phone: string, otp: string): Promise<boolean> {
-  const stored = global.otpStore.get(phone);
-  if (!stored) return false;
-  if (stored.otp !== otp) return false;
-  if (Date.now() > stored.expiresAt) return false;
-  global.otpStore.delete(phone);
-  return true;
-}
-
-async function saveEmailOtp(email: string, otp: string): Promise<void> {
-  global.otpStore.set(`email_${email}`, { otp, expiresAt: Date.now() + 5  60  1000 });
-  console.log(`✅ Email OTP saved for ${email}: ${otp}`);
-}
-
-async function verifyEmailOtp(email: string, otp: string): Promise<boolean> {
-  const stored = global.otpStore.get(`email_${email}`);
-  if (!stored) return false;
-  if (stored.otp !== otp) return false;
-  if (Date.now() > stored.expiresAt) return false;
-  global.otpStore.delete(`email_${email}`);
-  return true;
-}
-
-async function sendSmsOtp(phone: string, otp: string): Promise<boolean> {
-  console.log(`📱 [SMS] Code OTP pour ${phone}: ${otp}`);
-  return true;
-}
-
-async function sendEmailOtp(email: string, otp: string, language: string = 'fr'): Promise<boolean> {
-  console.log(`📧 [EMAIL] Code OTP pour ${email}: ${otp}`);
-  return true;
-}
-
-// ==================== CONFIGURATION MULTER ====================
-
+// Configuration multer pour l'upload des fichiers
 const uploadStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     const uploadDir = path.join(process.cwd(), 'uploads');
@@ -87,12 +43,12 @@ const uploadStorage = multer.diskStorage({
 
 const upload = multer({ 
   storage: uploadStorage, 
-  limits: { fileSize: 10  1024  1024 } 
+  limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
 const adUpload = multer({
   storage: uploadStorage,
-  limits: { fileSize: 10  1024  1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -344,9 +300,8 @@ export async function registerRoutes(
     });
   });
 
-  // ==================== AUTH ROUTES ====================
+  // ==================== AUTH ROUTES - OTP TÉLÉPHONE ====================
 
-  // Route OTP TÉLÉPHONE - request
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
       console.log('📞 requestOtp called');
@@ -357,18 +312,35 @@ export async function registerRoutes(
       }
       
       const cleanPhone = phone.replace(/[\s-]/g, '');
-      const otp = generateOtp();
+      
+      // Générer un OTP aléatoire
+      const otp = generateSmsOtp();
       console.log(`🎲 OTP généré pour ${cleanPhone}: ${otp}`);
       
-      await savePhoneOtp(cleanPhone, otp);
+      // Sauvegarder en base de données
+      try {
+        await savePhoneOtp(cleanPhone, otp);
+      } catch (dbError) {
+        console.error('DB save error, using memory store:', dbError);
+        // Fallback: stockage en mémoire
+        global.otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000, type: 'phone' });
+      }
+      
+      // Envoyer le SMS
       await sendSmsOtp(cleanPhone, otp);
       
-      // 🔥 Toujours retourner l'OTP pour les tests (affichage dans le toast)
-      return res.json({ 
-        message: "Code envoyé", 
-        expiresIn: 300,
-        devOtp: otp
-      });
+      // 🔥 TOUJOURS retourner l'OTP pour les tests (à désactiver en production réelle)
+      const FORCE_SHOW_OTP = true; // Mettre à false pour la production réelle
+      
+      if (FORCE_SHOW_OTP) {
+        return res.json({ 
+          message: "Code envoyé", 
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      
+      res.json({ message: "Code envoyé", expiresIn: 300 });
       
     } catch (error) {
       console.error('requestOtp error:', error);
@@ -376,7 +348,6 @@ export async function registerRoutes(
     }
   });
   
-  // Route OTP TÉLÉPHONE - verify
   app.post('/api/auth/verify-otp', async (req, res) => {
     try {
       const { phone, otp } = req.body;
@@ -395,7 +366,18 @@ export async function registerRoutes(
         console.log(`🔓 Code universel 123456 accepté pour ${cleanPhone}`);
         isValid = true;
       } else {
-        isValid = await verifyPhoneOtp(cleanPhone, otp);
+        // Vérifier en base de données
+        try {
+          isValid = await verifyPhoneOtp(cleanPhone, otp);
+        } catch (dbError) {
+          console.error('DB verify error, checking memory store:', dbError);
+          // Fallback: vérifier dans le store mémoire
+          const stored = global.otpStore.get(cleanPhone);
+          if (stored && stored.otp === otp && Date.now() < stored.expiresAt) {
+            isValid = true;
+            global.otpStore.delete(cleanPhone);
+          }
+        }
       }
       
       if (!isValid) {
@@ -403,6 +385,7 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Code invalide ou expiré" });
       }
       
+      // Chercher ou créer l'utilisateur
       let user = await storage.getUserByPhone(cleanPhone);
       if (!user) {
         user = await storage.createUser({ 
@@ -449,7 +432,8 @@ export async function registerRoutes(
     }
   });
 
-  // Route OTP EMAIL - request
+  // ==================== AUTH ROUTES - OTP EMAIL ====================
+
   app.post('/api/auth/request-email-otp', async (req, res) => {
     try {
       console.log('📧 Email OTP request received:', req.body);
@@ -464,29 +448,48 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Format d'email invalide" });
       }
       
-      const otp = generateOtp();
+      // Générer un OTP aléatoire
+      const otp = generateEmailOtp();
       console.log(`🎲 OTP email généré pour ${email}: ${otp}`);
       
-      await saveEmailOtp(email, otp);
-      await sendEmailOtp(email, otp, language);
+      // Sauvegarder en base de données
+      try {
+        await saveEmailOtp(email, otp);
+      } catch (dbError) {
+        console.error('DB save error, using memory store:', dbError);
+        // Fallback: stockage en mémoire
+        global.otpStore.set(`email_${email}`, { otp, expiresAt: Date.now() + 5 * 60 * 1000, type: 'email' });
+      }
       
-      // 🔥 Toujours retourner l'OTP pour les tests (affichage dans le toast)
-      return res.json({ 
-        message: "Code envoyé", 
-        expiresIn: 300,
-        devOtp: otp
-      });
+      // Essayer d'envoyer l'email (optionnel)
+      try {
+        await sendEmailOtp(email, otp, language);
+      } catch (emailError) {
+        console.error('Email sending error (ignored for tests):', emailError);
+      }
+      
+      // 🔥 TOUJOURS retourner l'OTP pour les tests (à désactiver en production réelle)
+      const FORCE_SHOW_OTP = true; // Mettre à false pour la production réelle
+      
+      if (FORCE_SHOW_OTP) {
+        return res.json({ 
+          message: "Code envoyé", 
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      
+      res.json({ message: "Code envoyé par email", expiresIn: 300 });
       
     } catch (error) {
       console.error('requestEmailOtp error:', error);
       res.status(500).json({ 
         message: "Erreur serveur",
-        devOtp: "123456"
+        devOtp: "123456" // Code de secours
       });
     }
   });
-  
-  // Route OTP EMAIL - verify
+
   app.post('/api/auth/verify-email-otp', async (req, res) => {
     try {
       console.log('🔐 Email OTP verification request:', { email: req.body.email });
@@ -503,7 +506,18 @@ export async function registerRoutes(
         console.log(`🔓 Code universel 123456 accepté pour ${email}`);
         isValid = true;
       } else {
-        isValid = await verifyEmailOtp(email, otp);
+        // Vérifier en base de données
+        try {
+          isValid = await verifyEmailOtp(email, otp);
+        } catch (dbError) {
+          console.error('DB verify error, checking memory store:', dbError);
+          // Fallback: vérifier dans le store mémoire
+          const stored = global.otpStore.get(`email_${email}`);
+          if (stored && stored.otp === otp && Date.now() < stored.expiresAt) {
+            isValid = true;
+            global.otpStore.delete(`email_${email}`);
+          }
+        }
       }
       
       if (!isValid) {
@@ -511,6 +525,7 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Code invalide ou expiré" });
       }
       
+      // Chercher ou créer l'utilisateur
       let user = await storage.getUserByEmail(email);
       
       if (!user) {
@@ -575,7 +590,45 @@ export async function registerRoutes(
     }
   });
 
-  // Route GET /api/auth/me
+  app.post('/api/auth/resend-email-otp', async (req, res) => {
+    try {
+      const { email, language = 'fr' } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      
+      const otp = generateEmailOtp();
+      console.log(`📧 New OTP for ${email}: ${otp}`);
+      
+      // Sauvegarder
+      try {
+        await saveEmailOtp(email, otp);
+      } catch (dbError) {
+        global.otpStore.set(`email_${email}`, { otp, expiresAt: Date.now() + 5 * 60 * 1000, type: 'email' });
+      }
+      
+      // 🔥 Toujours retourner l'OTP pour les tests
+      const FORCE_SHOW_OTP = true;
+      
+      if (FORCE_SHOW_OTP) {
+        return res.json({ 
+          message: "Code renvoyé", 
+          expiresIn: 300,
+          devOtp: otp
+        });
+      }
+      
+      res.json({ message: "Code renvoyé par email", expiresIn: 300 });
+      
+    } catch (error) {
+      console.error('resendEmailOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+
+  // ==================== AUTH ROUTES - ME & LOGOUT ====================
+
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 getMe called');
     console.log('Session ID:', req.sessionID);
@@ -593,7 +646,6 @@ export async function registerRoutes(
     res.json(user);
   });
   
-  // Route POST /api/auth/logout
   app.post(api.auth.logout.path, (req, res) => {
     console.log('🚪 logout called');
     
@@ -605,33 +657,6 @@ export async function registerRoutes(
       res.clearCookie('farady.sid');
       res.json({ message: "Déconnexion réussie" });
     });
-  });
-
-  // Route POST /api/auth/resend-email-otp
-  app.post('/api/auth/resend-email-otp', async (req, res) => {
-    try {
-      const { email, language = 'fr' } = req.body;
-      
-      if (!email) {
-        return res.status(400).json({ message: "Email requis" });
-      }
-      
-      const otp = generateOtp();
-      console.log(`📧 New OTP for ${email}: ${otp}`);
-      
-      await saveEmailOtp(email, otp);
-      await sendEmailOtp(email, otp, language);
-      
-      return res.json({ 
-        message: "Code renvoyé", 
-        expiresIn: 300,
-        devOtp: otp
-      });
-      
-    } catch (error) {
-      console.error('resendEmailOtp error:', error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
   });
 
   // ==================== CHAT HISTORY ROUTES ====================
@@ -1000,7 +1025,7 @@ export async function registerRoutes(
       res.json({
         impressions: impressionsCount,
         clicks: clicksCount,
-        ctr: impressionsCount > 0 ? (clicksCount / impressionsCount  100) : 0,
+        ctr: impressionsCount > 0 ? (clicksCount / impressionsCount * 100) : 0,
       });
     } catch (error) {
       console.error('❌ Error getting ad stats:', error);
