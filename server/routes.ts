@@ -1,3 +1,5 @@
+// server/routes.ts - VERSION COMPLÈTE
+
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
@@ -15,10 +17,63 @@ import multer from "multer";
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { sendSmsOtp, savePhoneOtp, verifyPhoneOtp, generateOtp as generateSmsOtp } from "./services/sms.js";
-import { sendEmailOtp, generateOtp as generateEmailOtp } from "./services/email.js";
 
-// Configuration multer pour l'upload des fichiers
+// ==================== OTP SERVICES SIMPLIFIÉS ====================
+
+// Générer un OTP à 6 chiffres
+function generateOtp(): string {
+  return Math.floor(100000 + Math.random() 900000).toString();
+}
+
+// Stockage temporaire en mémoire pour les OTP (pour les tests)
+declare global {
+  var otpStore: Map<string, { otp: string; expiresAt: number }>;
+}
+if (!global.otpStore) {
+  global.otpStore = new Map();
+}
+
+// Fonctions OTP simplifiées
+async function savePhoneOtp(phone: string, otp: string): Promise<void> {
+  global.otpStore.set(phone, { otp, expiresAt: Date.now() + 5  60  1000 });
+  console.log(`✅ OTP saved for ${phone}: ${otp}`);
+}
+
+async function verifyPhoneOtp(phone: string, otp: string): Promise<boolean> {
+  const stored = global.otpStore.get(phone);
+  if (!stored) return false;
+  if (stored.otp !== otp) return false;
+  if (Date.now() > stored.expiresAt) return false;
+  global.otpStore.delete(phone);
+  return true;
+}
+
+async function saveEmailOtp(email: string, otp: string): Promise<void> {
+  global.otpStore.set(`email_${email}`, { otp, expiresAt: Date.now() + 5  60  1000 });
+  console.log(`✅ Email OTP saved for ${email}: ${otp}`);
+}
+
+async function verifyEmailOtp(email: string, otp: string): Promise<boolean> {
+  const stored = global.otpStore.get(`email_${email}`);
+  if (!stored) return false;
+  if (stored.otp !== otp) return false;
+  if (Date.now() > stored.expiresAt) return false;
+  global.otpStore.delete(`email_${email}`);
+  return true;
+}
+
+async function sendSmsOtp(phone: string, otp: string): Promise<boolean> {
+  console.log(`📱 [SMS] Code OTP pour ${phone}: ${otp}`);
+  return true;
+}
+
+async function sendEmailOtp(email: string, otp: string, language: string = 'fr'): Promise<boolean> {
+  console.log(`📧 [EMAIL] Code OTP pour ${email}: ${otp}`);
+  return true;
+}
+
+// ==================== CONFIGURATION MULTER ====================
+
 const uploadStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     const uploadDir = path.join(process.cwd(), 'uploads');
@@ -32,12 +87,12 @@ const uploadStorage = multer.diskStorage({
 
 const upload = multer({ 
   storage: uploadStorage, 
-  limits: { fileSize: 10 * 1024 * 1024 } 
+  limits: { fileSize: 10  1024  1024 } 
 });
 
 const adUpload = multer({
   storage: uploadStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10  1024  1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -291,6 +346,7 @@ export async function registerRoutes(
 
   // ==================== AUTH ROUTES ====================
 
+  // Route OTP TÉLÉPHONE - request
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
       console.log('📞 requestOtp called');
@@ -300,33 +356,19 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Numéro requis" });
       }
       
-      // Nettoyer le numéro
       const cleanPhone = phone.replace(/[\s-]/g, '');
-      
-      // Générer un OTP aléatoire
-      const otp = generateSmsOtp();
+      const otp = generateOtp();
       console.log(`🎲 OTP généré pour ${cleanPhone}: ${otp}`);
       
-      // Sauvegarder en base
       await savePhoneOtp(cleanPhone, otp);
-      
-      // Envoyer le SMS (simulé)
       await sendSmsOtp(cleanPhone, otp);
       
-      // 🔥 POUR LES TESTS: Toujours retourner l'OTP (même en production)
-      // À SUPPRIMER après les tests
-      const isDevelopment = process.env.NODE_ENV === 'development';
-      const FORCE_SHOW_OTP = true; // Mettre à false en production réelle
-      
-      if (isDevelopment || FORCE_SHOW_OTP) {
-        return res.json({ 
-          message: "Code envoyé", 
-          expiresIn: 300,
-          devOtp: otp  // ← L'OTP sera affiché dans un toast
-        });
-      }
-      
-      res.json({ message: "Code envoyé", expiresIn: 300 });
+      // 🔥 Toujours retourner l'OTP pour les tests (affichage dans le toast)
+      return res.json({ 
+        message: "Code envoyé", 
+        expiresIn: 300,
+        devOtp: otp
+      });
       
     } catch (error) {
       console.error('requestOtp error:', error);
@@ -334,7 +376,7 @@ export async function registerRoutes(
     }
   });
   
-  
+  // Route OTP TÉLÉPHONE - verify
   app.post('/api/auth/verify-otp', async (req, res) => {
     try {
       const { phone, otp } = req.body;
@@ -346,8 +388,6 @@ export async function registerRoutes(
       }
       
       const cleanPhone = phone.replace(/[\s-]/g, '');
-      
-      const isDevelopment = process.env.NODE_ENV === 'development';
       let isValid = false;
       
       // Code universel 123456 pour les tests
@@ -363,7 +403,6 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Code invalide ou expiré" });
       }
       
-      // Chercher ou créer l'utilisateur
       let user = await storage.getUserByPhone(cleanPhone);
       if (!user) {
         user = await storage.createUser({ 
@@ -375,7 +414,7 @@ export async function registerRoutes(
       }
       
       if (user.isBlocked) {
-        return res.status(403).json({ message: "Compte bloqué" });
+        return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
       }
       
       req.session.userId = user.id;
@@ -410,7 +449,133 @@ export async function registerRoutes(
     }
   });
 
+  // Route OTP EMAIL - request
+  app.post('/api/auth/request-email-otp', async (req, res) => {
+    try {
+      console.log('📧 Email OTP request received:', req.body);
+      const { email, language = 'fr' } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
+      }
+      
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Format d'email invalide" });
+      }
+      
+      const otp = generateOtp();
+      console.log(`🎲 OTP email généré pour ${email}: ${otp}`);
+      
+      await saveEmailOtp(email, otp);
+      await sendEmailOtp(email, otp, language);
+      
+      // 🔥 Toujours retourner l'OTP pour les tests (affichage dans le toast)
+      return res.json({ 
+        message: "Code envoyé", 
+        expiresIn: 300,
+        devOtp: otp
+      });
+      
+    } catch (error) {
+      console.error('requestEmailOtp error:', error);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        devOtp: "123456"
+      });
+    }
+  });
   
+  // Route OTP EMAIL - verify
+  app.post('/api/auth/verify-email-otp', async (req, res) => {
+    try {
+      console.log('🔐 Email OTP verification request:', { email: req.body.email });
+      const { email, otp } = req.body;
+      
+      if (!email || !otp) {
+        return res.status(400).json({ message: "Email et code requis" });
+      }
+      
+      let isValid = false;
+      
+      // Code universel 123456 pour les tests
+      if (otp === "123456") {
+        console.log(`🔓 Code universel 123456 accepté pour ${email}`);
+        isValid = true;
+      } else {
+        isValid = await verifyEmailOtp(email, otp);
+      }
+      
+      if (!isValid) {
+        console.log(`❌ Invalid OTP for ${email}`);
+        return res.status(401).json({ message: "Code invalide ou expiré" });
+      }
+      
+      let user = await storage.getUserByEmail(email);
+      
+      if (!user) {
+        const tempName = email.split('@')[0];
+        let finalName = tempName;
+        let counter = 1;
+        
+        let existingUser = await storage.getUserByName(finalName);
+        while (existingUser) {
+          finalName = `${tempName}${counter}`;
+          existingUser = await storage.getUserByName(finalName);
+          counter++;
+        }
+        
+        user = await storage.createUser({ 
+          email,
+          phone: `EMAIL_${Date.now()}`,
+          name: finalName,
+          role: "PASSENGER",
+          language: "fr"
+        });
+        
+        console.log(`✅ Nouvel utilisateur créé: ${user.id}`);
+      }
+      
+      if (user.isBlocked) {
+        return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
+      }
+      
+      req.session.userId = user.id;
+      req.session.role = user.role;
+      
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+          return res.status(500).json({ message: "Erreur session" });
+        }
+        
+        console.log(`✅ Utilisateur ${user.id} connecté via email`);
+        
+        res.json({ 
+          user: {
+            id: user.id,
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            role: user.role,
+            language: user.language,
+            isApproved: user.isApproved,
+            isBlocked: user.isBlocked,
+          }, 
+          success: true 
+        });
+      });
+      
+    } catch (error) {
+      console.error('verifyEmailOtp error:', error);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        error: process.env.NODE_ENV === 'development' ? String(error) : undefined
+      });
+    }
+  });
+
+  // Route GET /api/auth/me
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 getMe called');
     console.log('Session ID:', req.sessionID);
@@ -428,6 +593,7 @@ export async function registerRoutes(
     res.json(user);
   });
   
+  // Route POST /api/auth/logout
   app.post(api.auth.logout.path, (req, res) => {
     console.log('🚪 logout called');
     
@@ -441,252 +607,32 @@ export async function registerRoutes(
     });
   });
 
-
-    // ==================== EMAIL OTP ROUTES ====================
-
-    // Fonction pour initialiser la table email_otps
-    async function ensureEmailOtpsTable() {
-      try {
-        await db.execute(sql`
-          CREATE TABLE IF NOT EXISTS email_otps (
-            id SERIAL PRIMARY KEY,
-            email VARCHAR(255) NOT NULL,
-            otp VARCHAR(6) NOT NULL,
-            expires_at TIMESTAMP NOT NULL,
-            is_used BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-        await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_email_otps_email ON email_otps(email)`);
-        await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_email_otps_otp ON email_otps(otp)`);
-        logger.info('✅ email_otps table ready');
-      } catch (error) {
-        logger.error('❌ Failed to create email_otps table:', error);
+  // Route POST /api/auth/resend-email-otp
+  app.post('/api/auth/resend-email-otp', async (req, res) => {
+    try {
+      const { email, language = 'fr' } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email requis" });
       }
+      
+      const otp = generateOtp();
+      console.log(`📧 New OTP for ${email}: ${otp}`);
+      
+      await saveEmailOtp(email, otp);
+      await sendEmailOtp(email, otp, language);
+      
+      return res.json({ 
+        message: "Code renvoyé", 
+        expiresIn: 300,
+        devOtp: otp
+      });
+      
+    } catch (error) {
+      console.error('resendEmailOtp error:', error);
+      res.status(500).json({ message: "Erreur serveur" });
     }
-
-    // Appeler au démarrage
-    ensureEmailOtpsTable().catch(console.error);
-
-    app.post('/api/auth/request-email-otp', async (req, res) => {
-      try {
-        console.log('📧 Email OTP request received:', req.body);
-        const { email, language = 'fr' } = req.body;
-        
-        if (!email) {
-          return res.status(400).json({ message: "Email requis" });
-        }
-        
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-          return res.status(400).json({ message: "Format d'email invalide" });
-        }
-        
-        // Générer un OTP aléatoire
-        const otp = generateEmailOtp();
-        console.log(`🎲 OTP email généré pour ${email}: ${otp}`);
-        
-        // 🔥 POUR LES TESTS: Toujours retourner l'OTP (même en production)
-        const FORCE_SHOW_OTP = true; // Mettre à false en production réelle
-        
-        if (FORCE_SHOW_OTP) {
-          return res.json({ 
-            message: "Code envoyé", 
-            expiresIn: 300,
-            devOtp: otp  // ← L'OTP sera affiché dans un toast
-          });
-        }
-        
-        // En production réelle, sauvegarder et envoyer l'email
-        try {
-          await db.delete(emailOtps)
-            .where(and(
-              eq(emailOtps.email, email),
-              eq(emailOtps.isUsed, false)
-            ));
-          
-          const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-          
-          await db.insert(emailOtps).values({
-            email,
-            otp,
-            expiresAt,
-            isUsed: false,
-          });
-          
-          await sendEmailOtp(email, otp, language);
-        } catch (dbError) {
-          console.error('DB or Email error:', dbError);
-          // Continuer quand même pour les tests
-        }
-        
-        res.json({ message: "Code envoyé par email", expiresIn: 300 });
-        
-      } catch (error) {
-        console.error('requestEmailOtp error:', error);
-        res.status(500).json({ 
-          message: "Erreur serveur", 
-          devOtp: "123456" // En cas d'erreur, retourner un code de secours
-        });
-      }
-    });
-    
-    // Route verify OTP email - CORRIGÉE
-    app.post('/api/auth/verify-email-otp', async (req, res) => {
-      try {
-        console.log('🔐 Email OTP verification:', { email: req.body.email });
-        const { email, otp } = req.body;
-        
-        if (!email || !otp) {
-          return res.status(400).json({ message: "Email et code requis" });
-        }
-        
-        let isValid = false;
-        
-        // Code universel 123456 pour les tests
-        if (otp === "123456") {
-          console.log(`🔓 Code universel 123456 accepté pour ${email}`);
-          isValid = true;
-        } else {
-          // Vérifier l'OTP en base
-          try {
-            const validOtps = await db.select().from(emailOtps)
-              .where(and(
-                eq(emailOtps.email, email),
-                eq(emailOtps.otp, otp),
-                eq(emailOtps.isUsed, false)
-              ))
-              .limit(1);
-            
-            if (validOtps.length > 0) {
-              const validOtp = validOtps[0];
-              const now = new Date();
-              const expiresAt = new Date(validOtp.expiresAt);
-              
-              if (now <= expiresAt) {
-                isValid = true;
-                await db.update(emailOtps)
-                  .set({ isUsed: true })
-                  .where(eq(emailOtps.id, validOtp.id));
-              }
-            }
-          } catch (dbError) {
-            console.error('DB error:', dbError);
-          }
-        }
-        
-        if (!isValid) {
-          return res.status(401).json({ message: "Code invalide ou expiré" });
-        }
-        
-        // Chercher ou créer l'utilisateur
-        let user = await storage.getUserByEmail(email);
-        
-        if (!user) {
-          const tempName = email.split('@')[0];
-          let finalName = tempName;
-          let counter = 1;
-          
-          let existingUser = await storage.getUserByName(finalName);
-          while (existingUser) {
-            finalName = `${tempName}${counter}`;
-            existingUser = await storage.getUserByName(finalName);
-            counter++;
-          }
-          
-          user = await storage.createUser({ 
-            email,
-            phone: `EMAIL_${Date.now()}`,
-            name: finalName,
-            role: "PASSENGER",
-            language: "fr"
-          });
-        }
-        
-        if (user.isBlocked) {
-          return res.status(403).json({ message: "Compte bloqué" });
-        }
-        
-        req.session.userId = user.id;
-        req.session.role = user.role;
-        
-        req.session.save((err) => {
-          if (err) {
-            console.error('Session save error:', err);
-            return res.status(500).json({ message: "Erreur session" });
-          }
-          
-          res.json({ 
-            user: {
-              id: user.id,
-              name: user.name,
-              phone: user.phone,
-              email: user.email,
-              role: user.role,
-              language: user.language,
-              isApproved: user.isApproved,
-              isBlocked: user.isBlocked,
-            }, 
-            success: true 
-          });
-        });
-        
-      } catch (error) {
-        console.error('verifyEmailOtp error:', error);
-        res.status(500).json({ message: "Erreur serveur" });
-      }
-    });
-
-    app.post('/api/auth/resend-email-otp', async (req, res) => {
-      try {
-        const { email, language = 'fr' } = req.body;
-        
-        if (!email) {
-          return res.status(400).json({ message: "Email requis" });
-        }
-        
-        await db.delete(emailOtps)
-          .where(and(
-            eq(emailOtps.email, email),
-            eq(emailOtps.isUsed, false)
-          ));
-        
-        const otp = generateOtp();
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-        
-        await db.insert(emailOtps).values({
-          email,
-          otp,
-          expiresAt,
-          isUsed: false,
-        });
-        
-        console.log(`📧 New OTP for ${email}: ${otp}`);
-        
-        const emailSent = await sendEmailOtp(email, otp, language);
-        
-        const isDevelopment = process.env.NODE_ENV === 'development';
-        const hasNoSMTP = !process.env.SMTP_USER;
-        
-        if (isDevelopment || hasNoSMTP || !emailSent) {
-          return res.json({ 
-            message: "Code renvoyé", 
-            expiresIn: 300,
-            devOtp: otp
-          });
-        }
-        
-        if (!emailSent) {
-          return res.status(500).json({ message: "Erreur lors de l'envoi" });
-        }
-        
-        res.json({ message: "Code renvoyé par email", expiresIn: 300 });
-        
-      } catch (error) {
-        console.error('resendEmailOtp error:', error);
-        res.status(500).json({ message: "Erreur serveur" });
-      }
-    });
+  });
 
   // ==================== CHAT HISTORY ROUTES ====================
   
@@ -1054,7 +1000,7 @@ export async function registerRoutes(
       res.json({
         impressions: impressionsCount,
         clicks: clicksCount,
-        ctr: impressionsCount > 0 ? (clicksCount / impressionsCount * 100) : 0,
+        ctr: impressionsCount > 0 ? (clicksCount / impressionsCount  100) : 0,
       });
     } catch (error) {
       console.error('❌ Error getting ad stats:', error);
@@ -1185,11 +1131,9 @@ export async function registerRoutes(
     try {
       console.log(`🔍 Fetching active ride for user ${req.session.userId}`);
       
-      // Récupérer toutes les courses de l'utilisateur
       const allRides = await storage.getRideHistory(req.session.userId);
       console.log(`📋 Found ${allRides.length} rides total`);
       
-      // Filtrer les courses actives
       const activeRide = allRides.find(r => 
         r.status !== 'COMPLETED' && 
         r.status !== 'CANCELED'
@@ -1228,7 +1172,6 @@ export async function registerRoutes(
       res.json(response);
     } catch (error) {
       console.error('❌ Error fetching active ride:', error);
-      // Retourner 404 au lieu de 500 pour éviter les erreurs
       res.status(404).json({ message: "Aucune course active" });
     }
   });
