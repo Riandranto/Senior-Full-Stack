@@ -11,56 +11,66 @@ export function generateOtp(): string {
 
 // Sauvegarder l'OTP en base
 export async function savePhoneOtp(phone: string, otp: string): Promise<void> {
-  // Nettoyer les anciens OTP non utilisés pour cet email/phone
-  await db.delete(phoneOtps)
-    .where(and(
-      eq(phoneOtps.phone, phone),
-      eq(phoneOtps.isUsed, false)
-    ));
-  
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-  
-  await db.insert(phoneOtps).values({
-    phone,
-    otp,
-    expiresAt,
-    isUsed: false,
-  });
-  
-  console.log(`✅ OTP saved for ${phone}: ${otp}`);
+  try {
+    // Nettoyer les anciens OTP non utilisés
+    await db.delete(phoneOtps)
+      .where(and(
+        eq(phoneOtps.phone, phone),
+        eq(phoneOtps.isUsed, false)
+      ));
+    
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    
+    await db.insert(phoneOtps).values({
+      phone,
+      otp,
+      expiresAt,
+      isUsed: false,
+    });
+    
+    console.log(`✅ OTP saved for ${phone}: ${otp}`);
+  } catch (error) {
+    console.error('❌ Error saving phone OTP:', error);
+    throw error;
+  }
 }
 
 // Vérifier un OTP
 export async function verifyPhoneOtp(phone: string, otp: string): Promise<boolean> {
-  const validOtps = await db.select().from(phoneOtps)
-    .where(and(
-      eq(phoneOtps.phone, phone),
-      eq(phoneOtps.otp, otp),
-      eq(phoneOtps.isUsed, false)
-    ))
-    .limit(1);
-  
-  if (validOtps.length === 0) {
-    console.log(`❌ No valid OTP found for ${phone}`);
+  try {
+    const validOtps = await db.select().from(phoneOtps)
+      .where(and(
+        eq(phoneOtps.phone, phone),
+        eq(phoneOtps.otp, otp),
+        eq(phoneOtps.isUsed, false)
+      ))
+      .limit(1);
+    
+    if (validOtps.length === 0) {
+      console.log(`❌ No valid OTP found for ${phone}`);
+      return false;
+    }
+    
+    const validOtp = validOtps[0];
+    const now = new Date();
+    const expiresAt = new Date(validOtp.expiresAt);
+    
+    if (now > expiresAt) {
+      console.log(`❌ OTP expired for ${phone}`);
+      return false;
+    }
+    
+    // Marquer comme utilisé
+    await db.update(phoneOtps)
+      .set({ isUsed: true })
+      .where(eq(phoneOtps.id, validOtp.id));
+    
+    console.log(`✅ OTP verified for ${phone}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error verifying phone OTP:', error);
     return false;
   }
-  
-  const validOtp = validOtps[0];
-  const now = new Date();
-  const expiresAt = new Date(validOtp.expiresAt);
-  
-  if (now > expiresAt) {
-    console.log(`❌ OTP expired for ${phone}`);
-    return false;
-  }
-  
-  // Marquer comme utilisé
-  await db.update(phoneOtps)
-    .set({ isUsed: true })
-    .where(eq(phoneOtps.id, validOtp.id));
-  
-  console.log(`✅ OTP verified for ${phone}`);
-  return true;
 }
 
 // Envoyer un SMS (simulé en développement, réel en production)

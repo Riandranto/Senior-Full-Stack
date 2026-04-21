@@ -1,6 +1,9 @@
 // server/services/email.ts
 import nodemailer from 'nodemailer';
 import { logger } from '../utils/logger.js';
+import { db } from "../db.js";
+import { emailOtps } from "@shared/schema.js";
+import { eq, and } from "drizzle-orm";
 
 // Configuration du transporteur email
 let transporter: nodemailer.Transporter | null = null;
@@ -47,6 +50,70 @@ function getTransporter() {
 
 export function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// ✅ AJOUT: Sauvegarder l'OTP email
+export async function saveEmailOtp(email: string, otp: string): Promise<void> {
+  try {
+    // Supprimer les anciens OTP non utilisés
+    await db.delete(emailOtps)
+      .where(and(
+        eq(emailOtps.email, email),
+        eq(emailOtps.isUsed, false)
+      ));
+    
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    
+    await db.insert(emailOtps).values({
+      email,
+      otp,
+      expiresAt,
+      isUsed: false,
+    });
+    
+    console.log(`✅ Email OTP saved for ${email}: ${otp}`);
+  } catch (error) {
+    console.error('❌ Error saving email OTP:', error);
+    throw error;
+  }
+}
+
+// ✅ AJOUT: Vérifier l'OTP email
+export async function verifyEmailOtp(email: string, otp: string): Promise<boolean> {
+  try {
+    const validOtps = await db.select().from(emailOtps)
+      .where(and(
+        eq(emailOtps.email, email),
+        eq(emailOtps.otp, otp),
+        eq(emailOtps.isUsed, false)
+      ))
+      .limit(1);
+    
+    if (validOtps.length === 0) {
+      console.log(`❌ No valid email OTP found for ${email}`);
+      return false;
+    }
+    
+    const validOtp = validOtps[0];
+    const now = new Date();
+    const expiresAt = new Date(validOtp.expiresAt);
+    
+    if (now > expiresAt) {
+      console.log(`❌ Email OTP expired for ${email}`);
+      return false;
+    }
+    
+    // Marquer comme utilisé
+    await db.update(emailOtps)
+      .set({ isUsed: true })
+      .where(eq(emailOtps.id, validOtp.id));
+    
+    console.log(`✅ Email OTP verified for ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error verifying email OTP:', error);
+    return false;
+  }
 }
 
 export async function sendEmailOtp(email: string, otp: string, language: string = 'fr'): Promise<boolean> {
