@@ -240,6 +240,20 @@ export const emailOtps = pgTable("email_otps", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Table pour les OTP téléphone
+export const phoneOtps = pgTable("phone_otps", {
+  id: serial("id").primaryKey(),
+  phone: text("phone").notNull(),
+  otp: text("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  isUsed: boolean("is_used").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Ajouter les types
+export type PhoneOtp = typeof phoneOtps.$inferSelect;
+export type InsertPhoneOtp = typeof phoneOtps.$inferInsert;
+export const insertPhoneOtpSchema = createInsertSchema(phoneOtps).omit({ id: true, createdAt: true });
 // Types TypeScript
 export type Advertisement = typeof advertisements.$inferSelect;
 export type InsertAdvertisement = typeof advertisements.$inferInsert;

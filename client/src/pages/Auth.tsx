@@ -199,11 +199,24 @@ export default function Auth() {
         throw new Error(data.message || "Erreur lors de l'envoi");
       }
       
+      // Afficher l'OTP dans un toast (comme pour l'email)
+      if (data.devOtp) {
+        toast({ 
+          title: "📱 Code de vérification", 
+          description: `Votre code OTP est : ${data.devOtp}`,
+          duration: 15000,
+        });
+        // Auto-remplir le champ OTP
+        setPhoneOtp(data.devOtp);
+      } else {
+        toast({ 
+          title: "Code envoyé!", 
+          description: `Un code a été envoyé au ${phone}`,
+        });
+      }
+      
       setPhoneStep('otp');
-      toast({ 
-        title: "OTP Envoyé!", 
-        description: `Code envoyé au ${phone}`,
-      });
+      
     } catch (err: any) {
       setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -281,7 +294,6 @@ export default function Auth() {
       return;
     }
     
-    // Validation email basique
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setOtpError("Email invalide");
@@ -303,16 +315,12 @@ export default function Auth() {
         throw new Error(data.message || "Erreur lors de l'envoi");
       }
       
-      setEmailStep('otp');
-      
-      // Afficher l'OTP directement dans la notification s'il est retourné
       if (data.devOtp) {
         toast({ 
           title: "📧 Code de vérification", 
           description: `Votre code OTP est : ${data.devOtp}`,
-          duration: 15000, // 15 secondes
+          duration: 15000,
         });
-        // Optionnel : auto-remplir le champ OTP
         setEmailOtp(data.devOtp);
       } else {
         toast({ 
@@ -320,6 +328,9 @@ export default function Auth() {
           description: `Un code a été envoyé à ${email}`,
         });
       }
+      
+      setEmailStep('otp');
+      
     } catch (err: any) {
       setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });

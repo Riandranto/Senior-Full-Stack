@@ -15,7 +15,8 @@ import multer from "multer";
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { sendEmailOtp, generateOtp } from "./services/email.js";
+import { sendSmsOtp, savePhoneOtp, verifyPhoneOtp, generateOtp as generateSmsOtp } from "./services/sms.js";
+import { sendEmailOtp, generateOtp as generateEmailOtp } from "./services/email.js";
 
 // Configuration multer pour l'upload des fichiers
 const uploadStorage = multer.diskStorage({
@@ -299,7 +300,34 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Numéro requis" });
       }
       
-      console.log(`📱 OTP pour ${phone}: 123456`);
+      // Nettoyer le numéro
+      const cleanPhone = phone.replace(/[\s-]/g, '');
+      
+      // Générer un vrai OTP aléatoire (même en développement)
+      const otp = generateSmsOtp(); // Utilise la vraie génération aléatoire
+      console.log(`🎲 OTP généré aléatoirement: ${otp}`);
+      
+      // Sauvegarder en base
+      await savePhoneOtp(cleanPhone, otp);
+      
+      // Envoyer le SMS (simulé en développement)
+      const sent = await sendSmsOtp(cleanPhone, otp);
+      
+      const isDevelopment = process.env.NODE_ENV === 'development';
+      
+      // Toujours retourner l'OTP en développement pour l'afficher dans l'interface
+      if (isDevelopment) {
+        return res.json({ 
+          message: "Code envoyé", 
+          expiresIn: 300,
+          devOtp: otp  // ← OTP aléatoire, pas 123456
+        });
+      }
+      
+      if (!sent) {
+        return res.status(500).json({ message: "Erreur d'envoi du SMS" });
+      }
+      
       res.json({ message: "Code envoyé", expiresIn: 300 });
       
     } catch (error) {
@@ -308,21 +336,49 @@ export async function registerRoutes(
     }
   });
   
+  
   app.post('/api/auth/verify-otp', async (req, res) => {
     try {
       const { phone, otp } = req.body;
       
-      if (otp !== "123456") {
-        return res.status(401).json({ message: "Code invalide" });
+      console.log(`🔐 Vérification OTP pour ${phone} avec code: ${otp}`);
+      
+      if (!phone || !otp) {
+        return res.status(400).json({ message: "Numéro et code requis" });
       }
       
-      let user = await storage.getUserByPhone(phone);
+      const cleanPhone = phone.replace(/[\s-]/g, '');
+      
+      const isDevelopment = process.env.NODE_ENV === 'development';
+      let isValid = false;
+      
+      // En développement, accepter 123456 comme code universel de secours
+      if (isDevelopment && otp === "123456") {
+        console.log(`🔓 Dev mode: Code universel 123456 accepté pour ${cleanPhone}`);
+        isValid = true;
+      } else {
+        // Vérifier l'OTP en base (vérification réelle)
+        isValid = await verifyPhoneOtp(cleanPhone, otp);
+      }
+      
+      if (!isValid) {
+        console.log(`❌ Code invalide pour ${cleanPhone}`);
+        return res.status(401).json({ message: "Code invalide ou expiré" });
+      }
+      
+      // Chercher ou créer l'utilisateur
+      let user = await storage.getUserByPhone(cleanPhone);
       if (!user) {
         user = await storage.createUser({ 
-          phone, 
-          name: `User_${phone.slice(-4)}`, 
+          phone: cleanPhone, 
+          name: `User_${cleanPhone.slice(-4)}`, 
           role: "PASSENGER" 
         });
+        console.log(`✅ Nouvel utilisateur créé: ${user.id}`);
+      }
+      
+      if (user.isBlocked) {
+        return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
       }
       
       req.session.userId = user.id;
@@ -334,7 +390,7 @@ export async function registerRoutes(
           return res.status(500).json({ message: "Erreur session" });
         }
         
-        console.log(`✅ User ${user.id} logged in, session ID: ${req.sessionID}`);
+        console.log(`✅ Utilisateur ${user.id} connecté`);
         
         res.json({ 
           user: {
@@ -356,6 +412,7 @@ export async function registerRoutes(
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
+
   
   app.get(api.auth.me.path, async (req, res) => {
     console.log('👤 getMe called');
@@ -386,6 +443,7 @@ export async function registerRoutes(
       res.json({ message: "Déconnexion réussie" });
     });
   });
+
 
     // ==================== EMAIL OTP ROUTES ====================
 
@@ -427,48 +485,39 @@ export async function registerRoutes(
           return res.status(400).json({ message: "Format d'email invalide" });
         }
         
-        // Supprimer les anciens OTP non utilisés pour cet email
-        try {
+        // Générer un vrai OTP aléatoire (même en développement)
+        const otp = generateOtp(); // Utilise la vraie génération aléatoire
+        console.log(`🎲 OTP email généré aléatoirement: ${otp}`);
+        
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        
+        if (!isDevelopment) {
+          // Supprimer les anciens OTP
           await db.delete(emailOtps)
             .where(and(
               eq(emailOtps.email, email),
               eq(emailOtps.isUsed, false)
             ));
-        } catch (deleteError) {
-          console.error('Error deleting old OTPs:', deleteError);
+          
+          const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+          
+          await db.insert(emailOtps).values({
+            email,
+            otp,
+            expiresAt,
+            isUsed: false,
+          });
+          
+          // Envoyer l'email
+          await sendEmailOtp(email, otp, language);
         }
         
-        const otp = generateOtp();
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-        
-        // Sauvegarder l'OTP
-        await db.insert(emailOtps).values({
-          email,
-          otp,
-          expiresAt,
-          isUsed: false,
-        });
-        
-        console.log(`✅ OTP saved for ${email}: ${otp}`);
-        
-        // Essayer d'envoyer l'email
-        let emailSent = false;
-        try {
-          emailSent = await sendEmailOtp(email, otp, language);
-        } catch (emailError) {
-          console.error('Email sending error:', emailError);
-        }
-        
-        // Toujours retourner l'OTP en développement ou si l'email n'a pas pu être envoyé
-        const isDevelopment = process.env.NODE_ENV === 'development';
-        const hasNoSMTP = !process.env.SMTP_USER;
-        
-        if (isDevelopment || hasNoSMTP || !emailSent) {
-          console.log(`⚠️ Returning OTP for ${email}: ${otp}`);
+        // Toujours retourner l'OTP en développement
+        if (isDevelopment) {
           return res.json({ 
             message: "Code envoyé", 
             expiresIn: 300,
-            devOtp: otp
+            devOtp: otp  // ← OTP aléatoire, pas 123456
           });
         }
         
@@ -482,7 +531,8 @@ export async function registerRoutes(
         });
       }
     });
-
+    
+    // Route verify OTP email - CORRIGÉE
     app.post('/api/auth/verify-email-otp', async (req, res) => {
       try {
         console.log('🔐 Email OTP verification request:', { email: req.body.email });
@@ -492,37 +542,41 @@ export async function registerRoutes(
           return res.status(400).json({ message: "Email et code requis" });
         }
         
-        // Récupérer l'OTP non utilisé et non expiré
-        const validOtps = await db.select().from(emailOtps)
-          .where(and(
-            eq(emailOtps.email, email),
-            eq(emailOtps.otp, otp),
-            eq(emailOtps.isUsed, false)
-          ))
-          .limit(1);
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        let isValid = false;
         
-        const validOtp = validOtps[0];
-        
-        if (!validOtp) {
-          console.log(`❌ No valid OTP found for ${email}`);
-          return res.status(401).json({ message: "Code invalide" });
+        // En développement, accepter 123456 comme code universel de secours
+        if (isDevelopment && otp === "123456") {
+          console.log(`🔓 Dev mode: Code universel 123456 accepté pour ${email}`);
+          isValid = true;
+        } else {
+          // Vérifier l'OTP en base
+          const validOtps = await db.select().from(emailOtps)
+            .where(and(
+              eq(emailOtps.email, email),
+              eq(emailOtps.otp, otp),
+              eq(emailOtps.isUsed, false)
+            ))
+            .limit(1);
+          
+          if (validOtps.length > 0) {
+            const validOtp = validOtps[0];
+            const now = new Date();
+            const expiresAt = new Date(validOtp.expiresAt);
+            
+            if (now <= expiresAt) {
+              isValid = true;
+              await db.update(emailOtps)
+                .set({ isUsed: true })
+                .where(eq(emailOtps.id, validOtp.id));
+            }
+          }
         }
         
-        // Vérifier l'expiration
-        const now = new Date();
-        const expiresAt = new Date(validOtp.expiresAt);
-        
-        if (now > expiresAt) {
-          console.log(`❌ OTP expired for ${email}`);
-          return res.status(401).json({ message: "Code expiré. Veuillez en demander un nouveau." });
+        if (!isValid) {
+          console.log(`❌ Invalid OTP for ${email}`);
+          return res.status(401).json({ message: "Code invalide ou expiré" });
         }
-        
-        console.log(`✅ OTP valid for ${email}`);
-        
-        // Marquer l'OTP comme utilisé
-        await db.update(emailOtps)
-          .set({ isUsed: true })
-          .where(eq(emailOtps.id, validOtp.id));
         
         // Chercher ou créer l'utilisateur
         let user = await storage.getUserByEmail(email);
@@ -547,14 +601,13 @@ export async function registerRoutes(
             language: "fr"
           });
           
-          console.log(`✅ New user created with email: ${email}, ID: ${user.id}`);
+          console.log(`✅ Nouvel utilisateur créé: ${user.id}`);
         }
         
         if (user.isBlocked) {
           return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
         }
         
-        // Sauvegarder la session
         req.session.userId = user.id;
         req.session.role = user.role;
         
@@ -564,20 +617,21 @@ export async function registerRoutes(
             return res.status(500).json({ message: "Erreur session" });
           }
           
-          console.log(`✅ User ${user.id} logged in via email, session ID: ${req.sessionID}`);
+          console.log(`✅ Utilisateur ${user.id} connecté via email`);
           
-          const userResponse = {
-            id: user.id,
-            name: user.name,
-            phone: user.phone,
-            email: user.email,
-            role: user.role,
-            language: user.language,
-            isApproved: user.isApproved,
-            isBlocked: user.isBlocked,
-          };
-          
-          res.json({ user: userResponse, success: true });
+          res.json({ 
+            user: {
+              id: user.id,
+              name: user.name,
+              phone: user.phone,
+              email: user.email,
+              role: user.role,
+              language: user.language,
+              isApproved: user.isApproved,
+              isBlocked: user.isBlocked,
+            }, 
+            success: true 
+          });
         });
         
       } catch (error) {
