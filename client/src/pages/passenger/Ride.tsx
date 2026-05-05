@@ -5,25 +5,49 @@ import { MapView, DriverMarkerInfo, fetchOSRMRoute } from '@/components/Map';
 import { useRide, useRideOffers, useAcceptOffer, useCancelRide, useRateRide } from '@/hooks/use-passenger';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useTranslation } from '@/lib/i18n';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Clock, Navigation2, CheckCircle2, User, Phone, XCircle, Star, ShieldAlert, Share2, MapPin, Route, Eye, Car, Bike, X, MessageCircle } from 'lucide-react';
+import {
+  Clock, Navigation2, CheckCircle2, User, Phone, XCircle, Star,
+  ShieldAlert, Share2, MapPin, Route, Eye, Car, Bike, X,
+  MessageCircle, AlertTriangle, Loader2
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AdBanner } from '@/components/AdBanner';
 import ChatBox from '@/components/ChatBox';
-import { useQueryClient } from '@tanstack/react-query';
-import { api } from '@shared/routes';
+
+// ==================== COMPOSANT DE SÉLECTION DE RAISON D'ANNULATION ====================
+const CANCEL_REASONS = {
+  mg: [
+    { id: 'CHANGED_MIND', label: 'Nanova hevitra' },
+    { id: 'WRONG_ADDRESS', label: 'Adiresy diso' },
+    { id: 'TOO_LONG_WAIT', label: 'Andrasana ela loatra' },
+    { id: 'DRIVER_NOT_RESPONDING', label: 'Tsy mamaly ny mpamily' },
+    { id: 'PRICE_TOO_HIGH', label: 'Vidiny lafo loatra' },
+    { id: 'VEHICLE_ISSUE', label: 'Olana amin\'ny fiara' },
+    { id: 'OTHER', label: 'Hafa' },
+  ],
+  fr: [
+    { id: 'CHANGED_MIND', label: 'J\'ai changé d\'avis' },
+    { id: 'WRONG_ADDRESS', label: 'Mauvaise adresse' },
+    { id: 'TOO_LONG_WAIT', label: 'Attente trop longue' },
+    { id: 'DRIVER_NOT_RESPONDING', label: 'Le chauffeur ne répond pas' },
+    { id: 'PRICE_TOO_HIGH', label: 'Prix trop élevé' },
+    { id: 'VEHICLE_ISSUE', label: 'Problème de véhicule' },
+    { id: 'OTHER', label: 'Autre' },
+  ]
+};
 
 export default function PassengerRide() {
   const [, params] = useRoute('/passenger/ride/:id');
   const rideId = params?.id ? parseInt(params.id) : null;
   const { t, lang } = useTranslation();
-  
+
   const { toast } = useToast();
   const { data: ride, refetch: refetchRide } = useRide(rideId);
   const { data: offers = [] } = useRideOffers(rideId);
@@ -31,16 +55,21 @@ export default function PassengerRide() {
   const cancelRide = useCancelRide(rideId!);
   const rateRide = useRateRide(rideId!);
   const { connected, subscribe, sendMessage } = useWebSocket();
-  
+
   const queryClient = useQueryClient();
 
-  // Chat states
   const [showChat, setShowChat] = useState(false);
+  const [chatMinimized, setChatMinimized] = useState(false);
   const [otherUserName, setOtherUserName] = useState('');
   const [otherUserId, setOtherUserId] = useState(0);
+  const [otherUserPhone, setOtherUserPhone] = useState('');
   const [currentUser, setCurrentUser] = useState<any>(null);
-  
-  // Ad banner states
+
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [selectedCancelReason, setSelectedCancelReason] = useState<string | null>(null);
+  const [cancelComment, setCancelComment] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
   const [showAdBanner, setShowAdBanner] = useState(true);
   const [selectedRating, setSelectedRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
@@ -50,20 +79,22 @@ export default function PassengerRide() {
   const [assignedDriverLoc, setAssignedDriverLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
 
-  const [chatMinimized, setChatMinimized] = useState(false);
-
-  // Récupérer l'utilisateur courant
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
+    const fetchCurrentUser = async () => {
       try {
-        const user = JSON.parse(storedUser);
-        setCurrentUser(user);
-      } catch (e) {}
-    }
+        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        if (res.ok) {
+          const user = await res.json();
+          setCurrentUser(user);
+          localStorage.setItem('user', JSON.stringify(user));
+        }
+      } catch (e) {
+        console.error('Failed to fetch user:', e);
+      }
+    };
+    fetchCurrentUser();
   }, []);
 
-  // Fermer le chat quand la course est terminée ou annulée
   useEffect(() => {
     if (ride && (ride.status === 'COMPLETED' || ride.status === 'CANCELED')) {
       setShowChat(false);
@@ -71,70 +102,96 @@ export default function PassengerRide() {
     }
   }, [ride]);
 
-  // Écouter l'événement OFFER_ACCEPTED pour ouvrir le chat immédiatement
   useEffect(() => {
     if (!connected) return;
-    
+
     const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
-      console.log('🎉 OFFER_ACCEPTED received in Ride.tsx:', data);
-      
+      console.log('OFFER_ACCEPTED received in Ride:', data);
+
       if (data.rideId === rideId) {
-        console.log('✅ Matching ride, opening chat for driver:', data.driverName);
+        console.log('Matching ride, opening chat for driver:', data.driverName);
         setOtherUserName(data.driverName || 'Chauffeur');
         setOtherUserId(data.driverId);
+        setOtherUserPhone(data.driverPhone || '');
         setShowChat(true);
         setChatMinimized(false);
-        
+
         toast({
           title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
-          description: lang === 'mg' 
+          description: lang === 'mg'
             ? `Ny mpamily ${data.driverName} dia ho tonga`
             : `Le chauffeur ${data.driverName} va arriver`,
         });
       }
     });
-    
+
     return () => unsubscribe();
   }, [connected, rideId, toast, lang]);
 
-  // Ouvrir le chat automatiquement quand la course est assignée (fallback)
   useEffect(() => {
     if (!ride) return;
-    
+
     const activeStatuses = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'];
     const isActive = activeStatuses.includes(ride.status);
-    
-    if (isActive && ride.driverId && !showChat) {
-      console.log('📱 Opening chat for active ride (fallback):', {
+
+    if (isActive && ride.driverId && !showChat && ride.driver) {
+      console.log('Opening chat for active ride:', {
         status: ride.status,
         driverId: ride.driverId,
         driverName: ride.driver?.name
       });
-      
+
       setOtherUserName(ride.driver?.name || 'Chauffeur');
       setOtherUserId(ride.driverId);
+      setOtherUserPhone(ride.driver?.phone || '');
       setShowChat(true);
       setChatMinimized(false);
     }
   }, [ride, showChat]);
 
-  // SUPPRIMER le polling manuel (causait des doublons avec React Query)
-  // useEffect avec setInterval a été supprimé car useRide gère déjà le polling
-
-  // useEffect pour recharger les offres périodiquement
   useEffect(() => {
-    if (!rideId) return;
-    if (!ride) return;
-    
-    const isBidding = ride.status === 'REQUESTED' || ride.status === 'BIDDING';
-    if (!isBidding) return;
-    
-    const interval = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: ['/api/rides', rideId, 'offers'] });
-    }, 10000); // 10 secondes au lieu de 5
-    
+    if (!connected) return;
+
+    const unsubscribeStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+      if (data.id === rideId) {
+        refetchRide();
+      }
+    });
+
+    const unsubscribeLocation = subscribe('DRIVER_LOCATION', (data: any) => {
+      if (data.rideId === rideId) {
+        setAssignedDriverLoc({ lat: data.lat, lng: data.lng });
+      }
+    });
+
+    return () => {
+      unsubscribeStatus();
+      unsubscribeLocation();
+    };
+  }, [connected, rideId, refetchRide]);
+
+  useEffect(() => {
+    if (!ride?.driverId) return;
+
+    const activeStatuses = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'];
+    if (!activeStatuses.includes(ride.status)) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/driver/${ride.driverId}/location`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.lat) {
+            setAssignedDriverLoc(data);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch driver location:', e);
+      }
+    }, 10000);
+
     return () => clearInterval(interval);
-  }, [rideId, ride, queryClient]);
+  }, [ride?.driverId, ride?.status]);
 
   useEffect(() => {
     if (ride?.pickupLat && ride?.dropLat) {
@@ -146,6 +203,42 @@ export default function PassengerRide() {
     }
   }, [ride?.pickupLat, ride?.pickupLng, ride?.dropLat, ride?.dropLng]);
 
+  const handleCancelWithReason = async () => {
+    if (!selectedCancelReason) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy voafidy ny antony" : "Raison non sélectionnée",
+        description: lang === 'mg'
+          ? "Safidio ny antony hanafoanana ny dia"
+          : "Veuillez sélectionner une raison pour annuler la course",
+      });
+      return;
+    }
+
+    setIsCancelling(true);
+
+    const reasons = lang === 'mg' ? CANCEL_REASONS.mg : CANCEL_REASONS.fr;
+    const selectedReasonLabel = reasons.find(r => r.id === selectedCancelReason)?.label || selectedCancelReason;
+    const finalReason = cancelComment
+      ? `${selectedReasonLabel}: ${cancelComment}`
+      : selectedReasonLabel;
+
+    try {
+      await cancelRide.mutateAsync(finalReason);
+      setShowCancelDialog(false);
+      setSelectedCancelReason(null);
+      setCancelComment('');
+    } catch (error) {
+      console.error('Cancel error:', error);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const openCancelDialog = () => {
+    setShowCancelDialog(true);
+  };
+
   const { data: viewsData } = useQuery<{ viewCount: number }>({
     queryKey: ['/api/rides', rideId, 'views'],
     queryFn: async () => {
@@ -154,44 +247,8 @@ export default function PassengerRide() {
       return res.json();
     },
     enabled: !!rideId && !!ride && (ride?.status === 'REQUESTED' || ride?.status === 'BIDDING'),
-    refetchInterval: 30000, // 30 secondes
+    refetchInterval: 30000,
   });
-
-  const { data: driverLocData } = useQuery({
-    queryKey: ['/api/driver', ride?.driverId, 'location'],
-    queryFn: async () => {
-      const res = await fetch(`/api/driver/${ride?.driverId}/location`, { credentials: 'include' });
-      if (res.status === 429) return null;
-      return res.json();
-    },
-    enabled: !!ride?.driverId && !!ride && ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride?.status || ''),
-    refetchInterval: 15000, // 15 secondes
-  });
-
-  useEffect(() => {
-    if (driverLocData && driverLocData.lat) {
-      setAssignedDriverLoc(driverLocData);
-    }
-  }, [driverLocData]);
-
-  useEffect(() => {
-    const unsub = subscribe('DRIVER_LOCATION', (data: any) => {
-      if (data.rideId === rideId) {
-        setAssignedDriverLoc({ lat: data.lat, lng: data.lng });
-      }
-    });
-    return unsub;
-  }, [subscribe, rideId]);
-
-  // Écouter les événements de statut de course
-  useEffect(() => {
-    const unsub = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
-      if (data.id === rideId) {
-        refetchRide();
-      }
-    });
-    return unsub;
-  }, [subscribe, rideId, refetchRide]);
 
   const handleSubmitRating = () => {
     if (selectedRating === 0) return;
@@ -200,16 +257,22 @@ export default function PassengerRide() {
       {
         onSuccess: () => {
           setHasRated(true);
-          toast({ title: "Misaotra!", description: lang === 'mg' ? "Voaray ny naoty nomenao." : "Note enregistrée." });
+          toast({
+            title: "Misaotra!",
+            description: lang === 'mg' ? "Voaray ny naoty nomenao." : "Note enregistrée."
+          });
         },
         onError: () => {
-          toast({ title: "Nisy olana", description: lang === 'mg' ? "Tsy afaka nanome naoty." : "Erreur lors de la notation.", variant: "destructive" });
+          toast({
+            title: "Nisy olana",
+            description: lang === 'mg' ? "Tsy afaka nanome naoty." : "Erreur lors de la notation.",
+            variant: "destructive"
+          });
         },
       }
     );
   };
 
-  // Afficher le loader tant que ride n'est pas chargé
   if (!ride) {
     return (
       <MobileLayout role="passenger">
@@ -220,7 +283,6 @@ export default function PassengerRide() {
     );
   }
 
-  // Définir les variables ici, après le return conditionnel mais avant le JSX
   const isBidding = ride.status === 'REQUESTED' || ride.status === 'BIDDING';
   const isActive = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(ride.status);
   const isCompleted = ride.status === 'COMPLETED';
@@ -255,31 +317,34 @@ export default function PassengerRide() {
   const allDriverMarkers = [...offerDriverMarkers, ...assignedDriverMarker];
 
   const statusLabels: Record<string, { mg: string; fr: string; color: string }> = {
-    REQUESTED: { mg: 'Mitady mpamily...', fr: 'Recherche de chauffeurs...', color: 'bg-amber-500/10 text-amber-600 border-amber-200' },
-    BIDDING: { mg: 'Misy tolo-bidy', fr: 'Offres en cours', color: 'bg-blue-500/10 text-blue-600 border-blue-200' },
-    ASSIGNED: { mg: 'Voatendry ny mpamily', fr: 'Chauffeur assigné', color: 'bg-green-500/10 text-green-600 border-green-200' },
-    DRIVER_EN_ROUTE: { mg: 'Eny an-dalana ny mpamily', fr: 'Chauffeur en route', color: 'bg-blue-500/10 text-blue-600 border-blue-200' },
-    DRIVER_ARRIVED: { mg: 'Tonga ny mpamily!', fr: 'Chauffeur arrivé!', color: 'bg-green-500/10 text-green-600 border-green-200' },
+    REQUESTED: { mg: 'Mitady mpamily...', fr: 'Recherche de chauffeurs...', color: 'bg-amber-100 text-amber-700 border-amber-200' },
+    BIDDING: { mg: 'Misy tolo-bidy', fr: 'Offres en cours', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+    ASSIGNED: { mg: 'Voatendry ny mpamily', fr: 'Chauffeur assigné', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+    DRIVER_EN_ROUTE: { mg: 'Eny an-dalana ny mpamily', fr: 'Chauffeur en route', color: 'bg-primary/10 text-primary border-primary/20' },
+    DRIVER_ARRIVED: { mg: 'Tonga ny mpamily!', fr: 'Chauffeur arrivé!', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
     IN_PROGRESS: { mg: 'Eny an-dalana...', fr: 'En cours...', color: 'bg-primary/10 text-primary border-primary/20' },
-    COMPLETED: { mg: 'Vita ny dia', fr: 'Course terminée', color: 'bg-green-500/10 text-green-600 border-green-200' },
-    CANCELED: { mg: 'Nofoanana', fr: 'Annulée', color: 'bg-red-500/10 text-red-600 border-red-200' },
+    COMPLETED: { mg: 'Vita ny dia', fr: 'Course terminée', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+    CANCELED: { mg: 'Nofoanana', fr: 'Annulée', color: 'bg-red-100 text-red-700 border-red-200' },
   };
 
   const statusInfo = statusLabels[ride.status] || statusLabels.REQUESTED;
+  const cancelReasons = lang === 'mg' ? CANCEL_REASONS.mg : CANCEL_REASONS.fr;
 
   return (
     <MobileLayout role="passenger">
-      {/* Indicateur de connexion WebSocket */}
-      <div className="absolute top-16 left-4 z-30">
-        <div className={`px-2 py-1 rounded-full text-xs ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
+      {/* Indicateur de connexion WebSocket - repositionné en haut à gauche sous le menu naturel */}
+      <div className="absolute top-4 left-4 z-30">
+        <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+          connected ? 'bg-emerald-500/20 text-emerald-700' : 'bg-red-500/20 text-red-700'
+        }`}>
           {connected ? '● Connecté' : '○ Déconnecté'}
         </div>
       </div>
 
-      {/* Publicité fermable */}
+      {/* Publicité - centrée en haut */}
       {isActive && showAdBanner && (
-        <div className="absolute top-14 left-0 right-0 z-20 px-3">
-          <div className="relative bg-background/95 backdrop-blur-xl rounded-xl shadow-lg border">
+        <div className="absolute top-14 left-0 right-0 z-20 px-3 pointer-events-none">
+          <div className="pointer-events-auto relative bg-background/95 backdrop-blur-xl rounded-xl shadow-lg border">
             <Button
               variant="ghost"
               size="icon"
@@ -292,14 +357,16 @@ export default function PassengerRide() {
           </div>
         </div>
       )}
-      
+
+      {/* Carte */}
       <div className="absolute inset-0 z-0 pt-14">
-        <MapView 
+        <MapView
           center={pickupCoords}
           zoom={15}
           pickupMarker={pickupCoords}
           dropoffMarker={dropoffCoords}
           driverMarkers={allDriverMarkers}
+          pickupVehicleType={ride.vehicleType}
           showRoute={true}
           interactive={true}
           routeCoordinates={routeCoords}
@@ -308,65 +375,64 @@ export default function PassengerRide() {
 
       <AnimatePresence>
         {isBidding && (
-          <motion.div 
+          <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             className="absolute bottom-0 w-full z-10 p-3 max-h-[65vh] flex flex-col"
           >
-            <div className="bg-background/95 backdrop-blur-xl rounded-3xl shadow-float border-0 overflow-hidden flex flex-col">
+            <div className="bg-background/95 backdrop-blur-xl rounded-3xl shadow-xl border-0 overflow-hidden flex flex-col">
               <div className="p-4 border-b border-border/30 relative shrink-0">
                 <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline" className={`${statusInfo.color} px-2.5 py-0.5 text-xs font-bold`} data-testid="badge-status">
+                  <Badge className={`${statusInfo.color} px-2.5 py-0.5 text-xs font-bold`}>
                     {lang === 'mg' ? statusInfo.mg : statusInfo.fr}
                   </Badge>
                   {viewsData && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid="text-views">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Eye className="w-3 h-3" /> {viewsData.viewCount} {lang === 'mg' ? 'mpamily nahita' : 'chauffeurs ont vu'}
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                  <MapPin className="w-3 h-3 text-green-500" />
-                  <span className="truncate flex-1" data-testid="text-pickup-addr">{ride.pickupAddress}</span>
+                  <MapPin className="w-3 h-3 text-emerald-500" />
+                  <span className="truncate flex-1">{ride.pickupAddress}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <MapPin className="w-3 h-3 text-red-500" />
-                  <span className="truncate flex-1" data-testid="text-dropoff-addr">{ride.dropAddress}</span>
+                  <span className="truncate flex-1">{ride.dropAddress}</span>
                 </div>
 
                 {(ride.distanceKm || ride.etaMinutes) && (
                   <div className="flex gap-2 mt-2">
                     {ride.distanceKm && (
-                      <span className="text-xs bg-secondary/60 px-2 py-0.5 rounded-full flex items-center gap-1" data-testid="text-distance">
+                      <span className="text-xs bg-secondary/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Route className="w-3 h-3" /> {parseFloat(ride.distanceKm as any).toFixed(1)} km
                       </span>
                     )}
                     {ride.etaMinutes && (
-                      <span className="text-xs bg-secondary/60 px-2 py-0.5 rounded-full flex items-center gap-1" data-testid="text-eta">
+                      <span className="text-xs bg-secondary/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Clock className="w-3 h-3" /> ~{ride.etaMinutes} min
                       </span>
                     )}
                   </div>
                 )}
 
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="absolute right-3 top-3 text-muted-foreground hover:text-destructive"
-                  onClick={() => cancelRide.mutate('Changed mind')}
-                  data-testid="button-cancel-ride"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-3 top-3 text-muted-foreground hover:text-red-500"
+                  onClick={openCancelDialog}
                 >
                   <XCircle className="w-5 h-5" />
                 </Button>
               </div>
-              
+
               <div className="p-3 border-b border-border/30 shrink-0">
                 <p className="text-xs font-bold text-muted-foreground">
-                  {offers.length === 0 
-                    ? (lang === 'mg' ? 'Miandry tolobidy...' : 'En attente d\'offres...')
-                    : `${offers.length} ${lang === 'mg' ? 'tolobidy voaray' : 'offre(s) reçue(s)'}`
+                  {offers.length === 0
+                    ? (lang === 'mg' ? 'Miandry tolo-bidy...' : 'En attente d\'offres...')
+                    : `${offers.length} ${lang === 'mg' ? 'tolo-bidy voaray' : 'offre(s) reçue(s)'}`
                   }
                 </p>
               </div>
@@ -387,22 +453,22 @@ export default function PassengerRide() {
                     const rCount = offer.profile?.ratingCount || 0;
                     const vType = offer.profile?.vehicleType || ride.vehicleType;
                     return (
-                      <Card key={offer.id} className="p-3 rounded-2xl border border-border/50 hover:border-primary/50 transition-colors shadow-sm" data-testid={`offer-card-${offer.id}`}>
+                      <Card key={offer.id} className="p-3 rounded-2xl border border-border/50 hover:border-primary/50 transition-colors shadow-sm">
                         <div className="flex justify-between items-start mb-2.5">
                           <div className="flex items-center gap-2.5">
                             <div className="w-11 h-11 bg-gradient-to-br from-primary/20 to-primary/5 rounded-full flex items-center justify-center relative">
                               <User className="w-5 h-5 text-primary" />
                               {offer.location && (
-                                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white" title="En ligne" />
+                                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-white" />
                               )}
                             </div>
                             <div>
-                              <p className="font-bold text-sm" data-testid={`text-driver-name-${offer.id}`}>{offer.driver?.name || 'Mpamily'}</p>
+                              <p className="font-bold text-sm">{offer.driver?.name || 'Mpamily'}</p>
                               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                 {rating > 0 ? (
                                   <span className="flex items-center gap-0.5 font-semibold">
                                     <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                                    <span className="text-amber-600 dark:text-amber-400">{rating.toFixed(1)}</span>
+                                    <span className="text-amber-600">{rating.toFixed(1)}</span>
                                     <span className="text-muted-foreground/60">({rCount})</span>
                                   </span>
                                 ) : (
@@ -417,7 +483,7 @@ export default function PassengerRide() {
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className="font-bold text-lg font-display text-primary leading-tight" data-testid={`text-price-${offer.id}`}>
+                            <p className="font-bold text-lg font-display text-primary leading-tight">
                               {offer.priceAr.toLocaleString()} <span className="text-xs">Ar</span>
                             </p>
                             <p className="text-xs text-muted-foreground flex items-center justify-end gap-0.5">
@@ -432,24 +498,22 @@ export default function PassengerRide() {
                           </p>
                         )}
 
-                        <div className="flex gap-2">
-                          <Button 
+                        <div className="flex gap-2 justify-center">
+                          <Button
                             onClick={() => acceptOffer.mutate(offer.id)}
                             disabled={acceptOffer.isPending}
-                            className="flex-1 font-bold bg-foreground text-background hover:bg-foreground/90 rounded-xl h-9 text-sm"
-                            data-testid={`button-accept-${offer.id}`}
+                            className="w-auto min-w-[100px] font-bold bg-gradient-to-r from-primary to-primary/80 rounded-xl h-8 text-xs"
                           >
                             {t('accept')}
                           </Button>
                           {offer.driver?.phone && (
-                            <Button 
+                            <Button
                               variant="outline"
                               size="icon"
-                              className="rounded-xl h-9 w-9 shrink-0"
+                              className="rounded-xl h-8 w-8 shrink-0"
                               onClick={() => window.location.href = `tel:${offer.driver.phone}`}
-                              data-testid={`button-call-${offer.id}`}
                             >
-                              <Phone className="w-4 h-4 text-green-600" />
+                              <Phone className="w-3.5 h-3.5 text-emerald-600" />
                             </Button>
                           )}
                         </div>
@@ -463,43 +527,43 @@ export default function PassengerRide() {
         )}
 
         {isActive && (
-          <motion.div 
+          <motion.div
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             className="absolute bottom-0 w-full z-10 p-3"
           >
-            <Card className="p-4 rounded-3xl shadow-float border-0 bg-background/95 backdrop-blur-xl">
+            <Card className="p-4 rounded-3xl shadow-xl border-0 bg-background/95 backdrop-blur-xl">
               <div className="flex justify-between items-center mb-3">
-                <Badge variant="outline" className={`${statusInfo.color} px-2.5 py-0.5 text-xs font-bold`} data-testid="badge-status">
+                <Badge className={`${statusInfo.color} px-2.5 py-0.5 text-xs font-bold`}>
                   {lang === 'mg' ? statusInfo.mg : statusInfo.fr}
                 </Badge>
-                <div className="font-display font-bold text-lg" data-testid="text-price">{ride.selectedPriceAr?.toLocaleString()} Ar</div>
+                <div className="font-display font-bold text-lg text-primary">{ride.selectedPriceAr?.toLocaleString()} Ar</div>
               </div>
 
               {(ride.distanceKm || ride.etaMinutes) && (
                 <div className="flex gap-2 mb-3">
                   {ride.distanceKm && (
-                    <div className="flex items-center gap-1 text-xs bg-secondary/60 px-2 py-0.5 rounded-full" data-testid="text-distance">
+                    <div className="flex items-center gap-1 text-xs bg-secondary/60 px-2 py-0.5 rounded-full">
                       <Route className="w-3 h-3" /> {parseFloat(ride.distanceKm as any).toFixed(1)} km
                     </div>
                   )}
                   {ride.etaMinutes && (
-                    <div className="flex items-center gap-1 text-xs bg-secondary/60 px-2 py-0.5 rounded-full" data-testid="text-eta">
+                    <div className="flex items-center gap-1 text-xs bg-secondary/60 px-2 py-0.5 rounded-full">
                       <Clock className="w-3 h-3" /> ~{ride.etaMinutes} min
                     </div>
                   )}
                 </div>
               )}
-              
+
               <div className="flex items-center p-3 bg-secondary/50 rounded-2xl mb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-primary/20 to-primary/5 rounded-full flex items-center justify-center mr-3 relative">
                   <User className="w-5 h-5 text-primary" />
                   {assignedDriverLoc && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-white animate-pulse" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-sm" data-testid="text-driver-name">{ride.driver?.name || 'Mpamily'}</h4>
+                  <h4 className="font-bold text-sm">{ride.driver?.name || 'Mpamily'}</h4>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{ride.vehicleType}</span>
                     {ride.driver?.phone && (
@@ -511,8 +575,8 @@ export default function PassengerRide() {
                   </div>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
-                  <Button 
-                    size="icon" 
+                  <Button
+                    size="icon"
                     variant="outline"
                     className="rounded-full w-9 h-9"
                     onClick={() => {
@@ -525,48 +589,35 @@ export default function PassengerRide() {
                         toast({ title: "Zaraina ny dia", description: `Mpamily: ${ride.driver?.name}, ${ride.vehicleType}` });
                       }
                     }}
-                    data-testid="button-share-trip"
                   >
                     <Share2 className="w-4 h-4" />
                   </Button>
-                  <Button 
-                    size="icon" 
-                    className="rounded-full bg-green-500 text-white shadow-lg shadow-green-500/30 w-9 h-9"
+                  <Button
+                    size="icon"
+                    className="rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 w-9 h-9 hover:bg-emerald-600"
                     onClick={() => window.location.href = `tel:${ride.driver?.phone || ''}`}
-                    data-testid="button-call-driver"
                   >
                     <Phone className="w-4 h-4" />
                   </Button>
-                  <Button 
-                    size="icon" 
+                  <Button
+                    size="icon"
                     variant="outline"
                     className="rounded-full w-9 h-9"
                     onClick={() => setShowChat(!showChat)}
-                    data-testid="button-chat"
                   >
                     <MessageCircle className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 justify-center">
                 {ride.status !== 'IN_PROGRESS' && (
-                  <Button 
-                    variant="destructive" 
-                    onClick={() => cancelRide.mutate('Taking too long')}
-                    className="flex-1 h-10 rounded-xl font-bold text-sm"
-                    data-testid="button-cancel-ride"
-                  >
+                  <Button variant="destructive" onClick={openCancelDialog} className="w-auto min-w-[120px] h-9 rounded-xl font-bold text-sm">
                     {t('cancel')}
                   </Button>
                 )}
-                <Button 
-                  variant="destructive"
-                  onClick={() => setShowSOS(true)}
-                  className="h-10 rounded-xl font-bold px-4 text-sm"
-                  data-testid="button-sos"
-                >
-                  <ShieldAlert className="w-4 h-4 mr-1" /> SOS
+                <Button variant="destructive" onClick={() => setShowSOS(true)} className="w-auto min-w-[120px] h-9 rounded-xl font-bold px-3 text-sm bg-red-500 hover:bg-red-600">
+                  <ShieldAlert className="w-3.5 h-3.5 mr-1" /> SOS
                 </Button>
               </div>
             </Card>
@@ -579,26 +630,25 @@ export default function PassengerRide() {
             animate={{ y: 0 }}
             className="absolute bottom-0 w-full z-10 p-3"
           >
-            <Card className="p-4 rounded-3xl shadow-float border-0 bg-background/95 backdrop-blur-xl">
+            <Card className="p-4 rounded-3xl shadow-xl border-0 bg-background/95 backdrop-blur-xl">
               {hasRated ? (
                 <div className="text-center py-6">
-                  <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                  <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
                   <h3 className="font-bold text-lg font-display mb-1">Misaotra anao!</h3>
                   <p className="text-sm text-muted-foreground">{lang === 'mg' ? 'Voaray ny naoty nomenao' : 'Note enregistrée'}</p>
                 </div>
               ) : (
                 <>
                   <div className="text-center mb-4">
-                    <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-2" />
+                    <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
                     <h3 className="font-bold text-lg font-display">{lang === 'mg' ? 'Vita ny dia!' : 'Course terminée!'}</h3>
                     <p className="text-sm text-muted-foreground">{lang === 'mg' ? 'Omeo naoty ny mpamily' : 'Notez le chauffeur'}</p>
                   </div>
 
-                  <div className="flex justify-center gap-2 mb-4" data-testid="rating-stars">
+                  <div className="flex justify-center gap-2 mb-4">
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button
                         key={star}
-                        data-testid={`star-${star}`}
                         onMouseEnter={() => setHoverRating(star)}
                         onMouseLeave={() => setHoverRating(0)}
                         onClick={() => setSelectedRating(star)}
@@ -616,7 +666,6 @@ export default function PassengerRide() {
                   </div>
 
                   <Textarea
-                    data-testid="input-rating-comment"
                     placeholder={lang === 'mg' ? "Hafatra fanampiny (tsy voatery)" : "Commentaire (optionnel)"}
                     value={ratingComment}
                     onChange={(e) => setRatingComment(e.target.value)}
@@ -625,13 +674,12 @@ export default function PassengerRide() {
                   />
 
                   <Button
-                    data-testid="button-submit-rating"
                     onClick={handleSubmitRating}
                     disabled={selectedRating === 0 || rateRide.isPending}
-                    className="w-full font-bold bg-foreground text-background rounded-xl h-10"
+                    className="w-full font-bold bg-gradient-to-r from-primary to-primary/80 rounded-xl h-10"
                   >
-                    {rateRide.isPending 
-                      ? (lang === 'mg' ? 'Mandefitra...' : 'Envoi...') 
+                    {rateRide.isPending
+                      ? (lang === 'mg' ? 'Mandefitra...' : 'Envoi...')
                       : (lang === 'mg' ? 'Alefaso ny naoty' : 'Envoyer la note')
                     }
                   </Button>
@@ -642,14 +690,99 @@ export default function PassengerRide() {
         )}
       </AnimatePresence>
 
+      {/* Dialogue d'annulation */}
+      <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <DialogContent className="rounded-3xl max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              {lang === 'mg' ? 'Hanaisotra ny dia?' : 'Annuler la course?'}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              {lang === 'mg'
+                ? 'Safidio ny antony hanafoanana ny dia:'
+                : 'Veuillez sélectionner la raison de l\'annulation :'}
+            </p>
+
+            <div className="grid grid-cols-1 gap-2">
+              {cancelReasons.map((reason) => (
+                <button
+                  key={reason.id}
+                  onClick={() => setSelectedCancelReason(reason.id)}
+                  className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                    selectedCancelReason === reason.id
+                      ? 'border-red-500 bg-red-50 dark:bg-red-950/20'
+                      : 'border-border/50 hover:border-muted-foreground/30'
+                  }`}
+                >
+                  <span className="text-xl">{reason.icon}</span>
+                  <span className="text-sm font-medium flex-1">{reason.label}</span>
+                  {selectedCancelReason === reason.id && (
+                    <CheckCircle2 className="w-5 h-5 text-red-500" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                {lang === 'mg' ? 'Fanazavana fanampiny (tsy voatery)' : 'Commentaire supplémentaire (optionnel)'}
+              </label>
+              <Textarea
+                placeholder={lang === 'mg' ? 'Soraty eto ny antony...' : 'Écrivez votre raison ici...'}
+                value={cancelComment}
+                onChange={(e) => setCancelComment(e.target.value)}
+                className="rounded-xl resize-none"
+                rows={2}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <div className="flex gap-2 w-full">
+              <Button
+                variant="outline"
+                className="flex-1 rounded-xl"
+                onClick={() => {
+                  setShowCancelDialog(false);
+                  setSelectedCancelReason(null);
+                  setCancelComment('');
+                }}
+                disabled={isCancelling}
+              >
+                {lang === 'mg' ? 'Ajanony' : 'Retour'}
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1 rounded-xl"
+                onClick={handleCancelWithReason}
+                disabled={!selectedCancelReason || isCancelling}
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    {lang === 'mg' ? 'Hofoanana...' : 'Annulation...'}
+                  </>
+                ) : (
+                  lang === 'mg' ? 'Hanafoana ny dia' : 'Annuler la course'
+                )}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Chat Box */}
-      {showChat && rideId && currentUser && (
+      {showChat && rideId && currentUser && otherUserId > 0 && (
         <ChatBox
           rideId={rideId}
           currentUserId={currentUser.id}
           otherUserId={otherUserId}
           otherUserName={otherUserName}
-          otherUserPhone={ride.driver?.phone}
+          otherUserPhone={otherUserPhone}
           isOpen={showChat}
           minimized={chatMinimized}
           onClose={() => {
@@ -660,38 +793,37 @@ export default function PassengerRide() {
         />
       )}
 
+      {/* Dialog SOS */}
       <Dialog open={showSOS} onOpenChange={setShowSOS}>
         <DialogContent className="rounded-3xl sm:rounded-3xl border-0 shadow-2xl max-w-sm mx-auto">
           <DialogHeader>
             <DialogTitle className="text-red-600 font-display text-xl flex items-center gap-2">
-              <ShieldAlert className="w-6 h-6" /> SOS - {lang === 'mg' ? 'Vonjy maika' : 'Urgence'}
+              <ShieldAlert className="w-6 h-6" /> SOS - Urgence
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <a
               href="tel:117"
               className="flex items-center gap-3 p-3.5 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-900"
-              data-testid="sos-police"
             >
               <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center text-white shrink-0">
                 <Phone className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-bold text-sm">Polisy - 117</p>
-                <p className="text-xs text-muted-foreground">{lang === 'mg' ? 'Antso vonjy maika polisy' : 'Appel d\'urgence police'}</p>
+                <p className="font-bold text-sm">Police - 117</p>
+                <p className="text-xs text-muted-foreground">Appel d'urgence police</p>
               </div>
             </a>
             <a
               href="tel:118"
               className="flex items-center gap-3 p-3.5 bg-orange-50 dark:bg-orange-950/30 rounded-xl border border-orange-200 dark:border-orange-900"
-              data-testid="sos-ambulance"
             >
               <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center text-white shrink-0">
                 <Phone className="w-5 h-5" />
               </div>
               <div>
                 <p className="font-bold text-sm">Ambulance - 118</p>
-                <p className="text-xs text-muted-foreground">{lang === 'mg' ? 'Antso vonjy maika fahasalamana' : 'Appel d\'urgence médical'}</p>
+                <p className="text-xs text-muted-foreground">Appel d'urgence médical</p>
               </div>
             </a>
             <button
@@ -699,21 +831,20 @@ export default function PassengerRide() {
                 if (navigator.share) {
                   navigator.share({
                     title: 'SOS - Farady',
-                    text: `${lang === 'mg' ? 'Mila vonjy aho!' : 'J\'ai besoin d\'aide!'} Mpamily: ${ride.driver?.name || ''}, Fiara: ${ride.vehicleType}, Avy: ${ride.pickupAddress}, Ho any: ${ride.dropAddress}`,
+                    text: `J'ai besoin d'aide! Chauffeur: ${ride.driver?.name || ''}, Véhicule: ${ride.vehicleType}, Départ: ${ride.pickupAddress}, Arrivée: ${ride.dropAddress}`,
                   }).catch(() => {});
                 }
-                toast({ title: lang === 'mg' ? "Voazara ny toeranao" : "Position partagée" });
+                toast({ title: "Position partagée" });
                 setShowSOS(false);
               }}
               className="flex items-center gap-3 p-3.5 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900 w-full text-left"
-              data-testid="sos-share-location"
             >
               <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white shrink-0">
                 <Share2 className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-bold text-sm">{lang === 'mg' ? 'Zarao ny toeranao' : 'Partager ma position'}</p>
-                <p className="text-xs text-muted-foreground">{lang === 'mg' ? "Alefaso amin'ny namana na fianakaviana" : 'Envoyer à un proche'}</p>
+                <p className="font-bold text-sm">Partager ma position</p>
+                <p className="text-xs text-muted-foreground">Envoyer à un proche</p>
               </div>
             </button>
           </div>

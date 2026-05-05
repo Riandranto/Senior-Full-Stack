@@ -17,14 +17,47 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Car, MapPin, TrendingUp, Activity, Shield, Settings, Star,
   CheckCircle, XCircle, Ban, Eye, Phone, Navigation, Clock, Route,
-  Search, LogOut, ChevronLeft, ChevronRight, DollarSign, AlertTriangle,
+  Search, LogOut, ChevronLeft, ChevronRight, DollarSign, 
   FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File,
-  RefreshCw, Calendar
+  RefreshCw, Calendar,AlertTriangle,
+    SearchX, Clock as ClockIcon, Database
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import AdminAds from './Ads';
+import {  Trash2, Plus, Check } from 'lucide-react';
 
+// ==================== STOCKAGE LOCAL POUR RECHERCHES NON TROUVÉES ====================
+// À placer après les imports, avant les composants
+
+interface UnknownSearch {
+  query: string;
+  timestamp: number;
+  type: 'pickup' | 'dropoff';
+}
+
+// Ajoutez cette fonction pour récupérer les recherches non trouvées
+const getUnknownSearches = (): UnknownSearch[] => {
+  try {
+    return JSON.parse(localStorage.getItem('farady_unknown_searches') || '[]');
+  } catch {
+    return [];
+  }
+};
+
+const clearUnknownSearches = () => {
+  localStorage.removeItem('farady_unknown_searches');
+};
+
+const deleteUnknownSearch = (index: number) => {
+  try {
+    const searches = getUnknownSearches();
+    searches.splice(index, 1);
+    localStorage.setItem('farady_unknown_searches', JSON.stringify(searches));
+  } catch (e) {
+    console.error('Failed to delete unknown search:', e);
+  }
+};
 function formatDate(d: string | null) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('fr-MG', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -34,6 +67,8 @@ function formatAr(amount: number | null) {
   if (!amount) return '0 Ar';
   return amount.toLocaleString('fr-MG') + ' Ar';
 }
+
+
 
 const statusColors: Record<string, string> = {
   REQUESTED: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
@@ -1394,6 +1429,159 @@ export default function AdminDashboard() {
     console.error('API Errors:', { statsError, usersError, driversError, ridesError });
   }
 
+  const UnknownSearchesManager = () => {
+    const [searches, setSearches] = useState<UnknownSearch[]>([]);
+    const [filter, setFilter] = useState<'all' | 'pickup' | 'dropoff'>('all');
+    
+    useEffect(() => {
+      setSearches(getUnknownSearches());
+    }, []);
+    
+    const refresh = () => {
+      setSearches(getUnknownSearches());
+    };
+    
+    const handleClearAll = () => {
+      if (confirm('Supprimer toutes les recherches non trouvées ?')) {
+        clearUnknownSearches();
+        setSearches([]);
+      }
+    };
+    
+    const handleDelete = (index: number) => {
+      deleteUnknownSearch(index);
+      refresh();
+    };
+    
+    const filteredSearches = searches.filter(s => {
+      if (filter === 'all') return true;
+      return s.type === filter;
+    });
+    
+    const formatDate = (timestamp: number) => {
+      return new Date(timestamp).toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    };
+    
+    const getTypeLabel = (type: string) => {
+      return type === 'pickup' 
+        ? { label: 'Départ', color: 'bg-emerald-100 text-emerald-700' }
+        : { label: 'Arrivée', color: 'bg-red-100 text-red-700' };
+    };
+    
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <SearchX className="w-5 h-5 text-amber-500" />
+              Lieux non trouvés par les passagers
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Ces adresses ont été recherchées mais n'ont pas été trouvées dans Nominatim.
+              Vous pouvez les ajouter manuellement comme lieux personnalisés.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <div className="flex gap-1 bg-muted/30 rounded-lg p-1">
+              <button
+                onClick={() => setFilter('all')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${filter === 'all' ? 'bg-primary text-white' : 'hover:bg-muted'}`}
+              >
+                Tous ({searches.length})
+              </button>
+              <button
+                onClick={() => setFilter('pickup')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${filter === 'pickup' ? 'bg-emerald-500 text-white' : 'hover:bg-muted'}`}
+              >
+                Départs ({searches.filter(s => s.type === 'pickup').length})
+              </button>
+              <button
+                onClick={() => setFilter('dropoff')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${filter === 'dropoff' ? 'bg-red-500 text-white' : 'hover:bg-muted'}`}
+              >
+                Arrivées ({searches.filter(s => s.type === 'dropoff').length})
+              </button>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refresh}
+              className="rounded-xl h-9"
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Actualiser
+            </Button>
+            {searches.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleClearAll}
+                className="rounded-xl h-9"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Tout effacer
+              </Button>
+            )}
+          </div>
+        </div>
+        
+        {filteredSearches.length === 0 ? (
+          <Card className="rounded-2xl border-0 shadow-sm p-8 text-center">
+            <SearchX className="w-12 h-12 mx-auto mb-3 text-muted-foreground/40" />
+            <p className="text-muted-foreground text-sm">
+              {searches.length === 0 
+                ? "Aucune recherche non trouvée pour le moment."
+                : "Aucun résultat pour ce filtre."}
+            </p>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredSearches.map((search, idx) => {
+              const typeInfo = getTypeLabel(search.type);
+              return (
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="bg-muted/20 rounded-xl p-4 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${typeInfo.color}`}>
+                          {typeInfo.label}
+                        </span>
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <ClockIcon className="w-3 h-3" />
+                          {formatDate(search.timestamp)}
+                        </span>
+                      </div>
+                      <p className="font-mono text-sm bg-background/50 p-2 rounded-lg break-words">
+                        {search.query}
+                      </p>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 shrink-0 ml-2"
+                      onClick={() => handleDelete(idx)}
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <RefreshIndicator isRefreshing={isRefreshing} />
@@ -1450,6 +1638,9 @@ export default function AdminDashboard() {
               </TabsTrigger>
               <TabsTrigger value="bookings" className="rounded-lg text-xs md:text-sm" data-testid="tab-bookings">
                 <Calendar className="w-4 h-4 mr-1.5" /> Réservations
+              </TabsTrigger>
+              <TabsTrigger value="unknown-searches" className="rounded-lg text-xs md:text-sm" data-testid="tab-unknown-searches">
+                <SearchX className="w-4 h-4 mr-1.5" /> Recherches non trouvées
               </TabsTrigger>
               <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
                 <Settings className="w-4 h-4 mr-1.5" /> Paramètres
@@ -2113,6 +2304,10 @@ export default function AdminDashboard() {
                 }}
               />
             </Card>
+          </TabsContent>
+
+          <TabsContent value="unknown-searches" className="space-y-4 mt-0">
+            <UnknownSearchesManager />
           </TabsContent>
 
           {/* ===== SETTINGS TAB ===== */}

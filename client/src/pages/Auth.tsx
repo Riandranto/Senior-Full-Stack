@@ -12,8 +12,90 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, Mail, Shield, Loader2, WifiOff, AtSign, Lock } from 'lucide-react';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { apiFetch } from '@/lib/api';
+import { normalizePhone } from '@/lib/phone-normalizer';
 
-// Animation du logo
+// ==================== FONCTION DE VALIDATION DU TÉLÉPHONE ====================
+/**
+ * Valide et normalise un numéro de téléphone malgache
+ * Formats acceptés:
+ * - 0341234567 (10 chiffres)
+ * - 034 12 345 67 (avec espaces)
+ * - +261341234567 (format international)
+ * - 261341234567 (sans le +)
+ * 
+ * @returns { valid: boolean, normalized: string, error: string | null }
+ */
+function validateAndNormalizePhone(phone: string): { valid: boolean; normalized: string; error: string | null } {
+  // Supprimer tous les espaces et caractères non numériques sauf +
+  let cleaned = phone.trim().replace(/[^\d+]/g, '');
+  
+  // Cas vide
+  if (!cleaned) {
+    return { valid: false, normalized: '', error: "Le numéro est requis" };
+  }
+  
+  // Format avec +261 (international)
+  if (cleaned.startsWith('+261')) {
+    if (cleaned.length !== 13) {
+      return { valid: false, normalized: '', error: "Format international invalide (+261 suivi de 9 chiffres)" };
+    }
+    const afterPrefix = cleaned.slice(4);
+    if (!/^\d{9}$/.test(afterPrefix)) {
+      return { valid: false, normalized: '', error: "Le numéro doit contenir 9 chiffres après +261" };
+    }
+    // Vérifier que le premier chiffre après 261 est 3 ou 4
+    const firstDigit = afterPrefix[0];
+    if (firstDigit !== '3' && firstDigit !== '4') {
+      return { valid: false, normalized: '', error: "Le numéro doit commencer par 03, 034, 04 ou 034" };
+    }
+    return { valid: true, normalized: cleaned, error: null };
+  }
+  
+  // Format avec 261 (sans +)
+  if (cleaned.startsWith('261')) {
+    if (cleaned.length !== 12) {
+      return { valid: false, normalized: '', error: "Format invalide (261 suivi de 9 chiffres)" };
+    }
+    const afterPrefix = cleaned.slice(3);
+    if (!/^\d{9}$/.test(afterPrefix)) {
+      return { valid: false, normalized: '', error: "Le numéro doit contenir 9 chiffres après 261" };
+    }
+    const firstDigit = afterPrefix[0];
+    if (firstDigit !== '3' && firstDigit !== '4') {
+      return { valid: false, normalized: '', error: "Le numéro doit commencer par 03, 034, 04 ou 034" };
+    }
+    return { valid: true, normalized: `+${cleaned}`, error: null };
+  }
+  
+  // Format local (10 chiffres commençant par 03 ou 04)
+  if (cleaned.length === 10 && /^(03|04)\d{8}$/.test(cleaned)) {
+    return { valid: true, normalized: `+261${cleaned.slice(1)}`, error: null };
+  }
+  
+  // Format local avec 034 ou 038 (3 chiffres au début)
+  if (cleaned.length === 10 && /^03\d{8}$/.test(cleaned)) {
+    return { valid: true, normalized: `+261${cleaned.slice(1)}`, error: null };
+  }
+  
+  // Format avec 9 chiffres (manque le premier 0)
+  if (cleaned.length === 9 && /^[34]\d{8}$/.test(cleaned)) {
+    return { valid: true, normalized: `+261${cleaned}`, error: null };
+  }
+  
+  // Si le numéro est trop court mais commence par 0
+  if (cleaned.startsWith('0') && cleaned.length >= 3 && cleaned.length < 10) {
+    return { valid: false, normalized: '', error: `Numéro incomplet (${cleaned.length}/10 chiffres requis)` };
+  }
+  
+  // Numéro trop long
+  if (cleaned.length > 13) {
+    return { valid: false, normalized: '', error: "Numéro trop long (maximum 13 caractères)" };
+  }
+  
+  return { valid: false, normalized: '', error: "Numéro invalide. Utilisez 034XXXXXXX ou +26134XXXXXXX" };
+}
+
+// Animation du logo (inchangée)
 const LogoAnimation = () => (
   <motion.div
     initial={{ scale: 0.8, rotate: -10 }}
@@ -41,7 +123,7 @@ const LogoAnimation = () => (
   </motion.div>
 );
 
-// Animation de fond
+// Animation de fond (inchangée)
 const BackgroundAnimation = () => (
   <div className="absolute inset-0 overflow-hidden pointer-events-none">
     <motion.div
@@ -77,7 +159,7 @@ const BackgroundAnimation = () => (
   </div>
 );
 
-// Animation du champ de saisie
+// Animation du champ de saisie (inchangée)
 const InputField = ({ 
   label, 
   value, 
@@ -123,6 +205,7 @@ const InputField = ({
 export default function Auth() {
   // États pour la connexion par téléphone
   const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [phoneOtp, setPhoneOtp] = useState('');
   const [phoneStep, setPhoneStep] = useState<'phone' | 'otp'>('phone');
   
@@ -142,6 +225,22 @@ export default function Auth() {
   const { t, lang } = useTranslation();
   const { toast } = useToast();
   const { isConnected } = useNetworkStatus();
+
+  // Fonction de validation du téléphone en temps réel
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value;
+    setPhone(rawValue);
+    if (rawValue.trim() === '') {
+      setPhoneError(null);
+      return;
+    }
+    const result = normalizePhone(rawValue);
+    if (!result.valid && rawValue.length > 2) {
+      setPhoneError(result.error);
+    } else {
+      setPhoneError(null);
+    }
+  };
 
   // Charger les identifiants sauvegardés au démarrage
   useEffect(() => {
@@ -173,50 +272,39 @@ export default function Auth() {
 
   const handleRequestPhoneOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone) return;
-    
-    if (!isConnected) {
-      toast({ 
-        variant: "destructive", 
-        title: "Pas de connexion", 
-        description: "Vérifiez votre connexion Internet pour recevoir le code." 
-      });
+    const validation = normalizePhone(phone);
+    if (!validation.valid) {
+      setPhoneError(validation.error || "Numéro invalide");
+      toast({ variant: "destructive", title: "Numéro invalide", description: validation.error });
       return;
     }
-    
+
+    const normalizedPhone = validation.normalized;
+    if (!isConnected) {
+      toast({ variant: "destructive", title: "Pas de connexion", description: "Vérifiez votre connexion Internet." });
+      return;
+    }
+
     setIsRequestingOtp(true);
     setOtpError(null);
-    
+
     try {
       const res = await apiFetch('/api/auth/request-otp', {
         method: 'POST',
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: normalizedPhone }),
       });
-      
       const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.message || "Erreur lors de l'envoi");
-      }
-      
-      // Afficher l'OTP dans un toast (comme pour l'email)
+      if (!res.ok) throw new Error(data.message || "Erreur lors de l'envoi");
+
       if (data.devOtp) {
-        toast({ 
-          title: "📱 Code de vérification", 
-          description: `Votre code OTP est : ${data.devOtp}`,
-          duration: 15000,
-        });
-        // Auto-remplir le champ OTP
+        toast({ title: "📱 Code de vérification", description: `Votre code OTP est : ${data.devOtp}`, duration: 15000 });
         setPhoneOtp(data.devOtp);
       } else {
-        toast({ 
-          title: "Code envoyé!", 
-          description: `Un code a été envoyé au ${phone}`,
-        });
+        toast({ title: "Code envoyé!", description: `Un code a été envoyé au ${normalizedPhone}` });
       }
-      
+
+      setPhone(normalizedPhone);
       setPhoneStep('otp');
-      
     } catch (err: any) {
       setOtpError(err.message);
       toast({ variant: "destructive", title: "Erreur", description: err.message });
@@ -474,12 +562,15 @@ export default function Auth() {
                     <InputField 
                       label="Numéro de téléphone"
                       value={phone}
-                      onChange={(e: any) => setPhone(e.target.value)}
+                      onChange={handlePhoneChange}
                       placeholder="034 00 000 00"
                       icon={Phone}
                       testId="input-phone"
-                      error={otpError}
+                      error={phoneError || otpError}
                     />
+                    <p className="text-xs text-muted-foreground text-center">
+                      Formats acceptés: 0341234567, 034 12 345 67, +261341234567
+                    </p>
                     
                     <motion.div
                       whileHover={{ scale: 1.02 }}
@@ -488,7 +579,7 @@ export default function Auth() {
                       <Button 
                         type="submit" 
                         className="w-full h-12 rounded-xl text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/25 transition-all"
-                        disabled={!isConnected || isRequestingOtp}
+                        disabled={!isConnected || isRequestingOtp || !!phoneError || !phone.trim()}
                       >
                         {isRequestingOtp ? (
                           <Loader2 className="w-5 h-5 animate-spin" />
@@ -552,6 +643,7 @@ export default function Auth() {
                         setPhoneStep('phone');
                         setPhoneOtp('');
                         setOtpError(null);
+                        setPhoneError(null);
                       }}
                       className="w-full text-center text-xs text-muted-foreground hover:text-primary transition-colors"
                     >

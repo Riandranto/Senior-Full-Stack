@@ -9,10 +9,15 @@ import { createServer } from "http";
 import https from "https";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from 'url';
 import os from "os";
 import cors from 'cors';
 import { initializeSession, redisAvailable as sessionRedisAvailable } from "./services/session.js";
 import { logger, createContextLogger, logError } from "./utils/logger.js";
+
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ========== SENTRY INITIALIZATION ==========
 let Sentry: any = null;
@@ -165,6 +170,10 @@ app.use(session({
     path: '/',
   }
 }));
+
+app.use(
+  "/images", express.static(path.join(__dirname, "../public/images"))
+);
 
 logger.info('✅ Session middleware configured');
 

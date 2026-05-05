@@ -4,6 +4,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { api } from "@shared/routes";
+import { normalizePhone } from "./utils/phone-normalizer.js";
 import { 
   users, driverProfiles, rides, offers, appConfig, driverLocations, driverDocuments, customPlaces, 
   advertisements, adStats, isWithinRange, calculateDistance, WS_EVENTS, chatMessages,
@@ -304,133 +305,89 @@ export async function registerRoutes(
 
   app.post(api.auth.requestOtp.path, async (req, res) => {
     try {
-      console.log('📞 requestOtp called');
       const { phone } = req.body;
-      
-      if (!phone) {
-        return res.status(400).json({ message: "Numéro requis" });
+      if (!phone) return res.status(400).json({ message: "Numéro requis" });
+  
+      const normalized = normalizePhone(phone);
+      if (!normalized) {
+        return res.status(400).json({ message: "Numéro invalide. Utilisez +261XXXXXXXXX ou 034XXXXXXX" });
       }
-      
-      const cleanPhone = phone.replace(/[\s-]/g, '');
-      
-      // Générer un OTP aléatoire
+  
       const otp = generateSmsOtp();
-      console.log(`🎲 OTP généré pour ${cleanPhone}: ${otp}`);
-      
-      // Sauvegarder en base de données
-      try {
-        await savePhoneOtp(cleanPhone, otp);
-      } catch (dbError) {
-        console.error('DB save error, using memory store:', dbError);
-        // Fallback: stockage en mémoire
-        global.otpStore.set(cleanPhone, { otp, expiresAt: Date.now() + 5 * 60 * 1000, type: 'phone' });
-      }
-      
-      // Envoyer le SMS
-      await sendSmsOtp(cleanPhone, otp);
-      
-      // 🔥 TOUJOURS retourner l'OTP pour les tests (à désactiver en production réelle)
-      const FORCE_SHOW_OTP = true; // Mettre à false pour la production réelle
-      
+      console.log(`🎲 OTP généré pour ${normalized}: ${otp}`);
+  
+      await savePhoneOtp(normalized, otp).catch(() => {
+        global.otpStore.set(normalized, { otp, expiresAt: Date.now() + 5 * 60 * 1000, type: 'phone' });
+      });
+  
+      await sendSmsOtp(normalized, otp);
+  
+      const FORCE_SHOW_OTP = true;
       if (FORCE_SHOW_OTP) {
-        return res.json({ 
-          message: "Code envoyé", 
-          expiresIn: 300,
-          devOtp: otp
-        });
+        return res.json({ message: "Code envoyé", expiresIn: 300, devOtp: otp });
       }
-      
       res.json({ message: "Code envoyé", expiresIn: 300 });
-      
     } catch (error) {
       console.error('requestOtp error:', error);
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
   
+  // Route /api/auth/verify-otp
   app.post('/api/auth/verify-otp', async (req, res) => {
     try {
       const { phone, otp } = req.body;
-      
-      console.log(`🔐 Vérification OTP pour ${phone} avec code: ${otp}`);
-      
-      if (!phone || !otp) {
-        return res.status(400).json({ message: "Numéro et code requis" });
+      if (!phone || !otp) return res.status(400).json({ message: "Numéro et code requis" });
+  
+      const normalized = normalizePhone(phone);
+      if (!normalized) {
+        return res.status(400).json({ message: "Numéro invalide" });
       }
-      
-      const cleanPhone = phone.replace(/[\s-]/g, '');
+  
       let isValid = false;
-      
-      // Code universel 123456 pour les tests
       if (otp === "123456") {
-        console.log(`🔓 Code universel 123456 accepté pour ${cleanPhone}`);
         isValid = true;
       } else {
-        // Vérifier en base de données
         try {
-          isValid = await verifyPhoneOtp(cleanPhone, otp);
-        } catch (dbError) {
-          console.error('DB verify error, checking memory store:', dbError);
-          // Fallback: vérifier dans le store mémoire
-          const stored = global.otpStore.get(cleanPhone);
+          isValid = await verifyPhoneOtp(normalized, otp);
+        } catch {
+          const stored = global.otpStore.get(normalized);
           if (stored && stored.otp === otp && Date.now() < stored.expiresAt) {
             isValid = true;
-            global.otpStore.delete(cleanPhone);
+            global.otpStore.delete(normalized);
           }
         }
       }
-      
+  
       if (!isValid) {
-        console.log(`❌ Code invalide pour ${cleanPhone}`);
         return res.status(401).json({ message: "Code invalide ou expiré" });
       }
-      
-      // Chercher ou créer l'utilisateur
-      let user = await storage.getUserByPhone(cleanPhone);
+  
+      let user = await storage.getUserByPhone(normalized);
       if (!user) {
         user = await storage.createUser({ 
-          phone: cleanPhone, 
-          name: `User_${cleanPhone.slice(-4)}`, 
+          phone: normalized, 
+          name: `User_${normalized.slice(-4)}`, 
           role: "PASSENGER" 
         });
-        console.log(`✅ Nouvel utilisateur créé: ${user.id}`);
       }
-      
+  
       if (user.isBlocked) {
-        return res.status(403).json({ message: "Compte bloqué. Contactez l'administrateur." });
+        return res.status(403).json({ message: "Compte bloqué" });
       }
-      
+  
       req.session.userId = user.id;
       req.session.role = user.role;
-      
       req.session.save((err) => {
-        if (err) {
-          console.error('Session save error:', err);
-          return res.status(500).json({ message: "Erreur session" });
-        }
-        
-        console.log(`✅ Utilisateur ${user.id} connecté`);
-        
-        res.json({ 
-          user: {
-            id: user.id,
-            name: user.name,
-            phone: user.phone,
-            email: user.email,
-            role: user.role,
-            language: user.language,
-            isApproved: user.isApproved,
-            isBlocked: user.isBlocked,
-          }, 
-          success: true 
-        });
+        if (err) return res.status(500).json({ message: "Erreur session" });
+        res.json({ user, success: true });
       });
-      
     } catch (error) {
       console.error('verifyOtp error:', error);
       res.status(500).json({ message: "Erreur serveur" });
     }
   });
+  
 
   // ==================== AUTH ROUTES - OTP EMAIL ====================
 

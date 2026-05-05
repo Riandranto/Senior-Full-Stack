@@ -1,11 +1,10 @@
-// client/src/components/Map.tsx - VERSION CORRIGÉE COMPLÈTE
-
+// client/src/components/Map.tsx - Version PNG avec icônes transparentes et popups stylisés
 import { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// CORRECTION: Fix pour les icônes Leaflet par défaut
+// Correction pour les icônes Leaflet par défaut
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -13,115 +12,117 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Icône de départ (point vert)
-const pickupIcon = L.divIcon({
-  className: 'custom-pin',
-  html: `<div style="background:#22C55E;width:30px;height:30px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;">
-    <div style="width:10px;height:10px;border-radius:50%;background:white;"></div>
-  </div>`,
-  iconSize: [30, 30],
-  iconAnchor: [15, 15],
-  popupAnchor: [0, -15],
-});
-
-// Icône d'arrivée (point rouge)
-const dropoffIcon = L.divIcon({
-  className: 'custom-pin',
-  html: `<div style="background:#EF4444;width:30px;height:30px;border-radius:8px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;">
-    <div style="width:10px;height:10px;border-radius:3px;background:white;"></div>
-  </div>`,
-  iconSize: [30, 30],
-  iconAnchor: [15, 15],
-  popupAnchor: [0, -15],
-});
-
-// ICÔNES DE VÉHICULES POUR LES DRIVERS
-const vehicleIcons: Record<string, string> = {
-  TAXI: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="11" width="18" height="8" rx="2" ry="2"/>
-    <circle cx="7.5" cy="16.5" r="1.5" fill="white" stroke="none"/>
-    <circle cx="16.5" cy="16.5" r="1.5" fill="white" stroke="none"/>
-    <polyline points="9 11 12 8 15 11"/>
-  </svg>`,
-  BAJAJ: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="4" y="12" width="16" height="6" rx="2"/>
-    <circle cx="7" cy="17" r="2" fill="white" stroke="none"/>
-    <circle cx="17" cy="17" r="2" fill="white" stroke="none"/>
-    <path d="M12 12 L12 8 L16 6"/>
-    <rect x="8" y="4" width="8" height="4" rx="1"/>
-  </svg>`,
-  CAMION: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="2" y="11" width="14" height="7" rx="1"/>
-    <circle cx="6" cy="17" r="2" fill="white" stroke="none"/>
-    <circle cx="16" cy="17" r="2" fill="white" stroke="none"/>
-    <rect x="16" y="9" width="6" height="4" rx="1"/>
-    <path d="M16 13 L22 13"/>
-  </svg>`,
-  '4X4': `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="12" width="18" height="8" rx="2"/>
-    <circle cx="7" cy="18" r="2" fill="white" stroke="none"/>
-    <circle cx="17" cy="18" r="2" fill="white" stroke="none"/>
-    <path d="M3 14 L21 14"/>
-    <path d="M8 10 L10 6 L14 6 L16 10"/>
-    <path d="M10 6 L10 4 M14 6 L14 4"/>
-  </svg>`,
-  DEFAULT: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M5 17h14M5 17a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2M5 17l-1 3m15-3l1 3M8 14h.01M16 14h.01"/>
-  </svg>`
-};
-
-const vehicleColors: Record<string, string> = {
-  TAXI: '#2563EB',
-  BAJAJ: '#16A34A',
-  CAMION: '#EA580C',
-  '4X4': '#DC2626',
-  DEFAULT: '#3B82F6'
-};
-
-// Fonction pour créer une icône de driver avec son type de véhicule
-function createDriverIcon(vehicleType?: string, rating?: number, isAssigned?: boolean) {
+// ==================== UTILITAIRES POUR LES CHEMINS PNG ====================
+const getVehicleIconUrl = (vehicleType?: string): string => {
   const type = vehicleType?.toUpperCase() || 'DEFAULT';
-  const iconSvg = vehicleIcons[type] || vehicleIcons.DEFAULT;
-  const bgColor = vehicleColors[type] || vehicleColors.DEFAULT;
-  const size = isAssigned ? 48 : 40;
-  const ratingStr = rating && rating > 0 ? `★${rating.toFixed(1)}` : '';
+  const baseUrl = '/images/vehicles/';
+  
+  const mapping: Record<string, string> = {
+    'TAXI': 'taxi.png',
+    'BAJAJ': 'bajaj.png',
+    'CAMION': 'camion.png',
+    '4X4': '4x4.png',
+    'DEFAULT': 'default.png'
+  };
+  
+  const filename = mapping[type] || mapping.DEFAULT;
+  return `${baseUrl}${filename}`;
+};
+
+// ==================== ICÔNES DES CONDUCTEURS (PNG sans fond) ====================
+function createDriverIcon(vehicleType?: string, rating?: number, isAssigned?: boolean) {
+  const iconUrl = getVehicleIconUrl(vehicleType);
+  const size = isAssigned ? 52 : 44;
+  
+  const ratingStr = rating && rating > 0 ? rating.toFixed(1) : '';
   
   return L.divIcon({
-    className: 'driver-marker',
-    html: `<div style="position:relative;">
-      <div style="background:${bgColor};width:${size}px;height:${size}px;border-radius:50%;border:3px solid white;box-shadow:0 2px 10px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;${isAssigned ? 'animation:pulse 2s infinite;' : ''}">
-        ${iconSvg}
+    className: `driver-marker ${isAssigned ? 'driver-pulse' : ''}`,
+    html: `
+      <div style="position:relative; cursor:pointer; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
+        <img src="${iconUrl}" style="width:${size}px;height:${size}px;object-fit:contain;" alt="vehicle" />
+        ${ratingStr ? `
+          <div style="position:absolute;top:-8px;right:-12px;background:#FBBF24;color:#1F2937;font-size:9px;font-weight:800;padding:2px 5px;border-radius:12px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+            ★ ${ratingStr}
+          </div>
+        ` : ''}
+        ${isAssigned ? `
+          <div style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:12px solid #FFD700;"></div>
+        ` : ''}
       </div>
-      ${ratingStr ? `<div style="position:absolute;top:-8px;right:-14px;background:#F59E0B;color:#000;font-size:8px;font-weight:800;padding:2px 5px;border-radius:10px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.3);">${ratingStr}</div>` : ''}
-      ${isAssigned ? `<div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid ${bgColor};"></div>` : ''}
-    </div>`,
+    `,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -size / 2],
   });
 }
 
-// Icône pour la position actuelle du driver (point de départ)
+// Icône pour la position actuelle du conducteur (point de départ du conducteur)
 function createDriverStartIcon(vehicleType?: string) {
-  const type = vehicleType?.toUpperCase() || 'DEFAULT';
-  const iconSvg = vehicleIcons[type] || vehicleIcons.DEFAULT;
-  const bgColor = vehicleColors[type] || vehicleColors.DEFAULT;
-  
+  const iconUrl = getVehicleIconUrl(vehicleType);
   return L.divIcon({
     className: 'driver-start-marker',
-    html: `<div style="position:relative;">
-      <div style="background:${bgColor};width:44px;height:44px;border-radius:50%;border:3px solid #FFD500;box-shadow:0 0 0 3px rgba(255,213,0,0.3),0 2px 10px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">
-        ${iconSvg}
+    html: `
+      <div style="position:relative; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
+        <img src="${iconUrl}" style="width:48px;height:48px;object-fit:contain;" alt="vehicle" />
+        <div style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:12px solid #FFD700;"></div>
+        <div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;background:#22C55E;border-radius:50%;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></div>
       </div>
-      <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:10px solid #FFD500;"></div>
-      <div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;background:#22C55E;border-radius:50%;border:2px solid white;"></div>
-    </div>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 22],
-    popupAnchor: [0, -22],
+    `,
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
+    popupAnchor: [0, -24],
   });
 }
 
+// ==================== ICÔNES POINTS A ET B (sans fond) ====================
+function createPickupIcon(vehicleType?: string) {
+  if (vehicleType) {
+    const iconUrl = getVehicleIconUrl(vehicleType);
+    return L.divIcon({
+      className: 'custom-pin pickup-pin vehicle-pickup',
+      html: `
+        <div style="position:relative; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
+          <img src="${iconUrl}" style="width:44px;height:44px;object-fit:contain;" alt="vehicle" />
+          <div style="position:absolute;bottom:-28px;left:50%;transform:translateX(-50%);background:#1F2937;color:white;padding:2px 10px;border-radius:16px;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+            Point A - Départ
+          </div>
+        </div>
+      `,
+      iconSize: [44, 44],
+      iconAnchor: [22, 22],
+      popupAnchor: [0, -22],
+    });
+  }
+  // Icône par défaut si pas de véhicule (simple cercle vert, mais sans fond ? on garde le style d'origine mais on peut aussi simplifier)
+  return L.divIcon({
+    className: 'custom-pin pickup-pin',
+    html: `<div style="background:#22C55E;width:36px;height:36px;border-radius:50%;border:3px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform 0.2s;">
+      <div style="background:white;width:12px;height:12px;border-radius:50%;"></div>
+    </div>
+    <div style="position:absolute;bottom:-28px;left:50%;transform:translateX(-50%);background:#1F2937;color:white;padding:2px 10px;border-radius:16px;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+      Point A - Départ
+    </div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18],
+  });
+}
+
+const dropoffIcon = L.divIcon({
+  className: 'custom-pin dropoff-pin',
+  html: `<div style="background:#EF4444;width:36px;height:36px;border-radius:8px;border:3px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform 0.2s;">
+    <div style="background:white;width:12px;height:12px;border-radius:2px;"></div>
+  </div>
+  <div style="position:absolute;bottom:-28px;left:50%;transform:translateX(-50%);background:#1F2937;color:white;padding:2px 10px;border-radius:16px;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+    Point B - Arrivée
+  </div>`,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
+  popupAnchor: [0, -18],
+});
+
+// ==================== TYPES & OSRM ====================
 export type LatLng = { lat: number; lng: number };
 
 export interface OSRMRouteResult {
@@ -166,6 +167,7 @@ interface MapPickerProps {
   zoom?: number;
   pickupMarker?: LatLng | null;
   dropoffMarker?: LatLng | null;
+  pickupVehicleType?: string;
   markers?: LatLng[];
   driverMarkers?: DriverMarkerInfo[];
   interactive?: boolean;
@@ -176,7 +178,7 @@ interface MapPickerProps {
   routeCoordinates?: [number, number][];
 }
 
-// Composant pour gérer les clics sur la carte
+// ==================== COMPOSANTS INTERNES ====================
 function LocationMarker({ onSelect, selectMode }: { onSelect?: (loc: LatLng) => void; selectMode?: 'pickup' | 'dropoff' | null }) {
   useMapEvents({
     click(e) {
@@ -188,7 +190,6 @@ function LocationMarker({ onSelect, selectMode }: { onSelect?: (loc: LatLng) => 
   return null;
 }
 
-// Composant pour mettre à jour la vue de la carte
 function MapUpdater({ center, zoom, flyToTrigger }: { center: LatLng; zoom?: number; flyToTrigger?: number }) {
   const map = useMap();
   const lastTrigger = useRef(flyToTrigger);
@@ -201,7 +202,6 @@ function MapUpdater({ center, zoom, flyToTrigger }: { center: LatLng; zoom?: num
   return null;
 }
 
-// Composant pour ajuster les limites
 function FitBounds({ pickup, dropoff, driverMarkers }: { pickup?: LatLng | null; dropoff?: LatLng | null; driverMarkers?: DriverMarkerInfo[] }) {
   const map = useMap();
   const fitted = useRef(false);
@@ -227,11 +227,17 @@ function FitBounds({ pickup, dropoff, driverMarkers }: { pickup?: LatLng | null;
   return null;
 }
 
+// Composant Popup personnalisé avec fond transparent (via CSS global)
+// On va utiliser le Popup normal de Leaflet mais on override le style avec des classes CSS.
+// Dans le rendu, on utilise <Popup> avec className pour personnaliser.
+
+// ==================== COMPOSANT PRINCIPAL ====================
 export function MapView({ 
   center = { lat: -18.8792, lng: 47.5079 },  
   zoom = 15,
   pickupMarker,
   dropoffMarker,
+  pickupVehicleType,
   markers = [],
   driverMarkers = [],
   interactive = false, 
@@ -247,8 +253,42 @@ export function MapView({
       ? [[pickupMarker.lat, pickupMarker.lng], [dropoffMarker.lat, dropoffMarker.lng]]
       : []);
 
+  const pickupIcon = pickupVehicleType ? createPickupIcon(pickupVehicleType) : createPickupIcon();
+
   return (
     <div className="w-full h-full relative z-0">
+      {/* Style global pour les popups transparents */}
+      <style>{`
+        .custom-popup .leaflet-popup-content-wrapper {
+          background: rgba(0, 0, 0, 0.75);
+          backdrop-filter: blur(8px);
+          border-radius: 16px;
+          color: white;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          padding: 0;
+        }
+        .custom-popup .leaflet-popup-tip {
+          background: rgba(0, 0, 0, 0.75);
+          backdrop-filter: blur(8px);
+        }
+        .custom-popup .leaflet-popup-content {
+          margin: 8px 12px;
+          color: white;
+        }
+        .custom-popup a {
+          color: #3b82f6;
+        }
+        .driver-pulse {
+          animation: driverPulse 2s infinite;
+        }
+        @keyframes driverPulse {
+          0% { filter: drop-shadow(0 0 0 0 rgba(59, 130, 246, 0.4)); }
+          70% { filter: drop-shadow(0 0 0 10px rgba(59, 130, 246, 0)); }
+          100% { filter: drop-shadow(0 0 0 0 rgba(59, 130, 246, 0)); }
+        }
+        .custom-pin:hover > div:first-child { transform: scale(1.1); }
+      `}</style>
+
       <MapContainer 
         center={[center.lat, center.lng]} 
         zoom={zoom} 
@@ -285,53 +325,103 @@ export function MapView({
         
         {/* Marqueur de départ */}
         {pickupMarker && (
-          <Marker position={[pickupMarker.lat, pickupMarker.lng]} icon={pickupIcon}>
-            <Popup className="font-sans text-sm font-semibold">📍 Départ</Popup>
+          <Marker 
+            position={[pickupMarker.lat, pickupMarker.lng]} 
+            icon={pickupIcon}
+            eventHandlers={{
+              click: () => {
+                // On laisse le popup par défaut, mais on peut aussi afficher un message personnalisé sans popup si on veut.
+                // Pour rester simple, on n'ajoute pas de popup ici, on utilise celui de Leaflet si besoin.
+                // Mais on peut en ajouter un via le composant <Popup> ci-dessous.
+              }
+            }}
+          >
+            {/* Popup transparent pour le point A */}
+            <Popup className="custom-popup" autoPan={false}>
+              <div className="text-center">
+                <strong>Point A - Départ</strong><br />
+                {pickupMarker.lat.toFixed(6)}, {pickupMarker.lng.toFixed(6)}<br />
+                <button 
+                  onClick={() => navigator.clipboard.writeText(`${pickupMarker.lat}, ${pickupMarker.lng}`)}
+                  className="mt-1 text-xs bg-white/20 px-2 py-1 rounded-full"
+                >
+                  Copier
+                </button>
+              </div>
+            </Popup>
           </Marker>
         )}
         
         {/* Marqueur d'arrivée */}
         {dropoffMarker && (
-          <Marker position={[dropoffMarker.lat, dropoffMarker.lng]} icon={dropoffIcon}>
-            <Popup className="font-sans text-sm font-semibold">🏁 Arrivée</Popup>
+          <Marker 
+            position={[dropoffMarker.lat, dropoffMarker.lng]} 
+            icon={dropoffIcon}
+          >
+            <Popup className="custom-popup" autoPan={false}>
+              <div className="text-center">
+                <strong>Point B - Arrivée</strong><br />
+                {dropoffMarker.lat.toFixed(6)}, {dropoffMarker.lng.toFixed(6)}<br />
+                <button 
+                  onClick={() => navigator.clipboard.writeText(`${dropoffMarker.lat}, ${dropoffMarker.lng}`)}
+                  className="mt-1 text-xs bg-white/20 px-2 py-1 rounded-full"
+                >
+                  Copier
+                </button>
+              </div>
+            </Popup>
           </Marker>
         )}
 
-        {/* Marqueurs des drivers */}
-        {driverMarkers.map((d, i) => {
+        {/* Marqueurs des conducteurs */}
+        {driverMarkers.map((driver, index) => {
           let icon;
-          if (d.isDriverStart) {
-            icon = createDriverStartIcon(d.vehicleType);
+          if (driver.isDriverStart) {
+            icon = createDriverStartIcon(driver.vehicleType);
           } else {
-            icon = createDriverIcon(d.vehicleType, d.rating, d.isAssigned);
+            icon = createDriverIcon(driver.vehicleType, driver.rating, driver.isAssigned);
           }
+          
+          const vehicleTypeName = driver.vehicleType === 'TAXI' ? 'Taxi' : 
+                                   driver.vehicleType === 'BAJAJ' ? 'Bajaj' :
+                                   driver.vehicleType === 'CAMION' ? 'Camion' : 
+                                   driver.vehicleType === '4X4' ? '4x4' : 'Véhicule';
           
           return (
             <Marker 
-              key={`driver-${i}-${d.lat}-${d.lng}`}
-              position={[d.lat, d.lng]} 
+              key={`driver-${index}-${driver.lat}-${driver.lng}`}
+              position={[driver.lat, driver.lng]} 
               icon={icon}
             >
-              <Popup className="font-sans text-xs">
-                <div style={{ minWidth: '150px' }}>
-                  <p style={{ fontWeight: 700, fontSize: '13px', marginBottom: '4px' }}>
-                    {d.name || 'Chauffeur'}
+              <Popup className="custom-popup">
+                <div style={{ minWidth: '160px', padding: '4px 0' }}>
+                  <p style={{ fontWeight: 700, fontSize: '14px', marginBottom: '6px', color: 'white' }}>
+                    {driver.name || 'Chauffeur'}
                   </p>
-                  {d.rating && d.rating > 0 && (
-                    <p style={{ color: '#F59E0B', fontWeight: 600, fontSize: '11px' }}>
-                      ★ {d.rating.toFixed(1)} ({d.ratingCount || 0} avis)
+                  {driver.rating && driver.rating > 0 && (
+                    <p style={{ color: '#FBBF24', fontWeight: 600, fontSize: '12px', marginBottom: '4px' }}>
+                      ★ {driver.rating.toFixed(1)} ({driver.ratingCount || 0} avis)
                     </p>
                   )}
-                  {d.vehicleType && (
-                    <p style={{ color: '#6B7280', fontSize: '11px', marginTop: '4px' }}>
-                      {d.vehicleType === 'TAXI' ? '🚕 Taxi' : 
-                       d.vehicleType === 'BAJAJ' ? '🛺 Bajaj' :
-                       d.vehicleType === 'CAMION' ? '🚚 Camion' : '🚙 4x4'}
-                    </p>
-                  )}
-                  {d.phone && (
-                    <a href={`tel:${d.phone}`} style={{ color: '#3B82F6', fontWeight: 600, display: 'block', marginTop: '6px', fontSize: '11px' }}>
-                      📞 {d.phone}
+                  <p style={{ color: '#D1D5DB', fontSize: '11px', marginTop: '4px', marginBottom: '6px' }}>
+                    {vehicleTypeName}
+                  </p>
+                  {driver.phone && (
+                    <a 
+                      href={`tel:${driver.phone}`} 
+                      style={{ 
+                        color: '#60A5FA', 
+                        fontWeight: 600, 
+                        display: 'inline-block', 
+                        marginTop: '4px', 
+                        fontSize: '11px',
+                        textDecoration: 'none',
+                        background: 'rgba(255,255,255,0.1)',
+                        padding: '4px 10px',
+                        borderRadius: '20px'
+                      }}
+                    >
+                      📞 Appeler
                     </a>
                   )}
                 </div>
@@ -340,19 +430,18 @@ export function MapView({
           );
         })}
         
-        {/* Autres marqueurs génériques */}
+        {/* Autres marqueurs */}
         {markers.map((m, i) => (
           <Marker key={`marker-${i}`} position={[m.lat, m.lng]} />
         ))}
       </MapContainer>
 
-      {/* Indicateur de mode sélection */}
       {selectMode && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] px-4 py-2 rounded-full shadow-lg font-bold text-sm pointer-events-none flex items-center gap-2"
+        <div 
+          className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] px-4 py-2 rounded-full shadow-lg font-bold text-sm pointer-events-none flex items-center gap-2"
           style={{ backgroundColor: selectMode === 'pickup' ? '#22C55E' : '#EF4444', color: 'white' }}
-          data-testid="map-select-hint"
         >
-          {selectMode === 'pickup' ? '👆 Sélectionnez le départ sur la carte' : '👆 Sélectionnez l\'arrivée sur la carte'}
+          {selectMode === 'pickup' ? 'Cliquez sur la carte pour sélectionner le départ' : 'Cliquez sur la carte pour sélectionner l\'arrivée'}
         </div>
       )}
     </div>
