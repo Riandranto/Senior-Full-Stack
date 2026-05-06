@@ -1,4 +1,4 @@
-// src/pages/admin/Dashboard.tsx - Version avec pagination qui fonctionne
+// src/pages/admin/Dashboard.tsx - Version mobile optimisée
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, buildUrl } from '@shared/routes';
@@ -19,24 +19,21 @@ import {
   CheckCircle, XCircle, Ban, Eye, Phone, Navigation, Clock, Route,
   Search, LogOut, ChevronLeft, ChevronRight, DollarSign, 
   FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File,
-  RefreshCw, Calendar,AlertTriangle,
-    SearchX, Clock as ClockIcon, Database
+  RefreshCw, Calendar, AlertTriangle,
+  SearchX, Clock as ClockIcon, Database
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import AdminAds from './Ads';
-import {  Trash2, Plus, Check } from 'lucide-react';
+import { Trash2, Plus, Check } from 'lucide-react';
 
 // ==================== STOCKAGE LOCAL POUR RECHERCHES NON TROUVÉES ====================
-// À placer après les imports, avant les composants
-
 interface UnknownSearch {
   query: string;
   timestamp: number;
   type: 'pickup' | 'dropoff';
 }
 
-// Ajoutez cette fonction pour récupérer les recherches non trouvées
 const getUnknownSearches = (): UnknownSearch[] => {
   try {
     return JSON.parse(localStorage.getItem('farady_unknown_searches') || '[]');
@@ -58,6 +55,7 @@ const deleteUnknownSearch = (index: number) => {
     console.error('Failed to delete unknown search:', e);
   }
 };
+
 function formatDate(d: string | null) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('fr-MG', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -67,8 +65,6 @@ function formatAr(amount: number | null) {
   if (!amount) return '0 Ar';
   return amount.toLocaleString('fr-MG') + ' Ar';
 }
-
-
 
 const statusColors: Record<string, string> = {
   REQUESTED: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
@@ -124,7 +120,7 @@ const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
   </AnimatePresence>
 );
 
-// Composant Pagination générique - CORRIGÉ pour toujours s'afficher quand nécessaire
+// Composant Pagination (inchangé, déjà responsive)
 function TablePagination({ 
   currentPage, 
   totalPages, 
@@ -142,15 +138,12 @@ function TablePagination({
   onPageSizeChange: (size: number) => void;
   pageSizeOptions?: number[];
 }) {
-  // Afficher la pagination si plus d'une page OU si le nombre d'éléments dépasse la taille de page
   const showPagination = totalPages > 1 || totalItems > pageSize;
-  
   if (!showPagination) return null;
   
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
-    
     if (totalPages <= maxVisible) {
       for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
@@ -198,18 +191,10 @@ function TablePagination({
           <span>par page</span>
         </div>
       </div>
-      
       <div className="flex items-center gap-1">
-        <Button 
-          size="icon" 
-          variant="outline" 
-          className="h-7 w-7 rounded-lg" 
-          disabled={currentPage <= 1} 
-          onClick={() => onPageChange(currentPage - 1)}
-        >
+        <Button size="icon" variant="outline" className="h-7 w-7 rounded-lg" disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)}>
           <ChevronLeft className="w-3.5 h-3.5" />
         </Button>
-        
         <div className="flex items-center gap-1">
           {getPageNumbers().map((page, idx) => (
             page === '...' ? (
@@ -227,14 +212,7 @@ function TablePagination({
             )
           ))}
         </div>
-        
-        <Button 
-          size="icon" 
-          variant="outline" 
-          className="h-7 w-7 rounded-lg" 
-          disabled={currentPage >= totalPages} 
-          onClick={() => onPageChange(currentPage + 1)}
-        >
+        <Button size="icon" variant="outline" className="h-7 w-7 rounded-lg" disabled={currentPage >= totalPages} onClick={() => onPageChange(currentPage + 1)}>
           <ChevronRight className="w-3.5 h-3.5" />
         </Button>
       </div>
@@ -242,6 +220,7 @@ function TablePagination({
   );
 }
 
+// AdminMap (inchangé)
 function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driverLocations: any[] }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
@@ -302,7 +281,7 @@ function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driver
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5 }}
       ref={mapRef} 
-      className="h-[350px] w-full rounded-xl overflow-hidden" 
+      className="h-[250px] sm:h-[350px] w-full rounded-xl overflow-hidden" 
       data-testid="admin-map" 
     />
   );
@@ -315,19 +294,19 @@ function StatCard({ icon, label, value, color, bg, sub, delay = 0 }: { icon: any
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
     >
-      <Card className="p-4 md:p-5 rounded-2xl border-0 shadow-sm hover:shadow-md transition-shadow">
-        <div className={`w-10 h-10 ${bg} rounded-xl flex items-center justify-center ${color} mb-3`}>{icon}</div>
+      <Card className="p-3 md:p-5 rounded-2xl border-0 shadow-sm hover:shadow-md transition-shadow">
+        <div className={`w-8 h-8 md:w-10 md:h-10 ${bg} rounded-xl flex items-center justify-center ${color} mb-2 md:mb-3`}>{icon}</div>
         <motion.div 
           initial={{ scale: 0.9 }}
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 300, delay: delay + 0.2 }}
-          className="text-2xl md:text-3xl font-bold font-display" 
+          className="text-xl md:text-3xl font-bold font-display truncate" 
           data-testid={`stat-${label.toLowerCase().replace(/ /g, '-')}`}
         >
           {value}
         </motion.div>
-        <div className="text-xs text-muted-foreground font-medium mt-0.5">{label}</div>
-        {sub && <div className="text-[10px] text-muted-foreground mt-1">{sub}</div>}
+        <div className="text-[11px] md:text-xs text-muted-foreground font-medium mt-0.5">{label}</div>
+        {sub && <div className="text-[9px] md:text-[10px] text-muted-foreground mt-1 truncate">{sub}</div>}
       </Card>
     </motion.div>
   );
@@ -340,7 +319,7 @@ function MiniStat({ label, value, icon, delay = 0 }: { label: string; value: num
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, delay }}
     >
-      <Card className="p-3 rounded-xl border-0 shadow-sm flex items-center gap-3 hover:shadow-md transition-shadow">
+      <Card className="p-2 md:p-3 rounded-xl border-0 shadow-sm flex items-center gap-2 md:gap-3 hover:shadow-md transition-shadow">
         {icon}
         <div>
           <motion.div 
@@ -351,7 +330,7 @@ function MiniStat({ label, value, icon, delay = 0 }: { label: string; value: num
           >
             {value}
           </motion.div>
-          <div className="text-[10px] text-muted-foreground">{label}</div>
+          <div className="text-[9px] md:text-[10px] text-muted-foreground">{label}</div>
         </div>
       </Card>
     </motion.div>
@@ -366,6 +345,7 @@ function RideDetailView({ ride }: { ride: any }) {
       exit={{ opacity: 0, y: -20 }}
       className="space-y-4"
     >
+      {/* ... même contenu ... */}
       <div className="flex items-center gap-2">
         <motion.span 
           initial={{ scale: 0.8 }}
@@ -454,7 +434,7 @@ function RideDetailView({ ride }: { ride: any }) {
           transition={{ delay: 0.6 }}
         >
           <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({ride.offers.length})</div>
-          <div className="space-y-1">
+          <div className="space-y-1 max-h-40 overflow-y-auto">
             {ride.offers.map((o: any, idx: number) => (
               <motion.div 
                 key={o.id}
@@ -494,7 +474,6 @@ function RideDetailView({ ride }: { ride: any }) {
 function DriverDetailView({ driver }: { driver: any }) {
   const [docTab, setDocTab] = useState<string>('info');
   const [previewDoc, setPreviewDoc] = useState<any>(null);
-
   const docs = driver.documents || [];
   const docTypes: Record<string, string> = { CIN: 'CIN (Carte d\'identité)', PERMIS: 'Permis de conduire', VEHICLE: 'Carte grise', PHOTO: 'Photo de profil' };
 
@@ -510,31 +489,31 @@ function DriverDetailView({ driver }: { driver: any }) {
           initial={{ scale: 0.8, rotate: -10 }}
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 300 }}
-          className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center"
+          className="w-12 h-12 md:w-16 md:h-16 bg-secondary rounded-full flex items-center justify-center"
         >
-          <Users className="w-8 h-8 text-muted-foreground" />
+          <Users className="w-6 h-6 md:w-8 md:h-8 text-muted-foreground" />
         </motion.div>
         <div>
-          <h3 className="font-bold text-lg">{driver.name}</h3>
-          <p className="text-sm text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {driver.phone}</p>
+          <h3 className="font-bold text-base md:text-lg">{driver.name}</h3>
+          <p className="text-xs md:text-sm text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {driver.phone}</p>
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${driverStatusColors[driver.profile?.status] || ''}`}>{driver.profile?.status}</span>
         {driver.profile?.online && <span className="text-xs px-2.5 py-1 rounded-full bg-green-100 text-green-700 font-medium flex items-center gap-1"><CircleDot className="w-2.5 h-2.5" /> En ligne</span>}
       </div>
 
-      <div className="flex gap-1 border-b border-border/30">
+      <div className="flex gap-1 border-b border-border/30 overflow-x-auto">
         <button
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${docTab === 'info' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${docTab === 'info' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           onClick={() => setDocTab('info')}
           data-testid="tab-driver-info"
         >
           Informations
         </button>
         <button
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1 ${docTab === 'docs' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1 whitespace-nowrap ${docTab === 'docs' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           onClick={() => setDocTab('docs')}
           data-testid="tab-driver-docs"
         >
@@ -566,28 +545,28 @@ function DriverDetailView({ driver }: { driver: any }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
-              <div className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-2.5 text-center">
+            <div className="grid grid-cols-4 gap-2 mt-3">
+              <div className="bg-amber-50 dark:bg-amber-950/20 rounded-lg p-2 text-center">
                 <Star className="w-4 h-4 text-amber-400 mx-auto" />
-                <div className="font-bold text-sm mt-1">{driver.profile?.ratingAvg || '0'}</div>
-                <div className="text-[10px] text-muted-foreground">Note</div>
+                <div className="font-bold text-xs mt-1">{driver.profile?.ratingAvg || '0'}</div>
+                <div className="text-[9px] text-muted-foreground">Note</div>
               </div>
-              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-                <div className="font-bold text-sm">{driver.profile?.ratingCount || 0}</div>
-                <div className="text-[10px] text-muted-foreground">Avis</div>
+              <div className="bg-muted/30 rounded-lg p-2 text-center">
+                <div className="font-bold text-xs">{driver.profile?.ratingCount || 0}</div>
+                <div className="text-[9px] text-muted-foreground">Avis</div>
               </div>
-              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-                <div className="font-bold text-sm">{driver.completedRides || 0}</div>
-                <div className="text-[10px] text-muted-foreground">Courses</div>
+              <div className="bg-muted/30 rounded-lg p-2 text-center">
+                <div className="font-bold text-xs">{driver.completedRides || 0}</div>
+                <div className="text-[9px] text-muted-foreground">Courses</div>
               </div>
-              <div className="bg-muted/30 rounded-lg p-2.5 text-center">
-                <div className="font-bold text-sm text-primary">{formatAr(driver.totalEarnings || 0)}</div>
-                <div className="text-[10px] text-muted-foreground">Gains</div>
+              <div className="bg-muted/30 rounded-lg p-2 text-center">
+                <div className="font-bold text-xs text-primary">{formatAr(driver.totalEarnings || 0)}</div>
+                <div className="text-[9px] text-muted-foreground">Gains</div>
               </div>
             </div>
 
             {driver.profile?.zone && (
-              <div className="text-xs text-muted-foreground">Zone: {driver.profile.zone}</div>
+              <div className="text-xs text-muted-foreground mt-2">Zone: {driver.profile.zone}</div>
             )}
           </motion.div>
         )}
@@ -639,7 +618,6 @@ function DriverDetailView({ driver }: { driver: any }) {
                 </motion.div>
               ))
             )}
-
             {previewDoc && (
               <Dialog open={!!previewDoc} onOpenChange={() => setPreviewDoc(null)}>
                 <DialogContent className="max-w-2xl rounded-2xl">
@@ -671,6 +649,7 @@ function BookingDetailView({ booking }: { booking: any }) {
       exit={{ opacity: 0, y: -20 }}
       className="space-y-4"
     >
+      {/* ... même contenu que dans l'original ... */}
       <div className="flex items-center gap-2">
         <motion.span 
           initial={{ scale: 0.8 }}
@@ -773,7 +752,7 @@ function BookingDetailView({ booking }: { booking: any }) {
           transition={{ delay: 0.6 }}
         >
           <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({booking.offers.length})</div>
-          <div className="space-y-1">
+          <div className="space-y-1 max-h-40 overflow-y-auto">
             {booking.offers.map((o: any, idx: number) => (
               <motion.div 
                 key={o.id}
@@ -975,7 +954,7 @@ function LocationsManager() {
 
       <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm min-w-[500px]">
             <thead className="bg-muted/30 text-xs uppercase tracking-wider">
               <tr>
                 <th className="p-3 font-semibold">Nom (MG)</th>
@@ -1117,7 +1096,7 @@ export default function AdminDashboard() {
   const [cancelBookingId, setCancelBookingId] = useState<number | null>(null);
   const [cancelBookingReason, setCancelBookingReason] = useState('');
 
-  // API Queries
+  // API Queries (inchangées)
   const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
     queryKey: ['/api/admin/stats'],
     queryFn: async () => {
@@ -1190,7 +1169,7 @@ export default function AdminDashboard() {
     refetchInterval: 10000,
   });
 
-  // Mutations
+  // Mutations (inchangées)
   const updateDriverStatus = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) => {
       const url = buildUrl(api.admin.updateDriverStatus.path, { id });
@@ -1207,7 +1186,6 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: [api.admin.getDrivers.path] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/stats'] });
       queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
-      
       if (variables.action === 'REJECT') {
         toast({ 
           title: 'Conducteur rejeté',
@@ -1314,7 +1292,7 @@ export default function AdminDashboard() {
     },
   });
 
-  // Filtering data
+  // Filtering data (inchangé)
   const filteredRides = useMemo(() => {
     let result = Array.isArray(rides) ? [...rides] : [];
     if (rideStatusFilter !== 'ALL') {
@@ -1396,25 +1374,21 @@ export default function AdminDashboard() {
   const pagedUsers = filteredUsers.slice((usersPage - 1) * usersPageSize, usersPage * usersPageSize);
   const pagedBookings = filteredBookings.slice((bookingsPage - 1) * bookingsPageSize, bookingsPage * bookingsPageSize);
 
-  // Reset page when filters or page size change
+  // Reset page when filters change
   useEffect(() => { setRidesPage(1); }, [rideStatusFilter, searchRides, ridesPageSize]);
   useEffect(() => { setDriversPage(1); }, [driverStatusFilter, searchDrivers, driversPageSize]);
   useEffect(() => { setUsersPage(1); }, [userRoleFilter, searchUsers, usersPageSize]);
   useEffect(() => { setBookingsPage(1); }, [bookingStatusFilter, searchBookings, bookingsPageSize]);
 
-  // Ensure current page doesn't exceed total pages
   useEffect(() => {
     if (ridesPage > rideTotalPages) setRidesPage(1);
   }, [rideTotalPages, ridesPage]);
-  
   useEffect(() => {
     if (driversPage > driverTotalPages) setDriversPage(1);
   }, [driverTotalPages, driversPage]);
-  
   useEffect(() => {
     if (usersPage > userTotalPages) setUsersPage(1);
   }, [userTotalPages, usersPage]);
-  
   useEffect(() => {
     if (bookingsPage > bookingTotalPages) setBookingsPage(1);
   }, [bookingTotalPages, bookingsPage]);
@@ -1482,11 +1456,10 @@ export default function AdminDashboard() {
               Lieux non trouvés par les passagers
             </h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Ces adresses ont été recherchées mais n'ont pas été trouvées dans Nominatim.
-              Vous pouvez les ajouter manuellement comme lieux personnalisés.
+              Ces adresses ont été recherchées mais n'ont pas été trouvées.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <div className="flex gap-1 bg-muted/30 rounded-lg p-1">
               <button
                 onClick={() => setFilter('all')}
@@ -1507,34 +1480,21 @@ export default function AdminDashboard() {
                 Arrivées ({searches.filter(s => s.type === 'dropoff').length})
               </button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={refresh}
-              className="rounded-xl h-9"
-            >
+            <Button variant="outline" size="sm" onClick={refresh} className="rounded-xl h-9">
               <RefreshCw className="w-3.5 h-3.5 mr-1" /> Actualiser
             </Button>
             {searches.length > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleClearAll}
-                className="rounded-xl h-9"
-              >
+              <Button variant="destructive" size="sm" onClick={handleClearAll} className="rounded-xl h-9">
                 <Trash2 className="w-3.5 h-3.5 mr-1" /> Tout effacer
               </Button>
             )}
           </div>
         </div>
-        
         {filteredSearches.length === 0 ? (
           <Card className="rounded-2xl border-0 shadow-sm p-8 text-center">
             <SearchX className="w-12 h-12 mx-auto mb-3 text-muted-foreground/40" />
             <p className="text-muted-foreground text-sm">
-              {searches.length === 0 
-                ? "Aucune recherche non trouvée pour le moment."
-                : "Aucun résultat pour ce filtre."}
+              {searches.length === 0 ? "Aucune recherche non trouvée." : "Aucun résultat pour ce filtre."}
             </p>
           </Card>
         ) : (
@@ -1551,7 +1511,7 @@ export default function AdminDashboard() {
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${typeInfo.color}`}>
                           {typeInfo.label}
                         </span>
@@ -1564,12 +1524,7 @@ export default function AdminDashboard() {
                         {search.query}
                       </p>
                     </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 shrink-0 ml-2"
-                      onClick={() => handleDelete(idx)}
-                    >
+                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 shrink-0 ml-2" onClick={() => handleDelete(idx)}>
                       <XCircle className="w-4 h-4" />
                     </Button>
                   </div>
@@ -1586,7 +1541,7 @@ export default function AdminDashboard() {
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <RefreshIndicator isRefreshing={isRefreshing} />
       
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-border/50 px-4 md:px-8 py-3">
+      <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-border/50 px-4 py-3">
         <div className="max-w-[1400px] mx-auto flex justify-between items-center">
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
@@ -1600,7 +1555,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-2">
             {stats?.activeRides > 0 && (
               <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 400 }}>
-                <Badge className="bg-green-500/10 text-green-600 border-green-200 animate-pulse" data-testid="badge-active-rides">
+                <Badge className="bg-green-500/10 text-green-600 border-green-200 animate-pulse hidden sm:inline-flex" data-testid="badge-active-rides">
                   <Activity className="w-3 h-3 mr-1" /> {stats.activeRides} en cours
                 </Badge>
               </motion.div>
@@ -1614,50 +1569,50 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      <div className="max-w-[1400px] mx-auto p-4 md:p-8">
+      <div className="max-w-[1400px] mx-auto p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <TabsList className="bg-white dark:bg-zinc-900 border border-border/50 rounded-xl p-1 w-full md:w-auto flex flex-wrap gap-0" data-testid="admin-tabs">
-              <TabsTrigger value="overview" className="rounded-lg text-xs md:text-sm" data-testid="tab-overview">
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="overflow-x-auto">
+            <TabsList className="bg-white dark:bg-zinc-900 border border-border/50 rounded-xl p-1 inline-flex w-auto flex-nowrap">
+              <TabsTrigger value="overview" className="rounded-lg text-xs md:text-sm px-3">
                 <TrendingUp className="w-4 h-4 mr-1.5" /> Vue d'ensemble
               </TabsTrigger>
-              <TabsTrigger value="rides" className="rounded-lg text-xs md:text-sm" data-testid="tab-rides">
+              <TabsTrigger value="rides" className="rounded-lg text-xs md:text-sm px-3">
                 <Route className="w-4 h-4 mr-1.5" /> Courses
               </TabsTrigger>
-              <TabsTrigger value="drivers" className="rounded-lg text-xs md:text-sm" data-testid="tab-drivers">
+              <TabsTrigger value="drivers" className="rounded-lg text-xs md:text-sm px-3">
                 <Car className="w-4 h-4 mr-1.5" /> Chauffeurs
               </TabsTrigger>
-              <TabsTrigger value="users" className="rounded-lg text-xs md:text-sm" data-testid="tab-users">
+              <TabsTrigger value="users" className="rounded-lg text-xs md:text-sm px-3">
                 <Users className="w-4 h-4 mr-1.5" /> Utilisateurs
               </TabsTrigger>
-              <TabsTrigger value="locations" className="rounded-lg text-xs md:text-sm" data-testid="tab-locations">
+              <TabsTrigger value="locations" className="rounded-lg text-xs md:text-sm px-3">
                 <MapPin className="w-4 h-4 mr-1.5" /> Lieux
               </TabsTrigger>
-              <TabsTrigger value="ads" className="rounded-lg text-xs md:text-sm" data-testid="tab-ads">
+              <TabsTrigger value="ads" className="rounded-lg text-xs md:text-sm px-3">
                 <Image className="w-4 h-4 mr-1.5" /> Publicités
               </TabsTrigger>
-              <TabsTrigger value="bookings" className="rounded-lg text-xs md:text-sm" data-testid="tab-bookings">
+              <TabsTrigger value="bookings" className="rounded-lg text-xs md:text-sm px-3">
                 <Calendar className="w-4 h-4 mr-1.5" /> Réservations
               </TabsTrigger>
-              <TabsTrigger value="unknown-searches" className="rounded-lg text-xs md:text-sm" data-testid="tab-unknown-searches">
+              <TabsTrigger value="unknown-searches" className="rounded-lg text-xs md:text-sm px-3">
                 <SearchX className="w-4 h-4 mr-1.5" /> Recherches non trouvées
               </TabsTrigger>
-              <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm" data-testid="tab-settings">
+              <TabsTrigger value="settings" className="rounded-lg text-xs md:text-sm px-3">
                 <Settings className="w-4 h-4 mr-1.5" /> Paramètres
               </TabsTrigger>
             </TabsList>
           </motion.div>
 
-          {/* ===== OVERVIEW TAB ===== */}
+          {/* OVERVIEW TAB */}
           <TabsContent value="overview" className="space-y-6 mt-0">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <StatCard icon={<Users className="w-5 h-5" />} label="Utilisateurs" value={stats?.totalUsers || 0} color="text-blue-500" bg="bg-blue-50 dark:bg-blue-950/30" delay={0} />
               <StatCard icon={<Car className="w-5 h-5" />} label="Chauffeurs" value={stats?.totalDrivers || 0} color="text-purple-500" bg="bg-purple-50 dark:bg-purple-950/30" sub={`${stats?.onlineDrivers || 0} en ligne`} delay={0.1} />
               <StatCard icon={<Route className="w-5 h-5" />} label="Total courses" value={stats?.totalRides || 0} color="text-emerald-500" bg="bg-emerald-50 dark:bg-emerald-950/30" sub={`${stats?.completedRides || 0} terminées`} delay={0.2} />
               <StatCard icon={<DollarSign className="w-5 h-5" />} label="Revenu total" value={formatAr(stats?.totalRevenue || 0)} color="text-amber-500" bg="bg-amber-50 dark:bg-amber-950/30" delay={0.3} />
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MiniStat label="Courses actives" value={stats?.activeRides || 0} icon={<Activity className="w-4 h-4 text-green-500" />} delay={0.4} />
               <MiniStat label="Annulées" value={stats?.canceledRides || 0} icon={<XCircle className="w-4 h-4 text-red-500" />} delay={0.5} />
               <MiniStat label="En attente" value={stats?.pendingDrivers || 0} icon={<Clock className="w-4 h-4 text-amber-500" />} delay={0.6} />
@@ -1665,7 +1620,7 @@ export default function AdminDashboard() {
             </div>
 
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-border/50 flex justify-between items-center">
+              <div className="p-4 border-b border-border/50 flex justify-between items-center flex-wrap gap-2">
                 <h3 className="font-bold text-sm flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> Carte en temps réel</h3>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Chauffeurs</span>
@@ -1695,15 +1650,15 @@ export default function AdminDashboard() {
                         onClick={() => setSelectedRide(r)}
                         data-testid={`ride-active-${r.id}`}
                       >
-                        <div className="flex justify-between items-start mb-1">
+                        <div className="flex justify-between items-start mb-1 flex-wrap gap-1">
                           <span className="font-medium text-sm">#{r.id} — {r.passenger?.name || 'Passager'}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusColors[r.status] || ''}`}>{r.status.replace(/_/g, ' ')}</span>
                         </div>
                         <div className="text-xs text-muted-foreground flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-green-500" /> {r.pickupAddress?.slice(0, 30)}...
+                          <MapPin className="w-3 h-3 text-green-500" /> {r.pickupAddress?.slice(0, 40)}...
                         </div>
                         <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <Navigation className="w-3 h-3 text-red-400" /> {r.dropAddress?.slice(0, 30)}...
+                          <Navigation className="w-3 h-3 text-red-400" /> {r.dropAddress?.slice(0, 40)}...
                         </div>
                         {r.selectedPriceAr && <div className="text-xs font-bold text-primary mt-1">{formatAr(r.selectedPriceAr)}</div>}
                       </motion.div>
@@ -1731,7 +1686,7 @@ export default function AdminDashboard() {
                         onClick={() => setSelectedDriver(d)}
                         data-testid={`driver-row-${d.id}`}
                       >
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-center flex-wrap gap-1">
                           <div>
                             <span className="font-medium text-sm">{d.name}</span>
                             <span className="text-xs text-muted-foreground ml-2">{d.phone}</span>
@@ -1741,7 +1696,7 @@ export default function AdminDashboard() {
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${driverStatusColors[d.profile?.status] || ''}`}>{d.profile?.status}</span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                           <span className="flex items-center gap-1">
                             {d.profile?.vehicleType === 'BAJAJ' ? <Bike className="w-3 h-3" /> : <Car className="w-3 h-3" />}
                             {d.profile?.vehicleType}
@@ -1757,11 +1712,11 @@ export default function AdminDashboard() {
             </div>
           </TabsContent>
 
-          {/* ===== RIDES TAB WITH PAGINATION ===== */}
+          {/* RIDES TAB */}
           <TabsContent value="rides" className="space-y-4 mt-0">
-            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des courses</h2>
-              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <Select value={rideStatusFilter} onValueChange={setRideStatusFilter}>
                   <SelectTrigger className="w-full sm:w-44 rounded-xl h-9 text-xs" data-testid="select-ride-status">
                     <SelectValue placeholder="Filtrer par statut" />
@@ -1780,24 +1735,16 @@ export default function AdminDashboard() {
                 </Select>
                 <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input 
-                    placeholder="Rechercher course, passager, chauffeur, adresse..." 
-                    value={searchRides} 
-                    onChange={e => setSearchRides(e.target.value)} 
-                    className="pl-9 rounded-xl h-9 text-xs" 
-                    data-testid="input-search-rides" 
-                  />
+                  <Input placeholder="Rechercher..." value={searchRides} onChange={e => setSearchRides(e.target.value)} className="pl-9 rounded-xl h-9 text-xs" data-testid="input-search-rides" />
                 </div>
               </div>
             </div>
-
             <div className="text-xs text-muted-foreground mb-2">
               {filteredRides.length} course{filteredRides.length !== 1 ? 's' : ''} trouvée{filteredRides.length !== 1 ? 's' : ''}
             </div>
-
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <table className="w-full text-left text-sm min-w-[800px]">
                   <thead className="bg-muted/30 text-xs uppercase tracking-wider sticky top-0">
                     <tr>
                       <th className="p-3 font-semibold">#</th>
@@ -1818,13 +1765,7 @@ export default function AdminDashboard() {
                       <tr><td colSpan={9} className="p-8 text-center text-muted-foreground text-sm">Aucune course trouvée</td></tr>
                     ) : (
                       pagedRides.map((r: any) => (
-                        <motion.tr 
-                          key={r.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="hover:bg-muted/20 transition-colors" 
-                          data-testid={`ride-row-${r.id}`}
-                        >
+                        <motion.tr key={r.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="hover:bg-muted/20 transition-colors" data-testid={`ride-row-${r.id}`}>
                           <td className="p-3 font-mono text-xs font-bold">{r.id}</td>
                           <td className="p-3">
                             <div className="font-medium text-sm">{r.passenger?.name || '—'}</div>
@@ -1849,15 +1790,9 @@ export default function AdminDashboard() {
                               {r.status.replace(/_/g, ' ')}
                             </span>
                           </td>
-                          <td className="p-3 hidden md:table-cell font-bold text-sm">
-                            {r.selectedPriceAr ? formatAr(r.selectedPriceAr) : '—'}
-                          </td>
-                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">
-                            {r.distanceKm ? `${parseFloat(r.distanceKm).toFixed(1)} km` : '—'}
-                          </td>
-                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">
-                            {formatDate(r.createdAt)}
-                          </td>
+                          <td className="p-3 hidden md:table-cell font-bold text-sm">{r.selectedPriceAr ? formatAr(r.selectedPriceAr) : '—'}</td>
+                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">{r.distanceKm ? `${parseFloat(r.distanceKm).toFixed(1)} km` : '—'}</td>
+                          <td className="p-3 hidden lg:table-cell text-xs text-muted-foreground">{formatDate(r.createdAt)}</td>
                           <td className="p-3 text-right">
                             <div className="flex justify-end gap-1">
                               <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={() => setSelectedRide(r)}>
@@ -1876,26 +1811,15 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-              
-              <TablePagination 
-                currentPage={ridesPage} 
-                totalPages={rideTotalPages} 
-                onPageChange={setRidesPage} 
-                totalItems={filteredRides.length}
-                pageSize={ridesPageSize}
-                onPageSizeChange={(size) => {
-                  setRidesPageSize(size);
-                  setRidesPage(1);
-                }}
-              />
+              <TablePagination currentPage={ridesPage} totalPages={rideTotalPages} onPageChange={setRidesPage} totalItems={filteredRides.length} pageSize={ridesPageSize} onPageSizeChange={(size) => { setRidesPageSize(size); setRidesPage(1); }} />
             </Card>
           </TabsContent>
 
-          {/* ===== DRIVERS TAB WITH PAGINATION ===== */}
+          {/* DRIVERS TAB */}
           <TabsContent value="drivers" className="space-y-4 mt-0">
-            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des chauffeurs</h2>
-              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <Select value={driverStatusFilter} onValueChange={setDriverStatusFilter}>
                   <SelectTrigger className="w-full sm:w-40 rounded-xl h-9 text-xs" data-testid="select-driver-status">
                     <SelectValue placeholder="Filtrer par statut" />
@@ -1910,37 +1834,21 @@ export default function AdminDashboard() {
                 </Select>
                 <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input 
-                    placeholder="Rechercher chauffeur..." 
-                    value={searchDrivers} 
-                    onChange={e => setSearchDrivers(e.target.value)} 
-                    className="pl-9 rounded-xl h-9 text-xs" 
-                    data-testid="input-search-drivers" 
-                  />
+                  <Input placeholder="Rechercher chauffeur..." value={searchDrivers} onChange={e => setSearchDrivers(e.target.value)} className="pl-9 rounded-xl h-9 text-xs" data-testid="input-search-drivers" />
                 </div>
               </div>
             </div>
-
             <div className="text-xs text-muted-foreground mb-2">
               {filteredDrivers.length} chauffeur{filteredDrivers.length !== 1 ? 's' : ''} trouvé{filteredDrivers.length !== 1 ? 's' : ''}
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {driversLoading ? (
                 <div className="col-span-full p-8 text-center"><LoadingSpinner /></div>
               ) : filteredDrivers.length === 0 ? (
-                <div className="col-span-full p-8 text-center text-muted-foreground text-sm">
-                  <Car className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>Aucun chauffeur trouvé</p>
-                </div>
+                <div className="col-span-full p-8 text-center text-muted-foreground text-sm"><Car className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>Aucun chauffeur trouvé</p></div>
               ) : (
                 pagedDrivers.map((d: any) => (
-                  <motion.div
-                    key={d.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    whileHover={{ y: -4 }}
-                  >
+                  <motion.div key={d.id} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} whileHover={{ y: -4 }}>
                     <Card className="rounded-2xl border-0 shadow-sm overflow-hidden hover:shadow-md transition-all" data-testid={`card-driver-${d.id}`}>
                       <div className="p-4">
                         <div className="flex justify-between items-start mb-3">
@@ -1950,9 +1858,7 @@ export default function AdminDashboard() {
                             </motion.div>
                             <div>
                               <h4 className="font-bold text-sm">{d.name || 'Sans nom'}</h4>
-                              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Phone className="w-3 h-3" /> {d.phone || '—'}
-                              </p>
+                              <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {d.phone || '—'}</p>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1">
@@ -1966,7 +1872,6 @@ export default function AdminDashboard() {
                             )}
                           </div>
                         </div>
-
                         <div className="grid grid-cols-3 gap-2 mb-3">
                           <div className="bg-muted/30 rounded-lg p-2 text-center">
                             <div className="text-xs text-muted-foreground">Véhicule</div>
@@ -1986,41 +1891,27 @@ export default function AdminDashboard() {
                             <div className="font-bold text-xs">{d.completedRides || 0}</div>
                           </div>
                         </div>
-
                         <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
                           <span>Gains: <span className="font-bold text-foreground">{formatAr(d.totalEarnings || 0)}</span></span>
                           <span>{d.profile?.ratingCount || 0} avis</span>
                         </div>
-
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap">
                           {d.profile?.status === 'PENDING' && (
                             <>
-                              <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
-                                <CheckCircle className="w-3 h-3 mr-1" /> Approuver
-                              </Button>
-                              <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })}>
-                                <XCircle className="w-3 h-3 mr-1" /> Rejeter
-                              </Button>
+                              <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}><CheckCircle className="w-3 h-3 mr-1" /> Approuver</Button>
+                              <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs rounded-lg" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'REJECT' })}><XCircle className="w-3 h-3 mr-1" /> Rejeter</Button>
                             </>
                           )}
                           {d.profile?.status === 'APPROVED' && (
-                            <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })}>
-                              <Ban className="w-3 h-3 mr-1" /> Suspendre
-                            </Button>
+                            <Button size="sm" variant="outline" className="flex-1 h-8 text-xs rounded-lg text-amber-600" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'SUSPEND' })}><Ban className="w-3 h-3 mr-1" /> Suspendre</Button>
                           )}
                           {d.profile?.status === 'SUSPENDED' && (
-                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
-                              <CheckCircle className="w-3 h-3 mr-1" /> Réactiver
-                            </Button>
+                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}><CheckCircle className="w-3 h-3 mr-1" /> Réactiver</Button>
                           )}
                           {d.profile?.status === 'REJECTED' && (
-                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}>
-                              <CheckCircle className="w-3 h-3 mr-1" /> Approuver
-                            </Button>
+                            <Button size="sm" className="flex-1 h-8 text-xs rounded-lg bg-green-500 hover:bg-green-600 text-white" onClick={() => updateDriverStatus.mutate({ id: d.profile.id, action: 'APPROVE' })}><CheckCircle className="w-3 h-3 mr-1" /> Approuver</Button>
                           )}
-                          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)}>
-                            <Eye className="w-3 h-3" />
-                          </Button>
+                          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedDriver(d)}><Eye className="w-3 h-3" /></Button>
                         </div>
                       </div>
                     </Card>
@@ -2028,25 +1919,14 @@ export default function AdminDashboard() {
                 ))
               )}
             </div>
-            
-            <TablePagination 
-              currentPage={driversPage} 
-              totalPages={driverTotalPages} 
-              onPageChange={setDriversPage} 
-              totalItems={filteredDrivers.length}
-              pageSize={driversPageSize}
-              onPageSizeChange={(size) => {
-                setDriversPageSize(size);
-                setDriversPage(1);
-              }}
-            />
+            <TablePagination currentPage={driversPage} totalPages={driverTotalPages} onPageChange={setDriversPage} totalItems={filteredDrivers.length} pageSize={driversPageSize} onPageSizeChange={(size) => { setDriversPageSize(size); setDriversPage(1); }} />
           </TabsContent>
 
-          {/* ===== USERS TAB WITH PAGINATION ===== */}
+          {/* USERS TAB */}
           <TabsContent value="users" className="space-y-4 mt-0">
-            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des utilisateurs</h2>
-              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <Select value={userRoleFilter} onValueChange={setUserRoleFilter}>
                   <SelectTrigger className="w-full sm:w-40 rounded-xl h-9 text-xs" data-testid="select-user-role">
                     <SelectValue placeholder="Filtrer par rôle" />
@@ -2064,14 +1944,10 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
-
-            <div className="text-xs text-muted-foreground mb-2">
-              {filteredUsers.length} utilisateur{filteredUsers.length !== 1 ? 's' : ''} trouvé{filteredUsers.length !== 1 ? 's' : ''}
-            </div>
-
+            <div className="text-xs text-muted-foreground mb-2">{filteredUsers.length} utilisateur{filteredUsers.length !== 1 ? 's' : ''} trouvé{filteredUsers.length !== 1 ? 's' : ''}</div>
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <table className="w-full text-left text-sm min-w-[700px]">
                   <thead className="bg-muted/30 text-xs uppercase tracking-wider">
                     <tr>
                       <th className="p-3 font-semibold">#</th>
@@ -2089,40 +1965,19 @@ export default function AdminDashboard() {
                       <tr><td colSpan={8} className="p-8 text-center text-muted-foreground text-sm">Aucun utilisateur trouvé</td></tr>
                     ) : (
                       pagedUsers.map((u: any) => (
-                        <motion.tr 
-                          key={u.id}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          className="hover:bg-muted/20 transition-colors" 
-                          data-testid={`user-row-${u.id}`}
-                        >
+                        <motion.tr key={u.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="hover:bg-muted/20 transition-colors" data-testid={`user-row-${u.id}`}>
                           <td className="p-3 font-mono text-xs font-bold">{u.id}</td>
                           <td className="p-3 font-medium">{u.name}</td>
                           <td className="p-3 text-muted-foreground">{u.phone}</td>
-                          <td className="p-3">
-                            <Badge variant="outline" className="text-[10px]">
-                              {u.role === 'ADMIN' ? <Shield className="w-2.5 h-2.5 mr-1" /> : u.role === 'DRIVER' ? <Car className="w-2.5 h-2.5 mr-1" /> : <Users className="w-2.5 h-2.5 mr-1" />}
-                              {u.role}
-                            </Badge>
-                          </td>
+                          <td className="p-3"><Badge variant="outline" className="text-[10px]">{u.role === 'ADMIN' ? <Shield className="w-2.5 h-2.5 mr-1" /> : u.role === 'DRIVER' ? <Car className="w-2.5 h-2.5 mr-1" /> : <Users className="w-2.5 h-2.5 mr-1" />}{u.role}</Badge></td>
                           <td className="p-3 hidden md:table-cell text-xs">{u.language === 'mg' ? 'Malagasy' : 'Français'}</td>
                           <td className="p-3 hidden md:table-cell text-xs text-muted-foreground">{formatDate(u.createdAt)}</td>
-                          <td className="p-3">
-                            {u.isBlocked ? (
-                              <Badge variant="destructive" className="text-[10px]"><Ban className="w-2.5 h-2.5 mr-1" /> Bloqué</Badge>
-                            ) : (
-                              <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"><UserCheck className="w-2.5 h-2.5 mr-1" /> Actif</Badge>
-                            )}
-                          </td>
+                          <td className="p-3">{u.isBlocked ? <Badge variant="destructive" className="text-[10px]"><Ban className="w-2.5 h-2.5 mr-1" /> Bloqué</Badge> : <Badge className="text-[10px] bg-green-100 text-green-700"><UserCheck className="w-2.5 h-2.5 mr-1" /> Actif</Badge>}</td>
                           <td className="p-3 text-right">
                             <div className="flex justify-end gap-1">
                               {u.role !== 'ADMIN' && (
                                 <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                                  <Button
-                                    size="icon" variant="ghost"
-                                    className={`h-7 w-7 rounded-lg ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`}
-                                    onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}
-                                  >
+                                  <Button size="icon" variant="ghost" className={`h-7 w-7 rounded-lg ${u.isBlocked ? 'text-green-500' : 'text-red-500'}`} onClick={() => blockUser.mutate({ id: u.id, blocked: !u.isBlocked })}>
                                     {u.isBlocked ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
                                   </Button>
                                 </motion.div>
@@ -2135,39 +1990,25 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-              
-              <TablePagination 
-                currentPage={usersPage} 
-                totalPages={userTotalPages} 
-                onPageChange={setUsersPage} 
-                totalItems={filteredUsers.length}
-                pageSize={usersPageSize}
-                onPageSizeChange={(size) => {
-                  setUsersPageSize(size);
-                  setUsersPage(1);
-                }}
-              />
+              <TablePagination currentPage={usersPage} totalPages={userTotalPages} onPageChange={setUsersPage} totalItems={filteredUsers.length} pageSize={usersPageSize} onPageSizeChange={(size) => { setUsersPageSize(size); setUsersPage(1); }} />
             </Card>
           </TabsContent>
 
-          {/* ===== LOCATIONS TAB ===== */}
+          {/* LOCATIONS TAB */}
           <TabsContent value="locations" className="space-y-4 mt-0">
-            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
-              <h2 className="text-xl font-bold font-display">Gestion des lieux</h2>
-            </div>
             <LocationsManager />
           </TabsContent>
 
-          {/* ===== ADS TAB ===== */}
+          {/* ADS TAB */}
           <TabsContent value="ads" className="space-y-4 mt-0">
             <AdminAds />
           </TabsContent>
 
-          {/* ===== BOOKINGS TAB WITH PAGINATION ===== */}
+          {/* BOOKINGS TAB */}
           <TabsContent value="bookings" className="space-y-4 mt-0">
-            <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
               <h2 className="text-xl font-bold font-display">Gestion des réservations</h2>
-              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <Select value={bookingStatusFilter} onValueChange={setBookingStatusFilter}>
                   <SelectTrigger className="w-full sm:w-44 rounded-xl h-9 text-xs" data-testid="select-booking-status">
                     <SelectValue placeholder="Filtrer par statut" />
@@ -2183,24 +2024,14 @@ export default function AdminDashboard() {
                 </Select>
                 <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input 
-                    placeholder="Rechercher réservation, passager, adresse..." 
-                    value={searchBookings} 
-                    onChange={e => setSearchBookings(e.target.value)} 
-                    className="pl-9 rounded-xl h-9 text-xs" 
-                    data-testid="input-search-bookings" 
-                  />
+                  <Input placeholder="Rechercher réservation..." value={searchBookings} onChange={e => setSearchBookings(e.target.value)} className="pl-9 rounded-xl h-9 text-xs" data-testid="input-search-bookings" />
                 </div>
               </div>
             </div>
-
-            <div className="text-xs text-muted-foreground mb-2">
-              {filteredBookings.length} réservation{filteredBookings.length !== 1 ? 's' : ''} trouvée{filteredBookings.length !== 1 ? 's' : ''}
-            </div>
-
+            <div className="text-xs text-muted-foreground mb-2">{filteredBookings.length} réservation{filteredBookings.length !== 1 ? 's' : ''} trouvée{filteredBookings.length !== 1 ? 's' : ''}</div>
             <Card className="rounded-2xl border-0 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                <table className="w-full text-left text-sm min-w-[800px]">
                   <thead className="bg-muted/30 text-xs uppercase tracking-wider">
                     <tr>
                       <th className="p-3 font-semibold">#</th>
@@ -2218,70 +2049,22 @@ export default function AdminDashboard() {
                       <tr><td colSpan={8} className="p-8 text-center text-muted-foreground text-sm">Aucune réservation trouvée</td></tr>
                     ) : (
                       pagedBookings.map((b: any) => (
-                        <motion.tr 
-                          key={b.id}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="hover:bg-muted/20 transition-colors cursor-pointer"
-                          onClick={() => setSelectedBooking(b)}
-                          data-testid={`booking-row-${b.id}`}
-                        >
+                        <motion.tr key={b.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => setSelectedBooking(b)} data-testid={`booking-row-${b.id}`}>
                           <td className="p-3 font-mono text-xs font-bold">{b.id}</td>
-                          <td className="p-3">
-                            <div className="font-medium text-sm">{b.passenger?.name || '—'}</div>
-                            <div className="text-xs text-muted-foreground">{b.passenger?.phone}</div>
-                          </td>
-                          <td className="p-3">
-                            <div className="font-medium text-sm">{b.driver?.name || '—'}</div>
-                            <div className="text-xs text-muted-foreground">{b.driver?.phone || ''}</div>
-                          </td>
+                          <td className="p-3"><div className="font-medium text-sm">{b.passenger?.name || '—'}</div><div className="text-xs text-muted-foreground">{b.passenger?.phone}</div></td>
+                          <td className="p-3"><div className="font-medium text-sm">{b.driver?.name || '—'}</div><div className="text-xs text-muted-foreground">{b.driver?.phone || ''}</div></td>
                           <td className="p-3 hidden md:table-cell max-w-[200px]">
-                            <div className="text-xs truncate flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-green-500 shrink-0" /> {b.pickupAddress}
-                            </div>
-                            <div className="text-xs truncate flex items-center gap-1 text-muted-foreground">
-                              <Navigation className="w-3 h-3 text-red-400 shrink-0" /> {b.dropAddress}
-                            </div>
+                            <div className="text-xs truncate flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500 shrink-0" /> {b.pickupAddress}</div>
+                            <div className="text-xs truncate flex items-center gap-1 text-muted-foreground"><Navigation className="w-3 h-3 text-red-400 shrink-0" /> {b.dropAddress}</div>
                           </td>
-                          <td className="p-3">
-                            <Badge variant="outline" className="text-[10px]">
-                              {b.vehicleType === 'TAXI' ? <Car className="w-2.5 h-2.5 mr-1" /> : 
-                               b.vehicleType === 'BAJAJ' ? <Bike className="w-2.5 h-2.5 mr-1" /> : 
-                               <Car className="w-2.5 h-2.5 mr-1" />}
-                              {b.vehicleType}
-                            </Badge>
-                          </td>
-                          <td className="p-3 text-xs">
-                            {new Date(b.scheduledFor).toLocaleString('fr-FR', {
-                              day: '2-digit',
-                              month: 'short',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </td>
-                          <td className="p-3">
-                            <span className={`text-[10px] px-2 py-1 rounded-full font-medium whitespace-nowrap ${
-                              b.status === 'PENDING' ? 'bg-amber-100 text-amber-700' :
-                              b.status === 'CONFIRMED' ? 'bg-blue-100 text-blue-700' :
-                              b.status === 'ASSIGNED' ? 'bg-purple-100 text-purple-700' :
-                              b.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
-                              'bg-red-100 text-red-700'
-                            }`}>
-                              {b.status === 'PENDING' ? 'En attente' :
-                               b.status === 'CONFIRMED' ? 'Confirmée' :
-                               b.status === 'ASSIGNED' ? 'Assignée' :
-                               b.status === 'COMPLETED' ? 'Terminée' : 'Annulée'}
-                            </span>
-                          </td>
+                          <td className="p-3"><Badge variant="outline" className="text-[10px]">{b.vehicleType === 'TAXI' ? <Car className="w-2.5 h-2.5 mr-1" /> : b.vehicleType === 'BAJAJ' ? <Bike className="w-2.5 h-2.5 mr-1" /> : <Car className="w-2.5 h-2.5 mr-1" />}{b.vehicleType}</Badge></td>
+                          <td className="p-3 text-xs">{new Date(b.scheduledFor).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td className="p-3"><span className={`text-[10px] px-2 py-1 rounded-full font-medium whitespace-nowrap ${b.status === 'PENDING' ? 'bg-amber-100 text-amber-700' : b.status === 'CONFIRMED' ? 'bg-blue-100 text-blue-700' : b.status === 'ASSIGNED' ? 'bg-purple-100 text-purple-700' : b.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{b.status === 'PENDING' ? 'En attente' : b.status === 'CONFIRMED' ? 'Confirmée' : b.status === 'ASSIGNED' ? 'Assignée' : b.status === 'COMPLETED' ? 'Terminée' : 'Annulée'}</span></td>
                           <td className="p-3 text-right">
                             <div className="flex justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={(e) => { e.stopPropagation(); setSelectedBooking(b); }}>
-                                <Eye className="w-3.5 h-3.5" />
-                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={(e) => { e.stopPropagation(); setSelectedBooking(b); }}><Eye className="w-3.5 h-3.5" /></Button>
                               {!['COMPLETED', 'CANCELED'].includes(b.status) && (
-                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setCancelBookingId(b.id); setShowCancelBookingDialog(true); }}>
-                                  <XCircle className="w-3.5 h-3.5" />
-                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setCancelBookingId(b.id); setShowCancelBookingDialog(true); }}><XCircle className="w-3.5 h-3.5" /></Button>
                               )}
                             </div>
                           </td>
@@ -2291,18 +2074,7 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-              
-              <TablePagination 
-                currentPage={bookingsPage} 
-                totalPages={bookingTotalPages} 
-                onPageChange={setBookingsPage} 
-                totalItems={filteredBookings.length}
-                pageSize={bookingsPageSize}
-                onPageSizeChange={(size) => {
-                  setBookingsPageSize(size);
-                  setBookingsPage(1);
-                }}
-              />
+              <TablePagination currentPage={bookingsPage} totalPages={bookingTotalPages} onPageChange={setBookingsPage} totalItems={filteredBookings.length} pageSize={bookingsPageSize} onPageSizeChange={(size) => { setBookingsPageSize(size); setBookingsPage(1); }} />
             </Card>
           </TabsContent>
 
@@ -2310,7 +2082,6 @@ export default function AdminDashboard() {
             <UnknownSearchesManager />
           </TabsContent>
 
-          {/* ===== SETTINGS TAB ===== */}
           <TabsContent value="settings" className="space-y-6 mt-0">
             <h2 className="text-xl font-bold font-display">Configuration de la plateforme</h2>
             {config && <ConfigForm config={config} onSave={(data: any) => updateConfig.mutate(data)} isPending={updateConfig.isPending} />}

@@ -1,3 +1,4 @@
+// src/pages/passenger/Ride.tsx
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRoute } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
@@ -55,6 +56,25 @@ export default function PassengerRide() {
   const cancelRide = useCancelRide(rideId!);
   const rateRide = useRateRide(rideId!);
   const { connected, subscribe, sendMessage } = useWebSocket();
+
+  // Correction des notifications sur mobile : les placer en haut
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @media (max-width: 640px) {
+        [data-radix-toast-root], [data-sonner-toast], .toast-root, .mobile-toast {
+          top: 70px !important;
+          bottom: auto !important;
+          left: 50% !important;
+          transform: translateX(-50%) !important;
+          right: auto !important;
+          margin: 0 !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); };
+  }, []);
 
   const queryClient = useQueryClient();
 
@@ -121,6 +141,7 @@ export default function PassengerRide() {
           description: lang === 'mg'
             ? `Ny mpamily ${data.driverName} dia ho tonga`
             : `Le chauffeur ${data.driverName} va arriver`,
+          className: "mobile-toast"
         });
       }
     });
@@ -211,6 +232,7 @@ export default function PassengerRide() {
         description: lang === 'mg'
           ? "Safidio ny antony hanafoanana ny dia"
           : "Veuillez sélectionner une raison pour annuler la course",
+        className: "mobile-toast"
       });
       return;
     }
@@ -259,14 +281,16 @@ export default function PassengerRide() {
           setHasRated(true);
           toast({
             title: "Misaotra!",
-            description: lang === 'mg' ? "Voaray ny naoty nomenao." : "Note enregistrée."
+            description: lang === 'mg' ? "Voaray ny naoty nomenao." : "Note enregistrée.",
+            className: "mobile-toast"
           });
         },
         onError: () => {
           toast({
             title: "Nisy olana",
             description: lang === 'mg' ? "Tsy afaka nanome naoty." : "Erreur lors de la notation.",
-            variant: "destructive"
+            variant: "destructive",
+            className: "mobile-toast"
           });
         },
       }
@@ -332,7 +356,7 @@ export default function PassengerRide() {
 
   return (
     <MobileLayout role="passenger">
-      {/* Indicateur de connexion WebSocket - repositionné en haut à gauche sous le menu naturel */}
+      {/* Indicateur de connexion WebSocket */}
       <div className="absolute top-4 left-4 z-30">
         <div className={`px-2 py-1 rounded-full text-xs font-medium ${
           connected ? 'bg-emerald-500/20 text-emerald-700' : 'bg-red-500/20 text-red-700'
@@ -341,7 +365,7 @@ export default function PassengerRide() {
         </div>
       </div>
 
-      {/* Publicité - centrée en haut */}
+      {/* Publicité */}
       {isActive && showAdBanner && (
         <div className="absolute top-14 left-0 right-0 z-20 px-3 pointer-events-none">
           <div className="pointer-events-auto relative bg-background/95 backdrop-blur-xl rounded-xl shadow-lg border">
@@ -586,7 +610,7 @@ export default function PassengerRide() {
                           text: `Mpamily: ${ride.driver?.name || 'Mpamily'}\nFinday: ${ride.driver?.phone || ''}\nFiara: ${ride.vehicleType}\nVidiny: ${ride.selectedPriceAr} Ar`,
                         }).catch(() => {});
                       } else {
-                        toast({ title: "Zaraina ny dia", description: `Mpamily: ${ride.driver?.name}, ${ride.vehicleType}` });
+                        toast({ title: "Zaraina ny dia", description: `Mpamily: ${ride.driver?.name}, ${ride.vehicleType}`, className: "mobile-toast" });
                       }
                     }}
                   >
@@ -834,7 +858,7 @@ export default function PassengerRide() {
                     text: `J'ai besoin d'aide! Chauffeur: ${ride.driver?.name || ''}, Véhicule: ${ride.vehicleType}, Départ: ${ride.pickupAddress}, Arrivée: ${ride.dropAddress}`,
                   }).catch(() => {});
                 }
-                toast({ title: "Position partagée" });
+                toast({ title: "Position partagée", className: "mobile-toast" });
                 setShowSOS(false);
               }}
               className="flex items-center gap-3 p-3.5 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900 w-full text-left"

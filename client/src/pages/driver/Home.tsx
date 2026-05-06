@@ -1,3 +1,4 @@
+// src/pages/driver/Home.tsx (ou DriverHome.tsx)
 import React,{ useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
@@ -120,6 +121,25 @@ export default function DriverHome() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Correction des notifications sur mobile : les placer en haut
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @media (max-width: 640px) {
+        [data-radix-toast-root], [data-sonner-toast], .toast-root, .mobile-toast {
+          top: 70px !important;
+          bottom: auto !important;
+          left: 50% !important;
+          transform: translateX(-50%) !important;
+          right: auto !important;
+          margin: 0 !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); };
+  }, []);
+
   const { data: activeRide, refetch: refetchActiveRide } = useDriverActiveRide();
   const { connected, subscribe, sendMessage } = useWebSocket();
   const updateRideStatus = useUpdateRideStatus(activeRide?.id || 0);
@@ -233,7 +253,7 @@ export default function DriverHome() {
         }
         setLocationError(message);
         setIsLocating(false);
-        toast({ variant: "destructive", title: lang === 'mg' ? "Olana GPS" : "Problème GPS", description: message });
+        toast({ variant: "destructive", title: lang === 'mg' ? "Olana GPS" : "Problème GPS", description: message, className: "mobile-toast" });
       },
       options
     );
@@ -243,7 +263,7 @@ export default function DriverHome() {
 
   const getSingleLocation = useCallback(() => {
     if (!navigator.geolocation) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "GPS tsy misy" : "GPS non disponible" });
+      toast({ variant: "destructive", title: lang === 'mg' ? "GPS tsy misy" : "GPS non disponible", className: "mobile-toast" });
       return;
     }
     setIsLocating(true);
@@ -254,7 +274,7 @@ export default function DriverHome() {
         setLocationAccuracy(pos.coords.accuracy);
         setLocationError(null);
         setIsLocating(false);
-        toast({ title: lang === 'mg' ? "Toerana hita" : "Position trouvée", description: lang === 'mg' ? `Précision: ${Math.round(pos.coords.accuracy)}m` : `Précision: ${Math.round(pos.coords.accuracy)}m` });
+        toast({ title: lang === 'mg' ? "Toerana hita" : "Position trouvée", description: lang === 'mg' ? `Précision: ${Math.round(pos.coords.accuracy)}m` : `Précision: ${Math.round(pos.coords.accuracy)}m`, className: "mobile-toast" });
         if (profile?.online) updateLocation.mutate(location);
       },
       (error) => {
@@ -266,7 +286,7 @@ export default function DriverHome() {
           case error.POSITION_UNAVAILABLE: message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible"; break;
           case error.TIMEOUT: message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout"; break;
         }
-        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée", description: message });
+        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée", description: message, className: "mobile-toast" });
       },
       { enableHighAccuracy: true, timeout: 15000 }
     );
@@ -306,6 +326,7 @@ export default function DriverHome() {
           title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
           description: lang === 'mg' ? `${driverBookings.length} reservation${driverBookings.length > 1 ? 's' : ''} misy` : `${driverBookings.length} réservation${driverBookings.length > 1 ? 's' : ''} disponible${driverBookings.length > 1 ? 's' : ''}`,
           duration: 5000,
+          className: "mobile-toast"
         });
       }
     }
@@ -317,7 +338,7 @@ export default function DriverHome() {
       const distance = getDistanceFromLatLonInKm(driverPos.lat, driverPos.lng, pickupCoords.lat, pickupCoords.lng);
       if (distance < 0.05) {
         setHasArrivedAtPickup(true);
-        toast({ title: lang === 'mg' ? "Tonga any amin'ny toerana fiaingana!" : "Arrivé au point de départ!", description: lang === 'mg' ? "Azonao atao ny manomboka ny dia" : "Vous pouvez démarrer la course" });
+        toast({ title: lang === 'mg' ? "Tonga any amin'ny toerana fiaingana!" : "Arrivé au point de départ!", description: lang === 'mg' ? "Azonao atao ny manomboka ny dia" : "Vous pouvez démarrer la course", className: "mobile-toast" });
       }
     }
     if (activeRide.status === 'DRIVER_ARRIVED' && !hasArrivedAtPickup) setHasArrivedAtPickup(true);
@@ -336,17 +357,17 @@ export default function DriverHome() {
       return res.json();
     },
     onSuccess: (_, { priceAr, etaMinutes }) => {
-      toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!", description: lang === 'mg' ? `${priceAr} Ar - ${etaMinutes} min` : `${priceAr} Ar - ${etaMinutes} min` });
+      toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!", description: lang === 'mg' ? `${priceAr} Ar - ${etaMinutes} min` : `${priceAr} Ar - ${etaMinutes} min`, className: "mobile-toast" });
       setSelectedBooking(null);
       setBookingPrice('');
       refetchBookings();
     },
-    onError: (error: Error) => { toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message }); },
+    onError: (error: Error) => { toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message, className: "mobile-toast" }); },
   });
 
   const handleSendBookingOffer = async () => {
     if (!selectedBooking || !bookingPrice) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy feno" : "Incomplet", description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix" });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy feno" : "Incomplet", description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix", className: "mobile-toast" });
       return;
     }
     const error = validatePrice(bookingPrice);
@@ -359,7 +380,7 @@ export default function DriverHome() {
     if (!connected) return;
     const unsubscribe = subscribe('BOOKING_NEW', (data: any) => {
       console.log('📅 New booking received:', data);
-      if (!activeRide) { refetchBookings(); toast({ title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!", description: lang === 'mg' ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleDateString()}` : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}` }); }
+      if (!activeRide) { refetchBookings(); toast({ title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!", description: lang === 'mg' ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleDateString()}` : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}`, className: "mobile-toast" }); }
     });
     return () => unsubscribe();
   }, [connected, refetchBookings, activeRide, toast, lang]);
@@ -410,7 +431,7 @@ export default function DriverHome() {
         refetchActiveRide();
         queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
         queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-        toast({ title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!", description: lang === 'mg' ? "Mandehana any amin'ny toerana fiaingana" : "Rendez-vous au point de départ" });
+        toast({ title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!", description: lang === 'mg' ? "Mandehana any amin'ny toerana fiaingana" : "Rendez-vous au point de départ", className: "mobile-toast" });
         setOtherUserId(data.passengerId);
         setOtherUserName(data.passengerName || 'Passager');
         setOtherUserPhone(data.passengerPhone || '');
@@ -445,10 +466,10 @@ export default function DriverHome() {
       const updatedRide = await response.json();
       queryClient.setQueryData(['/api/driver/active-ride'], updatedRide);
       await refetchActiveRide();
-      toast({ title: lang === 'mg' ? "Status novaina" : "Statut mis à jour", description: getStatusLabel(nextStatus) });
+      toast({ title: lang === 'mg' ? "Status novaina" : "Statut mis à jour", description: getStatusLabel(nextStatus), className: "mobile-toast" });
     } catch (error: any) {
       console.error('ERROR in handleStartJourney:', error);
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message, className: "mobile-toast" });
     } finally { setIsUpdating(false); }
   };
 
@@ -475,18 +496,18 @@ export default function DriverHome() {
       queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
       queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
       await refetchActiveRide();
-      toast({ title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!", description: lang === 'mg' ? `Voaray ${formattedPrice} Ar` : `${formattedPrice} Ar reçus` });
+      toast({ title: lang === 'mg' ? "Vita ny dia!" : "Course terminée!", description: lang === 'mg' ? `Voaray ${formattedPrice} Ar` : `${formattedPrice} Ar reçus`, className: "mobile-toast" });
       setShowChat(false);
       setChatMinimized(false);
     } catch (error: any) {
       console.error('Error completing ride:', error);
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message, className: "mobile-toast" });
     } finally { setIsUpdating(false); }
   };
 
   const handleCancelRide = async () => {
     if (!activeRide) return;
-    toast({ variant: "destructive", title: lang === 'mg' ? "Nofoanana" : "Annulé", description: lang === 'mg' ? "Voafafa ny dia" : "Course annulée" });
+    toast({ variant: "destructive", title: lang === 'mg' ? "Nofoanana" : "Annulé", description: lang === 'mg' ? "Voafafa ny dia" : "Course annulée", className: "mobile-toast" });
     setShowRideTracking(false);
     setTimerStarted(false);
     setStartTime(null);
@@ -511,7 +532,7 @@ export default function DriverHome() {
 
   const handleSendOffer = async () => {
     if (!selectedRequest || !price) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy feno" : "Incomplet", description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix" });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy feno" : "Incomplet", description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix", className: "mobile-toast" });
       return;
     }
     const error = validatePrice(price);
@@ -526,7 +547,7 @@ export default function DriverHome() {
       setAutoEta(null);
       setCalculatingEta(false);
       refresh();
-      toast({ title: lang === 'mg' ? 'Tolobidy nalefa!' : 'Offre envoyée !', description: lang === 'mg' ? `Ar ${price} - ${eta} minitra` : `Ar ${price} - ${eta} minutes` });
+      toast({ title: lang === 'mg' ? 'Tolobidy nalefa!' : 'Offre envoyée !', description: lang === 'mg' ? `Ar ${price} - ${eta} minitra` : `Ar ${price} - ${eta} minutes`, className: "mobile-toast" });
     } catch (err: any) {}
   };
 
@@ -539,29 +560,29 @@ export default function DriverHome() {
       const newRide = await response.json();
       queryClient.setQueryData(['/api/driver/active-ride'], newRide);
       await refetchActiveRide();
-      toast({ title: lang === 'mg' ? "Reservation nanomboka!" : "Réservation démarrée!", description: lang === 'mg' ? "Manomboka ny dia" : "Course en cours" });
+      toast({ title: lang === 'mg' ? "Reservation nanomboka!" : "Réservation démarrée!", description: lang === 'mg' ? "Manomboka ny dia" : "Course en cours", className: "mobile-toast" });
     } catch (error: any) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message, className: "mobile-toast" });
     } finally { setIsUpdating(false); }
   };
 
   const openGoogleMapsNavigation = useCallback(() => {
     if (!driverPos) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana misy anao" : "Position non trouvée", description: lang === 'mg' ? "Mbola tsy hita ny toerana misy anao. Andraso kely." : "Votre position n'est pas encore disponible. Veuillez patienter." });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana misy anao" : "Position non trouvée", description: lang === 'mg' ? "Mbola tsy hita ny toerana misy anao. Andraso kely." : "Votre position n'est pas encore disponible. Veuillez patienter.", className: "mobile-toast" });
       return;
     }
     let origin: string, destination: string, mode: string = 'driving';
     const isArrived = activeRide?.status === 'DRIVER_ARRIVED' || hasArrivedAtPickup;
     if (isArrived) {
       if (!activeRide?.dropLat || !activeRide?.dropLng) {
-        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana alehana" : "Destination non trouvée", description: lang === 'mg' ? "Tsy hita ny toerana alehan'ny mpandeha." : "La destination du passager n'est pas disponible." });
+        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana alehana" : "Destination non trouvée", description: lang === 'mg' ? "Tsy hita ny toerana alehan'ny mpandeha." : "La destination du passager n'est pas disponible.", className: "mobile-toast" });
         return;
       }
       origin = `${activeRide.pickupLat},${activeRide.pickupLng}`;
       destination = `${activeRide.dropLat},${activeRide.dropLng}`;
     } else {
       if (!activeRide?.pickupLat || !activeRide?.pickupLng) {
-        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana fiaingana" : "Point de départ non trouvé", description: lang === 'mg' ? "Tsy hita ny toerana fiaingan'ny mpandeha." : "Le point de départ du passager n'est pas disponible." });
+        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana fiaingana" : "Point de départ non trouvé", description: lang === 'mg' ? "Tsy hita ny toerana fiaingan'ny mpandeha." : "Le point de départ du passager n'est pas disponible.", className: "mobile-toast" });
         return;
       }
       origin = `${driverPos.lat},${driverPos.lng}`;
