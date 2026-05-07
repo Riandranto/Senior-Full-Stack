@@ -21,7 +21,7 @@ import { requestId } from "./middleware/request-id.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ========== VALIDATION ENVIRONNEMENT (AJOUT) ==========
+// ========== VALIDATION ENVIRONNEMENT ==========
 if (process.env.NODE_ENV === 'production') {
   const requiredEnv = ['SESSION_SECRET', 'DATABASE_URL'];
   for (const env of requiredEnv) {
@@ -43,22 +43,11 @@ if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
     Sentry = sentryModule;
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
-      integrations: [
-        new Sentry.Integrations.Http({ tracing: true }),
-        new Sentry.Integrations.Express({ app }),
-      ],
+      integrations: [new Sentry.Integrations.Http({ tracing: true })],
       tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
       profilesSampleRate: parseFloat(process.env.SENTRY_PROFILES_SAMPLE_RATE || '0.1'),
       environment: process.env.NODE_ENV,
       release: `ride-mada@${process.env.npm_package_version || '1.0.0'}`,
-      beforeSend(event: any) {
-        if (process.env.NODE_ENV === 'development') return null;
-        if (event.request?.data) {
-          delete event.request.data.password;
-          delete event.request.data.token;
-        }
-        return event;
-      },
     });
     logger.info('✅ Sentry initialized for backend');
   } catch (err: any) {
@@ -66,7 +55,7 @@ if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
   }
 }
 
-// Import Redis avec fallback (conservé)
+// Import Redis avec fallback
 let initializeRedis: () => Promise<boolean> = async () => false;
 let redisStore: any = null;
 let redisAvailable = false;
@@ -99,7 +88,6 @@ declare module "http" {
   }
 }
 
-// Extension du type Session
 declare module "express-session" {
   interface SessionData {
     userId: number;
@@ -107,7 +95,6 @@ declare module "express-session" {
   }
 }
 
-// ========== FONCTION getLocalIP (conservée) ==========
 function getLocalIP(): string {
   try {
     const nets = os.networkInterfaces();
@@ -151,17 +138,16 @@ function getLocalIP(): string {
   return '192.168.1.101';
 }
 
-// ========== SECURITY MIDDLEWARES (CORRIGÉS) ==========
-
-// 1. Helmet - Réactivé avec CSP adapté (au lieu d'être complètement désactivé)
+// ========== SECURITY MIDDLEWARES ==========
+// Helmet : configuration adaptée à la production
 if (isProduction) {
-  // Utiliser Helmet avec une configuration légère (sans CSP) en production
+  // Production : pas de CSP pour éviter les blocages (mais on garde les en-têtes de base)
   app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   }));
 } else {
-  // En développement, conserver la configuration existante (avec CSP adapté)
+  // Développement : CSP assoupli pour les outils de dev
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -169,17 +155,17 @@ if (isProduction) {
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", ...(isProduction ? [] : ['ws://localhost:*'])],
+        connectSrc: ["'self'", "ws://localhost:*"],
         fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: isProduction ? false : null,
+        upgradeInsecureRequests: null,
       },
     },
     crossOriginEmbedderPolicy: false,
   }));
 }
 
-// On conserve les en-têtes de sécurité basiques (certaines sont déjà dans helmet)
+// En-têtes de sécurité supplémentaires
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -187,15 +173,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. Session - Utilisation du module unifié (au lieu de config manuelle)
-// On va utiliser notre session middleware unifié à la place de l'ancienne config.
-// Mais pour garder la compatibilité, nous remplaçons le bloc app.use(session(...)) par:
+// Session
 let sessionMiddleware: any;
 try {
   sessionMiddleware = await initializeSession();
 } catch (err) {
   logger.error('Failed to initialize session, falling back to MemoryStore');
-  // Fallback sur la config originale en cas d'erreur
   sessionMiddleware = session({
     name: 'farady.sid',
     secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
@@ -213,19 +196,15 @@ try {
 }
 app.use(sessionMiddleware);
 
-app.use(
-  "/images", express.static(path.join(__dirname, "../public/images"))
-);
-
 logger.info('✅ Session middleware configured');
 
-// 3. Rate Limiting - conservé avec améliorations
+// Rate limiting
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: process.env.NODE_ENV === 'development' ? 1000 : 300,
   message: 'Trop de requêtes',
   skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/ws' || req.path.includes('/api/rides/'),
-  keyGenerator: (req) => req.ip || req.id, // amélioration
+  keyGenerator: (req) => req.ip || req.id,
 });
 app.use('/api', limiter);
 
@@ -237,12 +216,12 @@ const authLimiter = rateLimit({
   skip: (req) => process.env.NODE_ENV === 'development'
 });
 
-// ========== MIDDLEWARES AVANT TOUT ==========
+// Middlewares de base
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
-// Configuration CORS améliorée
+// CORS
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
   'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
 ).split(',');
@@ -257,7 +236,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// Middleware pour forcer HTTPS en production
+// Redirection HTTPS en production
 app.use((req, res, next) => {
   if (isProduction && req.headers['x-forwarded-proto'] !== 'https' && process.env.ENABLE_HTTPS !== 'false') {
     return res.redirect(301, `https://${req.headers.host}${req.url}`);
@@ -265,9 +244,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== MIDDLEWARE DE LOGGING (amélioré avec requestId) ==========
-app.use(requestId()); // Ajout de l'ID de requête
-
+// Request ID + logger
+app.use(requestId());
 app.use((req, res, next) => {
   const startTime = Date.now();
   const reqLogger = createContextLogger({
@@ -291,7 +269,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware de debug des sessions (désactivé en production)
+// Debug session (dev seulement)
 if (!isProduction) {
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {
@@ -306,7 +284,7 @@ if (!isProduction) {
   });
 }
 
-// ========== ENDPOINTS (TOUS CONSERVÉS) ==========
+// ========== ENDPOINTS API (conservés) ==========
 app.get('/api/test', (req, res) => {
   logger.info('Test endpoint called');
   res.json({ 
@@ -352,13 +330,11 @@ app.get('/api/debug/static', (req, res) => {
   });
 });
 
-// Appliquer le rate limiting strict aux routes d'authentification
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 
-// Routes debug (uniquement en développement)
 if (!isProduction) {
   app.get('/api/debug/session-state', (req, res) => {
     res.json({
@@ -370,7 +346,6 @@ if (!isProduction) {
       sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore',
     });
   });
-
   app.post('/api/debug/set-session', (req, res) => {
     req.session.userId = 1;
     req.session.role = 'PASSENGER';
@@ -379,14 +354,9 @@ if (!isProduction) {
         logger.error('Session save error:', err);
         return res.status(500).json({ error: err.message });
       }
-      res.json({ 
-        message: 'Session set', 
-        sessionId: req.session.id,
-        userId: req.session.userId 
-      });
+      res.json({ message: 'Session set', sessionId: req.session.id });
     });
   });
-
   app.get('/api/debug/check-session', (req, res) => {
     res.json({
       sessionId: req.session.id,
@@ -397,6 +367,77 @@ if (!isProduction) {
   });
 }
 
+// ========== SERVEUR STATIQUE & FALLBACK SPA (CORRIGÉ) ==========
+// Déterminer le dossier des assets frontend
+const possiblePaths = [
+  path.join(process.cwd(), 'dist', 'public'),   // Sortie standard de Vite
+  path.join(process.cwd(), 'dist'),             // Fallback
+  path.join(process.cwd(), 'public'),           // Fallback
+];
+
+let staticPath = null;
+for (const p of possiblePaths) {
+  if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+    staticPath = p;
+    logger.info(`✅ Static directory found: ${staticPath}`);
+    break;
+  }
+}
+
+if (staticPath) {
+  // Servir les fichiers statiques avec forçage du MIME type pour CSS/JS
+  app.use(express.static(staticPath, {
+    maxAge: isProduction ? '1d' : 0,
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.css')) {
+        res.setHeader('Content-Type', 'text/css');
+      }
+      if (filePath.endsWith('.js')) {
+        res.setHeader('Content-Type', 'application/javascript');
+      }
+    }
+  }));
+
+  // Fallback SPA : toutes les routes non-API servent index.html
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
+      return next();
+    }
+    const indexPath = path.join(staticPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          logger.error(`Error sending index.html: ${err.message}`);
+          next(err);
+        }
+      });
+    } else {
+      logger.error(`index.html not found at ${indexPath}`);
+      res.status(500).json({ error: 'Frontend build missing' });
+    }
+  });
+} else {
+  logger.error('No static directory found! Frontend will not work.');
+  app.use('/assets', (req, res) => {
+    res.status(404).json({ error: 'Assets not found - build missing' });
+  });
+}
+
+// ========== GESTIONNAIRE D'ERREUR GLOBAL (doit être après tous les middlewares) ==========
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  logError(err);
+  const status = err.status || 500;
+  const message = err.message || "Erreur interne du serveur";
+  
+  if (isProduction && status === 500) {
+    res.status(500).json({ message: "Erreur interne" });
+  } else {
+    res.status(status).json({ message, stack: err.stack });
+  }
+});
+
 // ========== DÉMARRAGE DU SERVEUR ==========
 async function startServer() {
   try {
@@ -406,64 +447,34 @@ async function startServer() {
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
 
-    startHttpServer(port, host);
-    
-    // Gestion des erreurs
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      console.error('Error:', err);
-      res.status(500).json({ message: "Erreur interne" });
+    httpServer.listen(port, host, () => {
+      const localIP = getLocalIP();
+      logger.info('\n' + '='.repeat(60));
+      logger.info('🚀 SERVER STARTED SUCCESSFULLY');
+      logger.info('='.repeat(60));
+      logger.info(`📡 Local access:    http://localhost:${port}`);
+      logger.info(`🌍 Network access:  http://${localIP}:${port}`);
+      logger.info(`🗄️  Session store:   ${sessionRedisAvailable ? 'Redis ✅' : 'MemoryStore ⚠️'}`);
+      logger.info(`📊 Metrics:         http://localhost:${port}/api/metrics`);
+      logger.info('='.repeat(60) + '\n');
     });
 
-    // Fichiers statiques
-    const distPublicPath = path.join(process.cwd(), 'dist', 'public');
-    if (fs.existsSync(distPublicPath)) {
-      app.use(express.static(distPublicPath));
-      app.use((req, res, next) => {
-        if (req.path.startsWith('/api')) return next();
-        res.sendFile(path.join(distPublicPath, 'index.html'));
-      });
-    }
+    httpServer.on('error', (error: any) => {
+      if (error.code === 'EADDRINUSE') {
+        logger.error(`Port ${port} is already in use!`);
+        process.exit(1);
+      } else {
+        logger.error('Server error:', error);
+        process.exit(1);
+      }
+    });
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
   }
 }
 
-function startHttpServer(port: number, host: string) {
-  httpServer.listen(port, host, () => {
-    const localIP = getLocalIP();
-    logger.info('\n' + '='.repeat(60));
-    logger.info('🚀 SERVER STARTED SUCCESSFULLY');
-    logger.info('='.repeat(60));
-    logger.info(`📡 Local access:    http://localhost:${port}`);
-    logger.info(`🌍 Network access:  http://${localIP}:${port}`);
-    logger.info(`🗄️  Session store:   ${sessionRedisAvailable ? 'Redis ✅' : 'MemoryStore ⚠️'}`);
-    logger.info(`🔒 HTTPS:           ${isProduction ? 'Disabled' : 'Disabled (development)'}`);
-    logger.info(`📊 Metrics:         http://localhost:${port}/api/metrics`);
-    logger.info('='.repeat(60) + '\n');
-    
-    logger.info('📝 Test avec:');
-    logger.info(`   curl http://localhost:${port}/api/test`);
-    logger.info(`   curl http://localhost:${port}/api/health`);
-    logger.info(`   curl http://localhost:${port}/api/metrics`);
-    if (!isProduction) {
-      logger.info(`   curl http://localhost:${port}/api/debug/session-state`);
-    }
-    logger.info(`   curl http://localhost:${port}/api/debug/static`);
-  });
-
-  httpServer.on('error', (error: any) => {
-    if (error.code === 'EADDRINUSE') {
-      logger.error(`Port ${port} is already in use!`);
-      process.exit(1);
-    } else {
-      logger.error('Server error:', error);
-      process.exit(1);
-    }
-  });
-}
-
-// Graceful shutdown (AJOUT)
+// Graceful shutdown
 const shutdown = async (signal: string) => {
   logger.info(`${signal} received, closing server...`);
   if (httpServer) {
@@ -483,5 +494,4 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Démarrer le serveur
 startServer();
