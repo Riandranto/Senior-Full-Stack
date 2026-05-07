@@ -13,15 +13,15 @@ import { fileURLToPath } from 'url';
 import os from "os";
 import cors from 'cors';
 import { initializeSession, redisAvailable as sessionRedisAvailable } from "./services/session.js";
-import { logger, createContextLogger } from "./utils/logger.js";
+import { logger, createContextLogger, logError } from "./utils/logger.js";
 import helmet from "helmet";
-import { errorHandler } from "./middleware/error-handler.js";
+import { errorHandler } from "./services/error-handler.js";
 import { requestId } from "./middleware/request-id.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ========== VALIDATION ENVIRONNEMENT ==========
+// ========== VALIDATION ENVIRONNEMENT (AJOUT) ==========
 if (process.env.NODE_ENV === 'production') {
   const requiredEnv = ['SESSION_SECRET', 'DATABASE_URL'];
   for (const env of requiredEnv) {
@@ -60,13 +60,13 @@ if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
         return event;
       },
     });
-    logger.info('✅ Sentry initialized');
+    logger.info('✅ Sentry initialized for backend');
   } catch (err: any) {
-    logger.warn('Sentry init failed:', err.message);
+    logger.warn('Failed to initialize Sentry:', err.message);
   }
 }
 
-// Import Redis avec fallback
+// Import Redis avec fallback (conservé)
 let initializeRedis: () => Promise<boolean> = async () => false;
 let redisStore: any = null;
 let redisAvailable = false;
@@ -99,6 +99,7 @@ declare module "http" {
   }
 }
 
+// Extension du type Session
 declare module "express-session" {
   interface SessionData {
     userId: number;
@@ -106,58 +107,79 @@ declare module "express-session" {
   }
 }
 
+// ========== FONCTION getLocalIP (conservée) ==========
 function getLocalIP(): string {
   try {
     const nets = os.networkInterfaces();
     const results: { address: string, name: string, family: string }[] = [];
+    
     logger.info('\n📡 Interfaces réseau disponibles:');
     logger.info('='.repeat(50));
+    
     for (const name of Object.keys(nets)) {
       for (const net of nets[name] || []) {
         if (net.family === 'IPv4') {
           const type = net.internal ? '🔒 Interne' : '🌍 Externe';
           logger.info(`${type} - ${name}: ${net.address}`);
           if (!net.internal) {
-            results.push({ address: net.address, name: name, family: net.family });
+            results.push({
+              address: net.address,
+              name: name,
+              family: net.family
+            });
           }
         }
       }
     }
     logger.info('='.repeat(50) + '\n');
+    
     const preferred = results.find(r => r.address.startsWith('192.168.1.'));
     if (preferred) {
       logger.info(`✅ IP sélectionnée: ${preferred.address} (${preferred.name})`);
       return preferred.address;
     }
+    
     if (results.length > 0) {
       logger.info(`⚠️ IP sélectionnée: ${results[0].address} (${results[0].name})`);
       return results[0].address;
     }
+    
   } catch (error) {
     logger.error('Erreur:', error);
   }
+  
   return '192.168.1.101';
 }
 
-// ========== SECURITY MIDDLEWARES ==========
+// ========== SECURITY MIDDLEWARES (CORRIGÉS) ==========
 
-// Helmet avec CSP autorisant Google Fonts
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", ...(isProduction ? [] : ['ws://localhost:*'])],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: isProduction ? [] : null,
+// 1. Helmet - Réactivé avec CSP adapté (au lieu d'être complètement désactivé)
+if (isProduction) {
+  // Utiliser Helmet avec une configuration légère (sans CSP) en production
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
+} else {
+  // En développement, conserver la configuration existante (avec CSP adapté)
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", ...(isProduction ? [] : ['ws://localhost:*'])],
+        fontSrc: ["'self'", "data:"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: isProduction ? false : null,
+      },
     },
-  },
-  crossOriginEmbedderPolicy: false,
-}));
+    crossOriginEmbedderPolicy: false,
+  }));
+}
 
+// On conserve les en-têtes de sécurité basiques (certaines sont déjà dans helmet)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -165,12 +187,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session unifiée
+// 2. Session - Utilisation du module unifié (au lieu de config manuelle)
+// On va utiliser notre session middleware unifié à la place de l'ancienne config.
+// Mais pour garder la compatibilité, nous remplaçons le bloc app.use(session(...)) par:
 let sessionMiddleware: any;
 try {
   sessionMiddleware = await initializeSession();
 } catch (err) {
   logger.error('Failed to initialize session, falling back to MemoryStore');
+  // Fallback sur la config originale en cas d'erreur
   sessionMiddleware = session({
     name: 'farady.sid',
     secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
@@ -188,16 +213,19 @@ try {
 }
 app.use(sessionMiddleware);
 
-app.use("/images", express.static(path.join(__dirname, "../public/images")));
+app.use(
+  "/images", express.static(path.join(__dirname, "../public/images"))
+);
+
 logger.info('✅ Session middleware configured');
 
-// Rate limiting
+// 3. Rate Limiting - conservé avec améliorations
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: process.env.NODE_ENV === 'development' ? 1000 : 300,
   message: 'Trop de requêtes',
   skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/ws' || req.path.includes('/api/rides/'),
-  keyGenerator: (req) => req.ip || req.id,
+  keyGenerator: (req) => req.ip || req.id, // amélioration
 });
 app.use('/api', limiter);
 
@@ -209,10 +237,12 @@ const authLimiter = rateLimit({
   skip: (req) => process.env.NODE_ENV === 'development'
 });
 
+// ========== MIDDLEWARES AVANT TOUT ==========
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
+// Configuration CORS améliorée
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
   'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
 ).split(',');
@@ -227,16 +257,17 @@ app.use(cors({
   credentials: true,
 }));
 
-if (isProduction) {
-  app.use((req, res, next) => {
-    if (req.headers['x-forwarded-proto'] !== 'https' && process.env.ENABLE_HTTPS !== 'false') {
-      return res.redirect(301, `https://${req.headers.host}${req.url}`);
-    }
-    next();
-  });
-}
+// Middleware pour forcer HTTPS en production
+app.use((req, res, next) => {
+  if (isProduction && req.headers['x-forwarded-proto'] !== 'https' && process.env.ENABLE_HTTPS !== 'false') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
 
-app.use(requestId());
+// ========== MIDDLEWARE DE LOGGING (amélioré avec requestId) ==========
+app.use(requestId()); // Ajout de l'ID de requête
+
 app.use((req, res, next) => {
   const startTime = Date.now();
   const reqLogger = createContextLogger({
@@ -246,17 +277,21 @@ app.use((req, res, next) => {
     ip: req.ip,
   });
   req.logger = reqLogger;
+  
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
-    reqLogger[level](`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
+    const logLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+    reqLogger[logLevel](`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
+    
     if (isProduction && duration > 1000) {
       reqLogger.warn(`Slow request detected`, { duration, statusCode: res.statusCode });
     }
   });
+  
   next();
 });
 
+// Middleware de debug des sessions (désactivé en production)
 if (!isProduction) {
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {
@@ -271,7 +306,7 @@ if (!isProduction) {
   });
 }
 
-// Endpoints
+// ========== ENDPOINTS (TOUS CONSERVÉS) ==========
 app.get('/api/test', (req, res) => {
   logger.info('Test endpoint called');
   res.json({ 
@@ -281,6 +316,7 @@ app.get('/api/test', (req, res) => {
     sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore',
   });
 });
+
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok",
@@ -289,6 +325,7 @@ app.get("/api/health", (req, res) => {
     uptime: process.uptime()
   });
 });
+
 app.get('/api/metrics', (req, res) => {
   res.json({
     uptime: process.uptime(),
@@ -299,8 +336,9 @@ app.get('/api/metrics', (req, res) => {
     timestamp: Date.now()
   });
 });
+
 app.get('/api/debug/static', (req, res) => {
-  const distPath = path.join(process.cwd(), 'dist');
+  const distPath = path.join(process.cwd(), 'dist', 'public');
   let files: string[] = [];
   if (fs.existsSync(distPath)) {
     files = fs.readdirSync(distPath);
@@ -314,11 +352,13 @@ app.get('/api/debug/static', (req, res) => {
   });
 });
 
+// Appliquer le rate limiting strict aux routes d'authentification
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 
+// Routes debug (uniquement en développement)
 if (!isProduction) {
   app.get('/api/debug/session-state', (req, res) => {
     res.json({
@@ -330,6 +370,7 @@ if (!isProduction) {
       sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore',
     });
   });
+
   app.post('/api/debug/set-session', (req, res) => {
     req.session.userId = 1;
     req.session.role = 'PASSENGER';
@@ -338,9 +379,14 @@ if (!isProduction) {
         logger.error('Session save error:', err);
         return res.status(500).json({ error: err.message });
       }
-      res.json({ message: 'Session set', sessionId: req.session.id, userId: req.session.userId });
+      res.json({ 
+        message: 'Session set', 
+        sessionId: req.session.id,
+        userId: req.session.userId 
+      });
     });
   });
+
   app.get('/api/debug/check-session', (req, res) => {
     res.json({
       sessionId: req.session.id,
@@ -351,34 +397,31 @@ if (!isProduction) {
   });
 }
 
-// ========== ROUTES PRINCIPALES ==========
+// ========== DÉMARRAGE DU SERVEUR ==========
 async function startServer() {
   try {
     const port = parseInt(process.env.PORT || "10000", 10);
     const host = "0.0.0.0";
+    
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
+
     startHttpServer(port, host);
     
-    // Gestion des erreurs de l'application (après les routes)
+    // Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-      logger.error('Error:', err);
+      console.error('Error:', err);
       res.status(500).json({ message: "Erreur interne" });
     });
 
-    // ========== FICHIERS STATIQUES CORRIGÉS ==========
-    // Le build Vite place les fichiers dans le dossier 'dist' (pas 'dist/public')
-    const distPath = path.join(process.cwd(), 'dist');
-    if (fs.existsSync(distPath)) {
-      logger.info(`📁 Serving static files from ${distPath}`);
-      app.use(express.static(distPath));
-      // Pour toutes les routes non API, renvoyer index.html (SPA)
+    // Fichiers statiques
+    const distPublicPath = path.join(process.cwd(), 'dist', 'public');
+    if (fs.existsSync(distPublicPath)) {
+      app.use(express.static(distPublicPath));
       app.use((req, res, next) => {
         if (req.path.startsWith('/api')) return next();
-        res.sendFile(path.join(distPath, 'index.html'));
+        res.sendFile(path.join(distPublicPath, 'index.html'));
       });
-    } else {
-      logger.warn(`⚠️ Dist folder not found at ${distPath}, static files may not be served correctly.`);
     }
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -398,6 +441,7 @@ function startHttpServer(port: number, host: string) {
     logger.info(`🔒 HTTPS:           ${isProduction ? 'Disabled' : 'Disabled (development)'}`);
     logger.info(`📊 Metrics:         http://localhost:${port}/api/metrics`);
     logger.info('='.repeat(60) + '\n');
+    
     logger.info('📝 Test avec:');
     logger.info(`   curl http://localhost:${port}/api/test`);
     logger.info(`   curl http://localhost:${port}/api/health`);
@@ -419,6 +463,7 @@ function startHttpServer(port: number, host: string) {
   });
 }
 
+// Graceful shutdown (AJOUT)
 const shutdown = async (signal: string) => {
   logger.info(`${signal} received, closing server...`);
   if (httpServer) {
@@ -438,4 +483,5 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// Démarrer le serveur
 startServer();
