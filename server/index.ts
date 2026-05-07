@@ -140,14 +140,8 @@ function getLocalIP(): string {
 
 // ========== SECURITY MIDDLEWARES ==========
 // Helmet : configuration adaptée à la production
-if (isProduction) {
-  // Production : pas de CSP pour éviter les blocages (mais on garde les en-têtes de base)
-  app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-  }));
-} else {
-  // Développement : CSP assoupli pour les outils de dev
+if (!isProduction) {
+  // Développement seulement : CSP assoupli
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
