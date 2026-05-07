@@ -14,10 +14,26 @@ import os from "os";
 import cors from 'cors';
 import { initializeSession, redisAvailable as sessionRedisAvailable } from "./services/session.js";
 import { logger, createContextLogger, logError } from "./utils/logger.js";
-
+import helmet from "helmet";
+import { errorHandler } from "./middleware/error-handler.js";
+import { requestId } from "./middleware/request-id.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ========== VALIDATION ENVIRONNEMENT (AJOUT) ==========
+if (process.env.NODE_ENV === 'production') {
+  const requiredEnv = ['SESSION_SECRET', 'DATABASE_URL'];
+  for (const env of requiredEnv) {
+    if (!process.env[env]) {
+      logger.fatal(`Missing ${env} in environment`);
+      process.exit(1);
+    }
+  }
+}
+if (process.env.SESSION_SECRET === 'farady-secret-key-change-in-production') {
+  logger.warn('⚠️ Using default session secret - change it in production!');
+}
 
 // ========== SENTRY INITIALIZATION ==========
 let Sentry: any = null;
@@ -50,12 +66,11 @@ if (process.env.NODE_ENV === 'production' && process.env.SENTRY_DSN) {
   }
 }
 
-// Import Redis avec fallback
+// Import Redis avec fallback (conservé)
 let initializeRedis: () => Promise<boolean> = async () => false;
 let redisStore: any = null;
 let redisAvailable = false;
 
-// Essayer d'importer Redis, mais ignorer si erreur
 try {
   const redisModule = await import("./services/redis.js");
   initializeRedis = redisModule.initializeRedis || (async () => false);
@@ -92,6 +107,7 @@ declare module "express-session" {
   }
 }
 
+// ========== FONCTION getLocalIP (conservée) ==========
 function getLocalIP(): string {
   try {
     const nets = os.networkInterfaces();
@@ -135,41 +151,58 @@ function getLocalIP(): string {
   return '192.168.1.101';
 }
 
-// ========== SECURITY MIDDLEWARES ==========
+// ========== SECURITY MIDDLEWARES (CORRIGÉS) ==========
 
-// 1. Helmet - Désactivé complètement pour éviter les problèmes CSP
-//const isProduction = process.env.NODE_ENV === 'production';
+// 1. Helmet - Réactivé avec CSP adapté (au lieu d'être complètement désactivé)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", ...(isProduction ? [] : ['ws://localhost:*'])],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: isProduction ? [] : null,
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
 
-// DÉSACTIVER COMPLÈTEMENT HELMET - Plus de problèmes CSP
-// app.use(helmet(...)); // COMMENTÉ
-
+// On conserve les en-têtes de sécurité basiques (certaines sont déjà dans helmet)
 app.use((req, res, next) => {
-  // Supprimer toute CSP existante
-  res.removeHeader('Content-Security-Policy');
-  res.removeHeader('X-Content-Security-Policy');
-  
-  // En-têtes de sécurité basiques uniquement
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '0');
-  
   next();
 });
 
-app.use(session({
-  name: 'farady.sid',
-  secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  store: new MemoryStore({ checkPeriod: 86400000 }),
-  cookie: {
-    secure: process.env.NODE_ENV === 'production', // true en production
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    path: '/',
-  }
-}));
+// 2. Session - Utilisation du module unifié (au lieu de config manuelle)
+// On va utiliser notre session middleware unifié à la place de l'ancienne config.
+// Mais pour garder la compatibilité, nous remplaçons le bloc app.use(session(...)) par:
+let sessionMiddleware: any;
+try {
+  sessionMiddleware = await initializeSession();
+} catch (err) {
+  logger.error('Failed to initialize session, falling back to MemoryStore');
+  // Fallback sur la config originale en cas d'erreur
+  sessionMiddleware = session({
+    name: 'farady.sid',
+    secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore({ checkPeriod: 86400000 }),
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/',
+    }
+  });
+}
+app.use(sessionMiddleware);
 
 app.use(
   "/images", express.static(path.join(__dirname, "../public/images"))
@@ -177,41 +210,41 @@ app.use(
 
 logger.info('✅ Session middleware configured');
 
-// 2. Rate Limiting - Protection contre les attaques par force brute
+// 3. Rate Limiting - conservé avec améliorations
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute au lieu de 15
-  max: process.env.NODE_ENV === 'development' ? 1000 : 300, // 300 requêtes/minute
+  windowMs: 60 * 1000,
+  max: process.env.NODE_ENV === 'development' ? 1000 : 300,
   message: 'Trop de requêtes',
-  skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/ws' || req.path.includes('/api/rides/') // Ignorer certaines routes
+  skip: (req) => process.env.NODE_ENV === 'development' || req.path === '/api/ws' || req.path.includes('/api/rides/'),
+  keyGenerator: (req) => req.ip || req.id, // amélioration
 });
 app.use('/api', limiter);
 
-
-// Rate limiting plus strict pour les routes d'authentification
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'development' ? 100 : 5, // 100 requêtes en développement
+  max: process.env.NODE_ENV === 'development' ? 100 : 5,
   message: 'Trop de tentatives de connexion, veuillez réessayer dans 15 minutes.',
   skipSuccessfulRequests: true,
-  skip: (req) => process.env.NODE_ENV === 'development' // Ignorer en développement
+  skip: (req) => process.env.NODE_ENV === 'development'
 });
 
 // ========== MIDDLEWARES AVANT TOUT ==========
-
-// Servir les fichiers uploads statiquement
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
-
-// Middleware JSON
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
-// Configuration CORS
+// Configuration CORS améliorée
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
   'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
 ).split(',');
-
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || !isProduction) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 
@@ -223,20 +256,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// ========== MIDDLEWARE DE LOGGING ==========
+// ========== MIDDLEWARE DE LOGGING (amélioré avec requestId) ==========
+app.use(requestId()); // Ajout de l'ID de requête
 
-// Middleware pour mesurer les performances des requêtes
 app.use((req, res, next) => {
   const startTime = Date.now();
   const reqLogger = createContextLogger({
+    reqId: req.id,
     method: req.method,
     path: req.path,
     ip: req.ip,
   });
+  req.logger = reqLogger;
   
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    
     const logLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     reqLogger[logLevel](`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
     
@@ -263,12 +297,9 @@ if (!isProduction) {
   });
 }
 
-// ========== ENDPOINTS ==========
-
-// Endpoint de test
+// ========== ENDPOINTS (TOUS CONSERVÉS) ==========
 app.get('/api/test', (req, res) => {
   logger.info('Test endpoint called');
-  
   res.json({ 
     message: 'Backend is working!',
     time: new Date().toISOString(),
@@ -277,7 +308,6 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-// Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok",
@@ -287,7 +317,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Metrics endpoint pour monitoring
 app.get('/api/metrics', (req, res) => {
   res.json({
     uptime: process.uptime(),
@@ -299,15 +328,12 @@ app.get('/api/metrics', (req, res) => {
   });
 });
 
-// Debug endpoint pour vérifier les fichiers statiques
 app.get('/api/debug/static', (req, res) => {
   const distPath = path.join(process.cwd(), 'dist', 'public');
   let files: string[] = [];
-  
   if (fs.existsSync(distPath)) {
     files = fs.readdirSync(distPath);
   }
-  
   res.json({
     cwd: process.cwd(),
     distPath,
@@ -363,17 +389,15 @@ if (!isProduction) {
 }
 
 // ========== DÉMARRAGE DU SERVEUR ==========
-
 async function startServer() {
   try {
-    // ⭐ CRITIQUE: Utiliser process.env.PORT (Render utilise 10000)
     const port = parseInt(process.env.PORT || "10000", 10);
     const host = "0.0.0.0";
     
     httpServer = createServer(app);
     await registerRoutes(httpServer, app);
 
-    startHttpServer(port,host);
+    startHttpServer(port, host);
     
     // Gestion des erreurs
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -390,11 +414,6 @@ async function startServer() {
         res.sendFile(path.join(distPublicPath, 'index.html'));
       });
     }
-
-    httpServer.listen(port, host, () => {
-      console.log(`🚀 Server running on port ${port}`);
-    });
-
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
@@ -434,6 +453,26 @@ function startHttpServer(port: number, host: string) {
     }
   });
 }
+
+// Graceful shutdown (AJOUT)
+const shutdown = async (signal: string) => {
+  logger.info(`${signal} received, closing server...`);
+  if (httpServer) {
+    httpServer.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+  setTimeout(() => {
+    logger.error('Forced shutdown');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Démarrer le serveur
 startServer();

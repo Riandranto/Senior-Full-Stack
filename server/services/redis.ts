@@ -1,9 +1,7 @@
-// server/lib/redis.ts
 import { createClient } from 'redis';
 import RedisStore from 'connect-redis';
-import { logger } from '../utils/logger';
+import { logger } from '../utils/logger.js';
 
-// Client Redis - seulement si REDIS_URL est défini
 let redisClient: ReturnType<typeof createClient> | null = null;
 let redisStore: any = null;
 
@@ -23,36 +21,26 @@ if (REDIS_URL) {
     }
   });
 
-  redisClient.on('error', (err) => {
-    logger.error({ err }, 'Redis Client Error');
-  });
+  redisClient.on('error', (err) => logger.error({ err }, 'Redis Client Error'));
+  redisClient.on('connect', () => logger.info('Redis Client Connected'));
 
-  redisClient.on('connect', () => {
-    logger.info('Redis Client Connected');
-  });
-
-  redisStore = new RedisStore({
-    client: redisClient,
-    prefix: 'farady:session:',
-    ttl: 86400
-  });
+  redisStore = new RedisStore({ client: redisClient, prefix: 'farady:session:', ttl: 86400 });
 } else {
   logger.info('REDIS_URL not set, using memory store fallback');
 }
 
-// Initialisation conditionnelle
 export async function initializeRedis() {
   if (!redisClient) {
-    logger.info('Redis not configured, skipping initialization');
+    logger.info('Redis not configured');
     return false;
   }
-  
   try {
     await redisClient.connect();
-    logger.info('Redis initialized successfully');
+    logger.info('Redis connected');
     return true;
   } catch (error) {
-    logger.error({ error }, 'Failed to initialize Redis');
+    logger.error({ error }, 'Redis connection failed');
+    redisClient = null;
     return false;
   }
 }

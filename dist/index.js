@@ -11,7 +11,7 @@ var __export = (target, all) => {
 // server/utils/logger.ts
 import { randomUUID } from "crypto";
 function createContextLogger(context) {
-  const requestId = randomUUID();
+  const requestId2 = randomUUID();
   const contextStr = typeof context === "string" ? context : JSON.stringify(context);
   return {
     fatal: (msg, ...args) => logger.fatal(`[${contextStr}] ${msg}`, ...args),
@@ -26,7 +26,7 @@ function createContextLogger(context) {
     info: (msg, ...args) => logger.info(`[${contextStr}] ${msg}`, ...args),
     debug: (msg, ...args) => logger.debug(`[${contextStr}] ${msg}`, ...args),
     trace: (msg, ...args) => logger.trace(`[${contextStr}] ${msg}`, ...args),
-    getRequestId: () => requestId
+    getRequestId: () => requestId2
   };
 }
 var logger;
@@ -54,15 +54,16 @@ import { createClient } from "redis";
 import RedisStore from "connect-redis";
 async function initializeRedis() {
   if (!redisClient) {
-    logger.info("Redis not configured, skipping initialization");
+    logger.info("Redis not configured");
     return false;
   }
   try {
     await redisClient.connect();
-    logger.info("Redis initialized successfully");
+    logger.info("Redis connected");
     return true;
   } catch (error) {
-    logger.error({ error }, "Failed to initialize Redis");
+    logger.error({ error }, "Redis connection failed");
+    redisClient = null;
     return false;
   }
 }
@@ -87,17 +88,9 @@ var init_redis = __esm({
           }
         }
       });
-      redisClient.on("error", (err) => {
-        logger.error({ err }, "Redis Client Error");
-      });
-      redisClient.on("connect", () => {
-        logger.info("Redis Client Connected");
-      });
-      redisStore = new RedisStore({
-        client: redisClient,
-        prefix: "farady:session:",
-        ttl: 86400
-      });
+      redisClient.on("error", (err) => logger.error({ err }, "Redis Client Error"));
+      redisClient.on("connect", () => logger.info("Redis Client Connected"));
+      redisStore = new RedisStore({ client: redisClient, prefix: "farady:session:", ttl: 86400 });
     } else {
       logger.info("REDIS_URL not set, using memory store fallback");
     }
@@ -3469,11 +3462,33 @@ import cors from "cors";
 
 // server/services/session.ts
 init_redis();
+init_logger();
 import session from "express-session";
 import createMemoryStore from "memorystore";
 var MemoryStore = createMemoryStore(session);
 var isProduction = process.env.NODE_ENV === "production";
 var redisAvailable = false;
+async function getSessionStore() {
+  let store;
+  if (redisStore) {
+    try {
+      if (redisStore.client && redisStore.client.connected) {
+        store = redisStore;
+        redisAvailable = true;
+        logger.info("Redis session store initialized");
+      } else {
+        logger.warn("Redis not connected, falling back to MemoryStore");
+      }
+    } catch (err) {
+      logger.error({ err }, "Redis connection error");
+    }
+  }
+  if (!store) {
+    logger.info("Using MemoryStore for sessions");
+    store = new MemoryStore({ checkPeriod: 864e5 });
+  }
+  return store;
+}
 var sessionConfig = {
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   resave: false,
@@ -3481,24 +3496,54 @@ var sessionConfig = {
   name: isProduction ? "__Secure-farady.sid" : "farady.sid",
   cookie: {
     maxAge: 30 * 24 * 60 * 60 * 1e3,
-    // 30 jours
     httpOnly: true,
     secure: isProduction,
-    // Secure uniquement en HTTPS
     sameSite: isProduction ? "strict" : "lax",
     path: "/",
     domain: isProduction ? process.env.DOMAIN || ".ride-mada-mg.up.railway.app" : void 0
   },
   rolling: true,
-  // Renouvelle le cookie à chaque requête
   proxy: isProduction
-  // Trust proxy en production
 };
+async function createSessionMiddleware() {
+  const store = await getSessionStore();
+  return session({ ...sessionConfig, store });
+}
+var sessionMiddleware = null;
+async function initializeSession() {
+  sessionMiddleware = await createSessionMiddleware();
+  return sessionMiddleware;
+}
 
 // server/index.ts
 init_logger();
+import helmet from "helmet";
+
+// server/middleware/request-id.ts
+import { randomUUID as randomUUID2 } from "crypto";
+function requestId() {
+  return (req, res, next) => {
+    req.id = req.headers["x-request-id"] || randomUUID2();
+    res.setHeader("X-Request-Id", req.id);
+    next();
+  };
+}
+
+// server/index.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path2.dirname(__filename);
+if (process.env.NODE_ENV === "production") {
+  const requiredEnv = ["SESSION_SECRET", "DATABASE_URL"];
+  for (const env of requiredEnv) {
+    if (!process.env[env]) {
+      logger.fatal(`Missing ${env} in environment`);
+      process.exit(1);
+    }
+  }
+}
+if (process.env.SESSION_SECRET === "farady-secret-key-change-in-production") {
+  logger.warn("\u26A0\uFE0F Using default session secret - change it in production!");
+}
 var Sentry = null;
 if (process.env.NODE_ENV === "production" && process.env.SENTRY_DSN) {
   try {
@@ -3583,29 +3628,48 @@ function getLocalIP() {
   }
   return "192.168.1.101";
 }
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", ...isProduction2 ? [] : ["ws://localhost:*"]],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: isProduction2 ? [] : null
+    }
+  },
+  crossOriginEmbedderPolicy: false
+}));
 app.use((req, res, next) => {
-  res.removeHeader("Content-Security-Policy");
-  res.removeHeader("X-Content-Security-Policy");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "0");
   next();
 });
-app.use(session2({
-  name: "farady.sid",
-  secret: process.env.SESSION_SECRET || "farady-secret-key-change-in-production",
-  resave: false,
-  saveUninitialized: false,
-  store: new MemoryStore2({ checkPeriod: 864e5 }),
-  cookie: {
-    secure: process.env.NODE_ENV === "production",
-    // true en production
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1e3,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    path: "/"
-  }
-}));
+var sessionMiddleware2;
+try {
+  sessionMiddleware2 = await initializeSession();
+} catch (err) {
+  logger.error("Failed to initialize session, falling back to MemoryStore");
+  sessionMiddleware2 = session2({
+    name: "farady.sid",
+    secret: process.env.SESSION_SECRET || "farady-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore2({ checkPeriod: 864e5 }),
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1e3,
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/"
+    }
+  });
+}
+app.use(sessionMiddleware2);
 app.use(
   "/images",
   express2.static(path2.join(__dirname, "../public/images"))
@@ -3613,29 +3677,32 @@ app.use(
 logger.info("\u2705 Session middleware configured");
 var limiter = rateLimit({
   windowMs: 60 * 1e3,
-  // 1 minute au lieu de 15
   max: process.env.NODE_ENV === "development" ? 1e3 : 300,
-  // 300 requêtes/minute
   message: "Trop de requ\xEAtes",
-  skip: (req) => process.env.NODE_ENV === "development" || req.path === "/api/ws" || req.path.includes("/api/rides/")
-  // Ignorer certaines routes
+  skip: (req) => process.env.NODE_ENV === "development" || req.path === "/api/ws" || req.path.includes("/api/rides/"),
+  keyGenerator: (req) => req.ip || req.id
+  // amélioration
 });
 app.use("/api", limiter);
 var authLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   max: process.env.NODE_ENV === "development" ? 100 : 5,
-  // 100 requêtes en développement
   message: "Trop de tentatives de connexion, veuillez r\xE9essayer dans 15 minutes.",
   skipSuccessfulRequests: true,
   skip: (req) => process.env.NODE_ENV === "development"
-  // Ignorer en développement
 });
 app.use("/uploads", express2.static(path2.join(process.cwd(), "uploads")));
 app.use(express2.json({ limit: "20mb" }));
 app.use(express2.urlencoded({ extended: false, limit: "20mb" }));
 var allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com").split(",");
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || !isProduction2) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true
 }));
 app.use((req, res, next) => {
@@ -3644,13 +3711,16 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use(requestId());
 app.use((req, res, next) => {
   const startTime = Date.now();
   const reqLogger = createContextLogger({
+    reqId: req.id,
     method: req.method,
     path: req.path,
     ip: req.ip
   });
+  req.logger = reqLogger;
   res.on("finish", () => {
     const duration = Date.now() - startTime;
     const logLevel = res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info";
@@ -3773,9 +3843,6 @@ async function startServer() {
         res.sendFile(path2.join(distPublicPath, "index.html"));
       });
     }
-    httpServer.listen(port, host, () => {
-      console.log(`\u{1F680} Server running on port ${port}`);
-    });
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
@@ -3812,4 +3879,21 @@ function startHttpServer(port, host) {
     }
   });
 }
+var shutdown = async (signal) => {
+  logger.info(`${signal} received, closing server...`);
+  if (httpServer) {
+    httpServer.close(() => {
+      logger.info("HTTP server closed");
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+  setTimeout(() => {
+    logger.error("Forced shutdown");
+    process.exit(1);
+  }, 1e4);
+};
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 startServer();
