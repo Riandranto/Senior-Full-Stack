@@ -162,30 +162,26 @@ app.use((req, res, next) => {
 });
 
 // Session
-const isRender = !!process.env.RENDER; 
 
-let sessionMiddleware: any;
-try {
-  sessionMiddleware = await initializeSession(); // essaie Redis si disponible
-} catch (err) {
-  logger.error('Failed to initialize session, falling back to MemoryStore');
-  sessionMiddleware = session({
-    name: 'farady.sid',
-    secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
-    resave: false,
-    saveUninitialized: false,
-    store: new MemoryStore({ checkPeriod: 86400000 }),
-    cookie: {
-      secure: false,        // CRUCIAL pour Render (proxy HTTP interne)
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000,
-      sameSite: 'lax',      // suffisant puisque même domaine
-      path: '/',
-      domain: undefined,    // laisser le navigateur définir
-    }
-  });
-}
+const sessionMiddleware = session({
+  name: 'farady.sid',
+  secret: process.env.SESSION_SECRET || 'farady-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  store: new MemoryStore({ checkPeriod: 86400000 }),
+  cookie: {
+    secure: false,
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000,
+    sameSite: 'lax',
+    path: '/',
+    // Pas de domain → automatique
+  },
+});
 app.use(sessionMiddleware);
+
+logger.info('✅ Session middleware configured (manual MemoryStore)');
+
 
 // Middleware pour loguer les cookies émis (debug)
 app.use((req, res, next) => {

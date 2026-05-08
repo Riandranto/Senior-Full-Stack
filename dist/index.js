@@ -3488,27 +3488,6 @@ import createMemoryStore from "memorystore";
 var MemoryStore = createMemoryStore(session);
 var isProduction = process.env.NODE_ENV === "production";
 var redisAvailable = false;
-async function getSessionStore() {
-  let store;
-  if (redisStore) {
-    try {
-      if (redisStore.client && redisStore.client.connected) {
-        store = redisStore;
-        redisAvailable = true;
-        logger.info("Redis session store initialized");
-      } else {
-        logger.warn("Redis not connected, falling back to MemoryStore");
-      }
-    } catch (err) {
-      logger.error({ err }, "Redis connection error");
-    }
-  }
-  if (!store) {
-    logger.info("Using MemoryStore for sessions");
-    store = new MemoryStore({ checkPeriod: 864e5 });
-  }
-  return store;
-}
 var sessionConfig = {
   secret: process.env.SESSION_SECRET || "super-secret-key-change-in-production",
   resave: false,
@@ -3525,15 +3504,6 @@ var sessionConfig = {
   rolling: true,
   proxy: isProduction
 };
-async function createSessionMiddleware() {
-  const store = await getSessionStore();
-  return session({ ...sessionConfig, store });
-}
-var sessionMiddleware = null;
-async function initializeSession() {
-  sessionMiddleware = await createSessionMiddleware();
-  return sessionMiddleware;
-}
 
 // server/index.ts
 init_logger();
@@ -3653,32 +3623,23 @@ app.use((req, res, next) => {
   res.setHeader("X-XSS-Protection", "0");
   next();
 });
-var isRender = !!process.env.RENDER;
-var sessionMiddleware2;
-try {
-  sessionMiddleware2 = await initializeSession();
-} catch (err) {
-  logger.error("Failed to initialize session, falling back to MemoryStore");
-  sessionMiddleware2 = session2({
-    name: "farady.sid",
-    secret: process.env.SESSION_SECRET || "farady-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    store: new MemoryStore2({ checkPeriod: 864e5 }),
-    cookie: {
-      secure: false,
-      // CRUCIAL pour Render (proxy HTTP interne)
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1e3,
-      sameSite: "lax",
-      // suffisant puisque même domaine
-      path: "/",
-      domain: void 0
-      // laisser le navigateur définir
-    }
-  });
-}
-app.use(sessionMiddleware2);
+var sessionMiddleware = session2({
+  name: "farady.sid",
+  secret: process.env.SESSION_SECRET || "farady-secret-key-change-in-production",
+  resave: false,
+  saveUninitialized: false,
+  store: new MemoryStore2({ checkPeriod: 864e5 }),
+  cookie: {
+    secure: false,
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1e3,
+    sameSite: "lax",
+    path: "/"
+    // Pas de domain → automatique
+  }
+});
+app.use(sessionMiddleware);
+logger.info("\u2705 Session middleware configured (manual MemoryStore)");
 app.use((req, res, next) => {
   const originalSetHeader = res.setHeader.bind(res);
   res.setHeader = function(name, value) {

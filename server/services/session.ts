@@ -40,7 +40,7 @@ export const sessionConfig = {
     secure: isProduction,
     sameSite: isProduction ? 'strict' as const : 'lax' as const,
     path: '/',
-    domain: isProduction ? process.env.DOMAIN || '.ride-mada-mg.up.railway.app' : undefined,
+    domain: isProduction ? process.env.DOMAIN || '.senior-full-stack.onrender.com' : undefined,
   },
   rolling: true,
   proxy: isProduction,
