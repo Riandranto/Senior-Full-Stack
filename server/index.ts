@@ -139,23 +139,25 @@ function getLocalIP(): string {
 }
 
 // ========== SECURITY MIDDLEWARES ==========
-// Helmet : configuration adaptée à la production
 if (!isProduction) {
-  // Développement seulement : CSP assoupli
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         imgSrc: ["'self'", "data:", "blob:"],
         connectSrc: ["'self'", "ws://localhost:*"],
-        fontSrc: ["'self'", "data:"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: null,
       },
     },
     crossOriginEmbedderPolicy: false,
+  }));
+} else {
+  app.use(helmet({
+    contentSecurityPolicy: false,
   }));
 }
 
