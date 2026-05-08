@@ -80,9 +80,7 @@ let httpsServer: any;
 app.set('trust proxy', 1);
 
 app.use((req, res, next) => {
-  // Supprime tout en-tête CSP existant (Helmet ou autre)
   res.removeHeader('Content-Security-Policy');
-  // Désactive complètement le CSP pour éviter les blocages
   res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;");
   next();
 });
@@ -168,7 +166,7 @@ const isRender = !!process.env.RENDER;
 
 let sessionMiddleware: any;
 try {
-  sessionMiddleware = await initializeSession();
+  sessionMiddleware = await initializeSession(); // essaie Redis si disponible
 } catch (err) {
   logger.error('Failed to initialize session, falling back to MemoryStore');
   sessionMiddleware = session({
@@ -178,15 +176,38 @@ try {
     saveUninitialized: false,
     store: new MemoryStore({ checkPeriod: 86400000 }),
     cookie: {
-      secure: false, 
+      secure: false,        // CRUCIAL pour Render (proxy HTTP interne)
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
-      sameSite: 'lax',   
+      sameSite: 'lax',      // suffisant puisque même domaine
       path: '/',
+      domain: undefined,    // laisser le navigateur définir
     }
   });
 }
 app.use(sessionMiddleware);
+
+// Middleware pour loguer les cookies émis (debug)
+app.use((req, res, next) => {
+  const originalSetHeader = res.setHeader.bind(res);
+  res.setHeader = function(name, value) {
+    if (name === 'Set-Cookie') {
+      console.log('🍪 Set-Cookie émis:', value);
+    }
+    return originalSetHeader(name, value);
+  };
+  next();
+});
+
+// Forcer l’envoi du cookie sur chaque réponse si la session existe
+app.use((req, res, next) => {
+  if (req.session && req.session.userId && !req.headers.cookie?.includes('farady.sid')) {
+    console.log('⚠️ Session existe mais aucun cookie, forcing touch()');
+    req.session.touch();
+  }
+  next();
+});
+
 
 logger.info('✅ Session middleware configured');
 
@@ -214,16 +235,18 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: false, limit: '20mb' }));
 
 // CORS
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 
-  'http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com'
-).split(',');
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'https://senior-full-stack.onrender.com'
+];
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || !isProduction || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || !isProduction) {
       callback(null, true);
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      callback(null, true); 
+      console.log(`CORS bloqué: ${origin}`);
+      callback(null, true);
     }
   },
   credentials: true,

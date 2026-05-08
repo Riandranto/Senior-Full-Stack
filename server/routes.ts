@@ -383,10 +383,18 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Compte bloqué" });
       }
   
+      // Définir la session
       req.session.userId = user.id;
       req.session.role = user.role;
+  
+      // Sauvegarder explicitement et envoyer la réponse uniquement après succès
       req.session.save((err) => {
-        if (err) return res.status(500).json({ message: "Erreur session" });
+        if (err) {
+          console.error('❌ Erreur save session:', err);
+          return res.status(500).json({ message: "Erreur lors de la création de la session" });
+        }
+        console.log(`✅ Session sauvegardée pour user ${user.id}, sessionID: ${req.sessionID}`);
+        // Répondre avec l'utilisateur
         res.json({ user, success: true });
       });
     } catch (error) {

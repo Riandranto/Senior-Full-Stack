@@ -1707,7 +1707,11 @@ async function registerRoutes(httpServer2, app2) {
       req.session.userId = user2.id;
       req.session.role = user2.role;
       req.session.save((err) => {
-        if (err) return res.status(500).json({ message: "Erreur session" });
+        if (err) {
+          console.error("\u274C Erreur save session:", err);
+          return res.status(500).json({ message: "Erreur lors de la cr\xE9ation de la session" });
+        }
+        console.log(`\u2705 Session sauvegard\xE9e pour user ${user2.id}, sessionID: ${req.sessionID}`);
         res.json({ user: user2, success: true });
       });
     } catch (error) {
@@ -3663,14 +3667,35 @@ try {
     store: new MemoryStore2({ checkPeriod: 864e5 }),
     cookie: {
       secure: false,
+      // CRUCIAL pour Render (proxy HTTP interne)
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1e3,
       sameSite: "lax",
-      path: "/"
+      // suffisant puisque même domaine
+      path: "/",
+      domain: void 0
+      // laisser le navigateur définir
     }
   });
 }
 app.use(sessionMiddleware2);
+app.use((req, res, next) => {
+  const originalSetHeader = res.setHeader.bind(res);
+  res.setHeader = function(name, value) {
+    if (name === "Set-Cookie") {
+      console.log("\u{1F36A} Set-Cookie \xE9mis:", value);
+    }
+    return originalSetHeader(name, value);
+  };
+  next();
+});
+app.use((req, res, next) => {
+  if (req.session && req.session.userId && !req.headers.cookie?.includes("farady.sid")) {
+    console.log("\u26A0\uFE0F Session existe mais aucun cookie, forcing touch()");
+    req.session.touch();
+  }
+  next();
+});
 logger.info("\u2705 Session middleware configured");
 var limiter = rateLimit({
   windowMs: 60 * 1e3,
@@ -3690,13 +3715,17 @@ var authLimiter = rateLimit({
 app.use("/uploads", express2.static(path2.join(process.cwd(), "uploads")));
 app.use(express2.json({ limit: "20mb" }));
 app.use(express2.urlencoded({ extended: false, limit: "20mb" }));
-var allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5000,https://senior-full-stack.onrender.com").split(",");
+var allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5000",
+  "https://senior-full-stack.onrender.com"
+];
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || !isProduction2 || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || !isProduction2) {
       callback(null, true);
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
+      console.log(`CORS bloqu\xE9: ${origin}`);
       callback(null, true);
     }
   },
