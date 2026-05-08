@@ -32,46 +32,24 @@ const getVehicleIconUrl = (vehicleType?: string): string => {
 // ==================== ICÔNES DES CONDUCTEURS (PNG sans fond) ====================
 function createDriverIcon(vehicleType?: string, rating?: number, isAssigned?: boolean) {
   const iconUrl = getVehicleIconUrl(vehicleType);
-  const size = isAssigned ? 52 : 44;
-  
-  const ratingStr = rating && rating > 0 ? rating.toFixed(1) : '';
-  
-  return L.divIcon({
-    className: `driver-marker ${isAssigned ? 'driver-pulse' : ''}`,
-    html: `
-      <div style="position:relative; cursor:pointer; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
-        <img src="${iconUrl}" style="width:${size}px;height:${size}px;object-fit:contain;" alt="vehicle" />
-        ${ratingStr ? `
-          <div style="position:absolute;top:-8px;right:-12px;background:#FBBF24;color:#1F2937;font-size:9px;font-weight:800;padding:2px 5px;border-radius:12px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.2);">
-            ★ ${ratingStr}
-          </div>
-        ` : ''}
-        ${isAssigned ? `
-          <div style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:12px solid #FFD700;"></div>
-        ` : ''}
-      </div>
-    `,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -size / 2],
+  return L.icon({
+    iconUrl,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -22],
+    className: isAssigned ? 'driver-pulse' : ''
   });
 }
 
 // Icône pour la position actuelle du conducteur (point de départ du conducteur)
 function createDriverStartIcon(vehicleType?: string) {
   const iconUrl = getVehicleIconUrl(vehicleType);
-  return L.divIcon({
-    className: 'driver-start-marker',
-    html: `
-      <div style="position:relative; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));">
-        <img src="${iconUrl}" style="width:48px;height:48px;object-fit:contain;" alt="vehicle" />
-        <div style="position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:12px solid #FFD700;"></div>
-        <div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;background:#22C55E;border-radius:50%;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.2);"></div>
-      </div>
-    `,
+  return L.icon({
+    iconUrl,
     iconSize: [48, 48],
     iconAnchor: [24, 24],
     popupAnchor: [0, -24],
+    className: 'driver-start-marker'
   });
 }
 

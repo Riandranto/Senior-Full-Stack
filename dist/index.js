@@ -3718,6 +3718,34 @@ app.use((req, res, next) => {
   });
   next();
 });
+var vehicleImagesPath = path2.join(process.cwd(), "public", "images");
+if (fs2.existsSync(vehicleImagesPath)) {
+  app.use("/images", express2.static(vehicleImagesPath));
+  logger.info(`\u2705 Serving vehicle images from ${vehicleImagesPath}`);
+} else {
+  const distImagesPath = path2.join(process.cwd(), "dist", "public", "images");
+  if (fs2.existsSync(distImagesPath)) {
+    app.use("/images", express2.static(distImagesPath));
+    logger.info(`\u2705 Serving vehicle images from ${distImagesPath}`);
+  } else {
+    logger.warn("\u26A0\uFE0F No vehicle images found, icons will not display");
+  }
+}
+app.get("/api/debug/images", (req, res) => {
+  const possiblePaths2 = [
+    path2.join(process.cwd(), "public", "images", "vehicles"),
+    path2.join(process.cwd(), "dist", "public", "images", "vehicles")
+  ];
+  const result = {};
+  for (const p of possiblePaths2) {
+    if (fs2.existsSync(p)) {
+      result[p] = fs2.readdirSync(p).filter((f) => /\.(png|jpg|jpeg|gif|webp)$/i.test(f));
+    } else {
+      result[p] = "does not exist";
+    }
+  }
+  res.json(result);
+});
 if (!isProduction2) {
   app.use((req, res, next) => {
     if (req.path.startsWith("/api")) {
@@ -3817,6 +3845,11 @@ var possiblePaths = [
   path2.join(process.cwd(), "public")
   // Fallback
 ];
+var publicImagesPath = path2.join(process.cwd(), "public", "images");
+if (fs2.existsSync(publicImagesPath)) {
+  app.use("/images", express2.static(publicImagesPath));
+  logger.info("\u2705 Serving images from public/images");
+}
 var staticPath = null;
 for (const p of possiblePaths) {
   if (fs2.existsSync(p) && fs2.statSync(p).isDirectory()) {
