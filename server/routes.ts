@@ -2565,6 +2565,16 @@ export async function registerRoutes(
     res.json({ message: "Deleted" });
   });
 
+  app.get('/api/debug/session-status', (req, res) => {
+    res.json({
+      sessionId: req.sessionID,
+      userId: req.session?.userId,
+      role: req.session?.role,
+      cookie: req.headers.cookie,
+      sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore'
+    });
+  });
+
   // ==================== SEED DATABASE ====================
 
   async function seedDatabase() {

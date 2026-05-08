@@ -165,6 +165,7 @@ app.use((req, res, next) => {
 
 // Session
 let sessionMiddleware: any;
+const isRender = process.env.RENDER === 'true';
 try {
   sessionMiddleware = await initializeSession();
 } catch (err) {
@@ -176,10 +177,11 @@ try {
     saveUninitialized: false,
     store: new MemoryStore({ checkPeriod: 86400000 }),
     cookie: {
-      secure: process.env.NODE_ENV === 'production',
+      // Sur Render, les requêtes viennent du même domaine, on peut utiliser 'lax'
+      secure: isProduction && !isRender ? true : false, // ← désactiver secure sur Render
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      sameSite: 'lax', // ← changer de 'none' à 'lax'
       path: '/',
     }
   });
@@ -338,14 +340,16 @@ if (!isProduction) {
     });
   });
   app.post('/api/debug/set-session', (req, res) => {
-    req.session.userId = 1;
-    req.session.role = 'PASSENGER';
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    console.log(`[verify-otp] Session before save:`, req.session);
     req.session.save((err) => {
       if (err) {
-        logger.error('Session save error:', err);
-        return res.status(500).json({ error: err.message });
+        console.error(`[verify-otp] Session save error:`, err);
+        return res.status(500).json({ message: "Erreur session" });
       }
-      res.json({ message: 'Session set', sessionId: req.session.id });
+      console.log(`[verify-otp] Session saved, ID: ${req.sessionID}`);
+      res.json({ user, success: true });
     });
   });
   app.get('/api/debug/check-session', (req, res) => {

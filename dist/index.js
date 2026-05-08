@@ -448,41 +448,41 @@ var DatabaseStorage = class {
   //=================== MAIL ====================
   async getUserByEmail(email) {
     if (!email) return void 0;
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    return user;
+    const [user2] = await db.select().from(users).where(eq(users.email, email));
+    return user2;
   }
   async getUserByName(name) {
     if (!name) return void 0;
-    const [user] = await db.select().from(users).where(eq(users.name, name));
-    return user;
+    const [user2] = await db.select().from(users).where(eq(users.name, name));
+    return user2;
   }
   // ==================== USERS ====================
   async getUser(id) {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+    const [user2] = await db.select().from(users).where(eq(users.id, id));
+    return user2;
   }
   async getUserByPhone(phone) {
-    const [user] = await db.select().from(users).where(eq(users.phone, phone));
-    return user;
+    const [user2] = await db.select().from(users).where(eq(users.phone, phone));
+    return user2;
   }
   // Surcharger createUser pour supporter email
   async createUser(insertUser) {
-    const [user] = await db.insert(users).values({
+    const [user2] = await db.insert(users).values({
       phone: insertUser.phone,
       email: insertUser.email || null,
       name: insertUser.name,
       role: insertUser.role || "PASSENGER",
       language: insertUser.language || "mg"
     }).returning();
-    return user;
+    return user2;
   }
   async updateUserRole(id, role) {
-    const [user] = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
-    return user;
+    const [user2] = await db.update(users).set({ role }).where(eq(users.id, id)).returning();
+    return user2;
   }
   async updateUser(id, update) {
-    const [user] = await db.update(users).set(update).where(eq(users.id, id)).returning();
-    return user;
+    const [user2] = await db.update(users).set(update).where(eq(users.id, id)).returning();
+    return user2;
   }
   // ==================== DRIVERS ====================
   async getDriverProfile(userId) {
@@ -710,8 +710,8 @@ var DatabaseStorage = class {
       const results = [];
       for (const p of allProfiles) {
         try {
-          const user = await this.getUser(p.userId);
-          if (!user) {
+          const user2 = await this.getUser(p.userId);
+          if (!user2) {
             console.warn(`\u26A0\uFE0F User not found for driver profile ${p.id} (userId: ${p.userId})`);
             continue;
           }
@@ -720,7 +720,7 @@ var DatabaseStorage = class {
           const completedRides = driverRides.filter((r) => r.status === "COMPLETED");
           const totalEarnings = completedRides.reduce((sum, r) => sum + (r.selectedPriceAr || 0), 0);
           results.push({
-            ...user,
+            ...user2,
             profile: p,
             documents: docs,
             totalRides: driverRides.length,
@@ -739,8 +739,8 @@ var DatabaseStorage = class {
     }
   }
   async blockUser(id, blocked) {
-    const [user] = await db.update(users).set({ isBlocked: blocked }).where(eq(users.id, id)).returning();
-    return user;
+    const [user2] = await db.update(users).set({ isBlocked: blocked }).where(eq(users.id, id)).returning();
+    return user2;
   }
   async adminCancelRide(id, reason) {
     const [ride] = await db.update(rides).set({
@@ -1293,9 +1293,9 @@ function getTransporter() {
     return null;
   }
   const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
+  const user2 = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) {
+  if (!host || !user2 || !pass) {
     logger.warn("\u26A0\uFE0F SMTP not configured");
     return null;
   }
@@ -1303,7 +1303,7 @@ function getTransporter() {
     host,
     port: parseInt(process.env.SMTP_PORT || "587"),
     secure: process.env.SMTP_SECURE === "true",
-    auth: { user, pass }
+    auth: { user: user2, pass }
   });
   logger.info("\u2705 Email transporter initialized");
   transporter.verify((error) => {
@@ -1693,22 +1693,22 @@ async function registerRoutes(httpServer2, app2) {
       if (!isValid) {
         return res.status(401).json({ message: "Code invalide ou expir\xE9" });
       }
-      let user = await storage.getUserByPhone(normalized);
-      if (!user) {
-        user = await storage.createUser({
+      let user2 = await storage.getUserByPhone(normalized);
+      if (!user2) {
+        user2 = await storage.createUser({
           phone: normalized,
           name: `User_${normalized.slice(-4)}`,
           role: "PASSENGER"
         });
       }
-      if (user.isBlocked) {
+      if (user2.isBlocked) {
         return res.status(403).json({ message: "Compte bloqu\xE9" });
       }
-      req.session.userId = user.id;
-      req.session.role = user.role;
+      req.session.userId = user2.id;
+      req.session.role = user2.role;
       req.session.save((err) => {
         if (err) return res.status(500).json({ message: "Erreur session" });
-        res.json({ user, success: true });
+        res.json({ user: user2, success: true });
       });
     } catch (error) {
       console.error("verifyOtp error:", error);
@@ -1784,8 +1784,8 @@ async function registerRoutes(httpServer2, app2) {
         console.log(`\u274C Invalid OTP for ${email}`);
         return res.status(401).json({ message: "Code invalide ou expir\xE9" });
       }
-      let user = await storage.getUserByEmail(email);
-      if (!user) {
+      let user2 = await storage.getUserByEmail(email);
+      if (!user2) {
         const tempName = email.split("@")[0];
         let finalName = tempName;
         let counter = 1;
@@ -1795,36 +1795,36 @@ async function registerRoutes(httpServer2, app2) {
           existingUser = await storage.getUserByName(finalName);
           counter++;
         }
-        user = await storage.createUser({
+        user2 = await storage.createUser({
           email,
           phone: `EMAIL_${Date.now()}`,
           name: finalName,
           role: "PASSENGER",
           language: "fr"
         });
-        console.log(`\u2705 Nouvel utilisateur cr\xE9\xE9: ${user.id}`);
+        console.log(`\u2705 Nouvel utilisateur cr\xE9\xE9: ${user2.id}`);
       }
-      if (user.isBlocked) {
+      if (user2.isBlocked) {
         return res.status(403).json({ message: "Compte bloqu\xE9. Contactez l'administrateur." });
       }
-      req.session.userId = user.id;
-      req.session.role = user.role;
+      req.session.userId = user2.id;
+      req.session.role = user2.role;
       req.session.save((err) => {
         if (err) {
           console.error("Session save error:", err);
           return res.status(500).json({ message: "Erreur session" });
         }
-        console.log(`\u2705 Utilisateur ${user.id} connect\xE9 via email`);
+        console.log(`\u2705 Utilisateur ${user2.id} connect\xE9 via email`);
         res.json({
           user: {
-            id: user.id,
-            name: user.name,
-            phone: user.phone,
-            email: user.email,
-            role: user.role,
-            language: user.language,
-            isApproved: user.isApproved,
-            isBlocked: user.isBlocked
+            id: user2.id,
+            name: user2.name,
+            phone: user2.phone,
+            email: user2.email,
+            role: user2.role,
+            language: user2.language,
+            isApproved: user2.isApproved,
+            isBlocked: user2.isBlocked
           },
           success: true
         });
@@ -1871,11 +1871,11 @@ async function registerRoutes(httpServer2, app2) {
     if (!req.session?.userId) {
       return res.status(401).json({ message: "Non authentifi\xE9" });
     }
-    const user = await storage.getUser(req.session.userId);
-    if (!user) {
+    const user2 = await storage.getUser(req.session.userId);
+    if (!user2) {
       return res.status(401).json({ message: "Utilisateur non trouv\xE9" });
     }
-    res.json(user);
+    res.json(user2);
   });
   app2.post(api.auth.logout.path, (req, res) => {
     console.log("\u{1F6AA} logout called");
@@ -2208,10 +2208,10 @@ async function registerRoutes(httpServer2, app2) {
         distanceKm: distanceKm.toFixed(2),
         etaMinutes
       });
-      const user = await storage.getUser(req.session.userId);
+      const user2 = await storage.getUser(req.session.userId);
       await broadcastToDrivers({
         type: WS_EVENTS.RIDE_NEW_REQUEST,
-        payload: { ...ride, passenger: user }
+        payload: { ...ride, passenger: user2 }
       });
       res.status(201).json(ride);
     } catch (e) {
@@ -2759,8 +2759,8 @@ async function registerRoutes(httpServer2, app2) {
         if (allProfiles.length > 0) {
           console.log("\u{1F4CB} Profiles found but users might be missing:");
           for (const p of allProfiles) {
-            const user = await storage.getUser(p.userId);
-            console.log(`  - Profile ${p.id}: userId=${p.userId}, status=${p.status}, userExists=${!!user}`);
+            const user2 = await storage.getUser(p.userId);
+            console.log(`  - Profile ${p.id}: userId=${p.userId}, status=${p.status}, userExists=${!!user2}`);
           }
         }
       }
@@ -2836,8 +2836,8 @@ async function registerRoutes(httpServer2, app2) {
       return res.status(400).json({ message: "ID utilisateur invalide" });
     }
     const { blocked } = req.body;
-    const user = await storage.blockUser(id, blocked);
-    res.json(user);
+    const user2 = await storage.blockUser(id, blocked);
+    res.json(user2);
   });
   app2.post("/api/admin/rides/:id/cancel", async (req, res) => {
     if (!req.session.userId || req.session.role !== "ADMIN") return res.status(403).json({ message: "Forbidden" });
@@ -2915,8 +2915,8 @@ async function registerRoutes(httpServer2, app2) {
   app2.post("/api/user/update", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
     const { name } = req.body;
-    const user = await storage.updateUser(req.session.userId, { name });
-    res.json(user);
+    const user2 = await storage.updateUser(req.session.userId, { name });
+    res.json(user2);
   });
   app2.get("/api/passenger/documents", async (req, res) => {
     if (!req.session.userId) {
@@ -3433,6 +3433,15 @@ async function registerRoutes(httpServer2, app2) {
     await storage.deleteCustomPlace(id);
     res.json({ message: "Deleted" });
   });
+  app2.get("/api/debug/session-status", (req, res) => {
+    res.json({
+      sessionId: req.sessionID,
+      userId: req.session?.userId,
+      role: req.session?.role,
+      cookie: req.headers.cookie,
+      sessionStore: sessionRedisAvailable ? "Redis" : "MemoryStore"
+    });
+  });
   async function seedDatabase() {
     try {
       const admin = await storage.getUserByPhone("0340000000");
@@ -3641,6 +3650,7 @@ app.use((req, res, next) => {
   next();
 });
 var sessionMiddleware2;
+var isRender = process.env.RENDER === "true";
 try {
   sessionMiddleware2 = await initializeSession();
 } catch (err) {
@@ -3652,10 +3662,13 @@ try {
     saveUninitialized: false,
     store: new MemoryStore2({ checkPeriod: 864e5 }),
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      // Sur Render, les requêtes viennent du même domaine, on peut utiliser 'lax'
+      secure: isProduction2 && !isRender ? true : false,
+      // ← désactiver secure sur Render
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1e3,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: "lax",
+      // ← changer de 'none' à 'lax'
       path: "/"
     }
   });
@@ -3788,14 +3801,16 @@ if (!isProduction2) {
     });
   });
   app.post("/api/debug/set-session", (req, res) => {
-    req.session.userId = 1;
-    req.session.role = "PASSENGER";
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    console.log(`[verify-otp] Session before save:`, req.session);
     req.session.save((err) => {
       if (err) {
-        logger.error("Session save error:", err);
-        return res.status(500).json({ error: err.message });
+        console.error(`[verify-otp] Session save error:`, err);
+        return res.status(500).json({ message: "Erreur session" });
       }
-      res.json({ message: "Session set", sessionId: req.session.id });
+      console.log(`[verify-otp] Session saved, ID: ${req.sessionID}`);
+      res.json({ user, success: true });
     });
   });
   app.get("/api/debug/check-session", (req, res) => {
