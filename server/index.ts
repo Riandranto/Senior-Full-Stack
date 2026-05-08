@@ -139,7 +139,7 @@ function getLocalIP(): string {
 }
 
 // ========== SECURITY MIDDLEWARES ==========
-if (!isProduction) {
+/*if (!isProduction) {
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -159,7 +159,7 @@ if (!isProduction) {
   app.use(helmet({
     contentSecurityPolicy: false,
   }));
-}
+}*/
 
 // En-têtes de sécurité supplémentaires
 app.use((req, res, next) => {
