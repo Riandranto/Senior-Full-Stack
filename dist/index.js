@@ -3499,7 +3499,7 @@ var sessionConfig = {
     secure: isProduction,
     sameSite: isProduction ? "strict" : "lax",
     path: "/",
-    domain: isProduction ? process.env.DOMAIN || ".ride-mada-mg.up.railway.app" : void 0
+    domain: isProduction ? process.env.DOMAIN || ".senior-full-stack.onrender.com" : void 0
   },
   rolling: true,
   proxy: isProduction

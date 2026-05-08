@@ -281,6 +281,38 @@ app.use((req, res, next) => {
   next();
 });
 
+// Servir les images des véhicules (PNG) en priorité depuis le dossier public racine
+const vehicleImagesPath = path.join(process.cwd(), 'public', 'images');
+if (fs.existsSync(vehicleImagesPath)) {
+  app.use('/images', express.static(vehicleImagesPath));
+  logger.info(`✅ Serving vehicle images from ${vehicleImagesPath}`);
+} else {
+  // Fallback : essayer dans dist/public/images (après build)
+  const distImagesPath = path.join(process.cwd(), 'dist', 'public', 'images');
+  if (fs.existsSync(distImagesPath)) {
+    app.use('/images', express.static(distImagesPath));
+    logger.info(`✅ Serving vehicle images from ${distImagesPath}`);
+  } else {
+    logger.warn('⚠️ No vehicle images found, icons will not display');
+  }
+}
+
+app.get('/api/debug/images', (req, res) => {
+  const possiblePaths = [
+    path.join(process.cwd(), 'public', 'images', 'vehicles'),
+    path.join(process.cwd(), 'dist', 'public', 'images', 'vehicles')
+  ];
+  const result: any = {};
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      result[p] = fs.readdirSync(p).filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f));
+    } else {
+      result[p] = 'does not exist';
+    }
+  }
+  res.json(result);
+});
+
 // Debug session (dev seulement)
 if (!isProduction) {
   app.use((req, res, next) => {
@@ -388,6 +420,13 @@ const possiblePaths = [
   path.join(process.cwd(), 'dist'),             // Fallback
   path.join(process.cwd(), 'public'),           // Fallback
 ];
+
+// Servir les images depuis le dossier public racine (si non présentes dans dist)
+const publicImagesPath = path.join(process.cwd(), 'public', 'images');
+if (fs.existsSync(publicImagesPath)) {
+  app.use('/images', express.static(publicImagesPath));
+  logger.info('✅ Serving images from public/images');
+}
 
 let staticPath = null;
 for (const p of possiblePaths) {
