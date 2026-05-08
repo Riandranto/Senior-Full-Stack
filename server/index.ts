@@ -164,8 +164,9 @@ app.use((req, res, next) => {
 });
 
 // Session
+const isRender = !!process.env.RENDER; 
+
 let sessionMiddleware: any;
-const isRender = process.env.RENDER === 'true';
 try {
   sessionMiddleware = await initializeSession();
 } catch (err) {
@@ -177,11 +178,10 @@ try {
     saveUninitialized: false,
     store: new MemoryStore({ checkPeriod: 86400000 }),
     cookie: {
-      // Sur Render, les requêtes viennent du même domaine, on peut utiliser 'lax'
-      secure: isProduction && !isRender ? true : false, // ← désactiver secure sur Render
+      secure: false, 
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
-      sameSite: 'lax', // ← changer de 'none' à 'lax'
+      sameSite: 'lax',   
       path: '/',
     }
   });

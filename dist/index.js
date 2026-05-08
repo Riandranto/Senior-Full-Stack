@@ -3649,8 +3649,8 @@ app.use((req, res, next) => {
   res.setHeader("X-XSS-Protection", "0");
   next();
 });
+var isRender = !!process.env.RENDER;
 var sessionMiddleware2;
-var isRender = process.env.RENDER === "true";
 try {
   sessionMiddleware2 = await initializeSession();
 } catch (err) {
@@ -3662,13 +3662,10 @@ try {
     saveUninitialized: false,
     store: new MemoryStore2({ checkPeriod: 864e5 }),
     cookie: {
-      // Sur Render, les requêtes viennent du même domaine, on peut utiliser 'lax'
-      secure: isProduction2 && !isRender ? true : false,
-      // ← désactiver secure sur Render
+      secure: false,
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1e3,
       sameSite: "lax",
-      // ← changer de 'none' à 'lax'
       path: "/"
     }
   });
