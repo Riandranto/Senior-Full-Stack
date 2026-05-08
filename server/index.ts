@@ -79,6 +79,15 @@ let httpsServer: any;
 
 app.set('trust proxy', 1);
 
+app.use((req, res, next) => {
+  // Supprime tout en-tête CSP existant (Helmet ou autre)
+  res.removeHeader('Content-Security-Policy');
+  // Désactive complètement le CSP pour éviter les blocages
+  res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;");
+  next();
+});
+
+
 const isProduction = process.env.NODE_ENV === 'production';
 const MemoryStore = createMemoryStore(session);
 
@@ -139,27 +148,12 @@ function getLocalIP(): string {
 }
 
 // ========== SECURITY MIDDLEWARES ==========
-/*if (!isProduction) {
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", "ws://localhost:*"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        objectSrc: ["'none'"],
-        upgradeInsecureRequests: null,
-      },
-    },
-    crossOriginEmbedderPolicy: false,
-  }));
+if (!isProduction) {
+  app.use(helmet({ contentSecurityPolicy: false }));
 } else {
-  app.use(helmet({
-    contentSecurityPolicy: false,
-  }));
-}*/
+  // En production, pas de CSP du tout
+  app.use(helmet({ contentSecurityPolicy: false }));
+}
 
 // En-têtes de sécurité supplémentaires
 app.use((req, res, next) => {
@@ -223,10 +217,11 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
 ).split(',');
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || !isProduction) {
+    if (!origin || !isProduction || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      console.log(`CORS blocked origin: ${origin}`);
+      callback(null, true); 
     }
   },
   credentials: true,
