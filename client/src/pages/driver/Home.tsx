@@ -1,5 +1,5 @@
-// src/pages/driver/Home.tsx (ou DriverHome.tsx)
-import React,{ useState, useEffect, useCallback, useMemo, useRef } from 'react';
+// src/pages/driver/Home.tsx
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
 import {
@@ -26,7 +26,7 @@ import {
   MapPin, Navigation, Clock, Send, CheckCircle, Route, Phone,
   Loader2, AlertCircle, User, Bike, Car, Wifi, WifiOff,
   Play, XCircle, MessageCircle, Calendar, Compass, Truck,
-  Navigation2, LocateFixed, Gauge, Crosshair
+  Navigation2, LocateFixed, Gauge, Crosshair, RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'wouter';
@@ -39,7 +39,6 @@ import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
 import { apiFetch } from '@/lib/api';
 
-// Types de véhicules
 const VEHICLE_TYPES = [
   { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, color: 'from-blue-500 to-blue-600' },
   { id: 'BAJAJ', label: 'Bajaj', labelMg: 'Bajaj', icon: Bike, color: 'from-green-500 to-green-600' },
@@ -121,7 +120,7 @@ export default function DriverHome() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Correction des notifications sur mobile : les placer en haut
+  // Style pour les notifications mobiles
   useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
@@ -150,6 +149,8 @@ export default function DriverHome() {
   const [isLocating, setIsLocating] = useState(false);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [watchId, setWatchId] = useState<number | null>(null);
+  const [gpsPermissionAsked, setGpsPermissionAsked] = useState(false);
+  const [gpsDenied, setGpsDenied] = useState(false);
 
   const [showChat, setShowChat] = useState(false);
   const [chatMinimized, setChatMinimized] = useState(false);
@@ -215,22 +216,127 @@ export default function DriverHome() {
   const isOnline = profile?.online || false;
   const isPending = profile?.status === 'PENDING';
 
-  const startLocationTracking = useCallback(() => {
+  // ========== RÉSERVATIONS : polling + WebSocket ==========
+  const { data: driverBookings, refetch: refetchBookings, isLoading: bookingsLoading } = useQuery({
+    queryKey: ['/api/driver/bookings'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/driver/bookings', { credentials: 'include' });
+        if (!res.ok) {
+          console.warn('Failed to fetch driver bookings:', res.status);
+          return [];
+        }
+        const data = await res.json();
+        console.log('📅 Driver bookings loaded:', data.length);
+        return data;
+      } catch (err) {
+        console.error('Error fetching driver bookings:', err);
+        return [];
+      }
+    },
+    refetchInterval: 30000,
+    enabled: isOnline && !activeRide,
+  });
+
+  // Mettre à jour l'état local des réservations
+  useEffect(() => {
+    if (driverBookings) {
+      setAvailableBookings(driverBookings);
+      // Notification si nouvelles réservations disponibles (PENDING)
+      const newPending = driverBookings.filter(b => b.status === 'PENDING').length;
+      if (newPending > 0 && !activeRide && !showBookings) {
+        toast({
+          title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
+          description: lang === 'mg' ? `${newPending} reservation${newPending > 1 ? 's' : ''} misy` : `${newPending} réservation${newPending > 1 ? 's' : ''} disponible${newPending > 1 ? 's' : ''}`,
+          duration: 5000,
+          className: "mobile-toast"
+        });
+      }
+    }
+  }, [driverBookings, activeRide, showBookings, toast, lang]);
+
+  // Rafraîchissement manuel des réservations
+  const handleRefreshBookings = useCallback(() => {
+    refetchBookings();
+    toast({
+      title: lang === 'mg' ? "Havaozina" : "Rafraîchissement",
+      description: lang === 'mg' ? "Fanavaozana ny lisitry ny reservation" : "Mise à jour des réservations",
+      className: "mobile-toast"
+    });
+  }, [refetchBookings, toast, lang]);
+
+  // Demande de permission GPS
+  const requestGpsPermission = useCallback((): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        setLocationError(lang === 'mg' ? "Tsy manohana GPS ity navigateur ity" : "Ce navigateur ne supporte pas la géolocalisation");
+        setGpsDenied(true);
+        resolve(false);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        () => {
+          setGpsPermissionAsked(true);
+          setGpsDenied(false);
+          resolve(true);
+        },
+        (error) => {
+          console.error('GPS permission denied:', error);
+          if (error.code === error.PERMISSION_DENIED) {
+            setLocationError(lang === 'mg' ? "Navela ny GPS, ilaina ny mamela azy" : "Permission GPS refusée, activez la localisation");
+            setGpsDenied(true);
+          } else {
+            setLocationError(lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée");
+          }
+          resolve(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+  }, [lang]);
+
+  // Démarrage du suivi de position
+  const startLocationTracking = useCallback(async () => {
+    const hasPermission = await requestGpsPermission();
+    if (!hasPermission) {
+      setGpsDenied(true);
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "GPS tsy azo" : "GPS inaccessible",
+        description: lang === 'mg' ? "Mila mamela ny GPS ianao mba hahazoana ny toerana misy anao" : "Vous devez autoriser la localisation pour utiliser l'application",
+        className: "mobile-toast"
+      });
+      return false;
+    }
+
     if (!navigator.geolocation) {
       setLocationError(lang === 'mg' ? "Tsy misy GPS" : "GPS non disponible");
       return false;
     }
+
     setIsLocating(true);
     setLocationError(null);
-    const options: PositionOptions = { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 };
-    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    const newWatchId = navigator.geolocation.watchPosition(
+    setGpsDenied(false);
+
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+    }
+
+    const options: PositionOptions = {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 5000
+    };
+
+    // Position immédiate
+    navigator.geolocation.getCurrentPosition(
       (pos) => {
         const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setDriverPos(location);
         setLocationAccuracy(pos.coords.accuracy);
         setLocationError(null);
         setIsLocating(false);
+
         if (profile?.online) {
           updateLocation.mutate(location);
           if (activeRide) {
@@ -240,27 +346,68 @@ export default function DriverHome() {
             });
           }
         }
-        console.log(`📍 Position mise à jour: ${location.lat}, ${location.lng} (précision: ${pos.coords.accuracy}m)`);
+        console.log(`📍 Position initiale: ${location.lat}, ${location.lng} (précision: ${pos.coords.accuracy}m)`);
       },
       (error) => {
-        console.error('GPS Error:', error);
+        console.error('GPS getCurrentPosition error:', error);
+        setIsLocating(false);
         let message = '';
         switch (error.code) {
-          case error.PERMISSION_DENIED: message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé"; break;
-          case error.POSITION_UNAVAILABLE: message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible"; break;
-          case error.TIMEOUT: message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout"; break;
-          default: message = error.message;
+          case error.PERMISSION_DENIED:
+            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
+            setGpsDenied(true);
+            break;
+          case error.POSITION_UNAVAILABLE:
+            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
+            break;
+          case error.TIMEOUT:
+            message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout";
+            break;
+          default:
+            message = error.message;
         }
         setLocationError(message);
-        setIsLocating(false);
         toast({ variant: "destructive", title: lang === 'mg' ? "Olana GPS" : "Problème GPS", description: message, className: "mobile-toast" });
       },
       options
     );
+
+    // Suivi continu
+    const newWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setDriverPos(location);
+        setLocationAccuracy(pos.coords.accuracy);
+        setLocationError(null);
+        setIsLocating(false);
+        setGpsDenied(false);
+
+        if (profile?.online) {
+          updateLocation.mutate(location);
+          if (activeRide) {
+            sendMessage({
+              type: 'DRIVER_LOCATION',
+              payload: { rideId: activeRide.id, lat: location.lat, lng: location.lng, driverId: profile.userId }
+            });
+          }
+        }
+      },
+      (error) => {
+        console.error('GPS watch error:', error);
+        setIsLocating(false);
+        if (error.code === error.PERMISSION_DENIED) {
+          setGpsDenied(true);
+          setLocationError(lang === 'mg' ? "Navela ny GPS" : "GPS refusé");
+        }
+      },
+      options
+    );
+
     setWatchId(newWatchId);
     return true;
-  }, [profile?.online, activeRide, updateLocation, sendMessage, toast, lang]);
+  }, [profile?.online, activeRide, updateLocation, sendMessage, toast, lang, requestGpsPermission, watchId]);
 
+  // Obtenir une position unique
   const getSingleLocation = useCallback(() => {
     if (!navigator.geolocation) {
       toast({ variant: "destructive", title: lang === 'mg' ? "GPS tsy misy" : "GPS non disponible", className: "mobile-toast" });
@@ -274,6 +421,7 @@ export default function DriverHome() {
         setLocationAccuracy(pos.coords.accuracy);
         setLocationError(null);
         setIsLocating(false);
+        setGpsDenied(false);
         toast({ title: lang === 'mg' ? "Toerana hita" : "Position trouvée", description: lang === 'mg' ? `Précision: ${Math.round(pos.coords.accuracy)}m` : `Précision: ${Math.round(pos.coords.accuracy)}m`, className: "mobile-toast" });
         if (profile?.online) updateLocation.mutate(location);
       },
@@ -282,20 +430,43 @@ export default function DriverHome() {
         setIsLocating(false);
         let message = '';
         switch (error.code) {
-          case error.PERMISSION_DENIED: message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé"; break;
-          case error.POSITION_UNAVAILABLE: message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible"; break;
-          case error.TIMEOUT: message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout"; break;
+          case error.PERMISSION_DENIED:
+            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
+            setGpsDenied(true);
+            break;
+          case error.POSITION_UNAVAILABLE:
+            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
+            break;
+          case error.TIMEOUT:
+            message = lang === 'mg' ? "Lany daty ny GPS" : "GPS timeout";
+            break;
         }
         toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée", description: message, className: "mobile-toast" });
       },
-      { enableHighAccuracy: true, timeout: 15000 }
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   }, [profile?.online, updateLocation, toast, lang]);
 
   useEffect(() => {
     startLocationTracking();
-    return () => { if (watchId !== null) navigator.geolocation.clearWatch(watchId); };
-  }, [startLocationTracking]);
+    return () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    };
+  }, []);
+
+  // Gestion du switch online
+  const handleToggleOnline = useCallback((checked: boolean) => {
+    if (checked && (!driverPos || gpsDenied)) {
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy azo atao" : "Impossible",
+        description: lang === 'mg' ? "Mila mamela ny GPS aloha ianao" : "Activez d'abord la localisation GPS",
+        className: "mobile-toast"
+      });
+      return;
+    }
+    setOnline.mutate(checked);
+  }, [driverPos, gpsDenied, setOnline, toast, lang]);
 
   useEffect(() => {
     if (pickupCoords && dropoffCoords) {
@@ -306,31 +477,6 @@ export default function DriverHome() {
       setRouteCoords(undefined);
     }
   }, [pickupCoords, dropoffCoords]);
-
-  const { data: driverBookings, refetch: refetchBookings } = useQuery({
-    queryKey: ['/api/driver/bookings'],
-    queryFn: async () => {
-      const res = await fetch('/api/driver/bookings', { credentials: 'include' });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 30000,
-    enabled: isOnline && !activeRide,
-  });
-
-  useEffect(() => {
-    if (driverBookings && driverBookings.length > 0) {
-      setAvailableBookings(driverBookings);
-      if (driverBookings.length > 0 && !activeRide) {
-        toast({
-          title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
-          description: lang === 'mg' ? `${driverBookings.length} reservation${driverBookings.length > 1 ? 's' : ''} misy` : `${driverBookings.length} réservation${driverBookings.length > 1 ? 's' : ''} disponible${driverBookings.length > 1 ? 's' : ''}`,
-          duration: 5000,
-          className: "mobile-toast"
-        });
-      }
-    }
-  }, [driverBookings, activeRide, toast, lang]);
 
   useEffect(() => {
     if (!activeRide || !driverPos || !pickupCoords) return;
@@ -357,6 +503,7 @@ export default function DriverHome() {
       return res.json();
     },
     onSuccess: (_, { priceAr, etaMinutes }) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/bookings'] });
       toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!", description: lang === 'mg' ? `${priceAr} Ar - ${etaMinutes} min` : `${priceAr} Ar - ${etaMinutes} min`, className: "mobile-toast" });
       setSelectedBooking(null);
       setBookingPrice('');
@@ -376,14 +523,45 @@ export default function DriverHome() {
     await sendBookingOffer.mutateAsync({ bookingId: selectedBooking.id, priceAr: parseInt(bookingPrice), etaMinutes: eta });
   };
 
+  // Écoute WebSocket pour les nouvelles réservations et les offres acceptées
   useEffect(() => {
     if (!connected) return;
-    const unsubscribe = subscribe('BOOKING_NEW', (data: any) => {
-      console.log('📅 New booking received:', data);
-      if (!activeRide) { refetchBookings(); toast({ title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!", description: lang === 'mg' ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleDateString()}` : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}`, className: "mobile-toast" }); }
+
+    const unsubNewBooking = subscribe('BOOKING_NEW', (data: any) => {
+      console.log('📅 New booking received via WS:', data);
+      if (!activeRide) {
+        refetchBookings();
+        toast({
+          title: lang === 'mg' ? "Reservation vaovao!" : "Nouvelle réservation!",
+          description: lang === 'mg' ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleDateString()}` : `Réservation pour le ${new Date(data.scheduledFor).toLocaleDateString()}`,
+          className: "mobile-toast"
+        });
+      }
     });
-    return () => unsubscribe();
-  }, [connected, refetchBookings, activeRide, toast, lang]);
+
+    const unsubOfferAccepted = subscribe('BOOKING_OFFER_ACCEPTED', (data: any) => {
+      console.log('📅 BOOKING_OFFER_ACCEPTED received:', data);
+      if (data.driverId === profile?.userId) {
+        toast({
+          title: lang === 'mg' ? "Tolobidy nekena!" : "Offre de réservation acceptée!",
+          description: lang === 'mg' ? `Reservation ho an'ny ${new Date(data.scheduledFor).toLocaleString()} voaray.` : `Réservation pour le ${new Date(data.scheduledFor).toLocaleString()} acceptée.`,
+          className: "mobile-toast",
+          duration: 8000
+        });
+        refetchBookings();
+        refetchActiveRide();
+        queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+        if (data.rideId) {
+          setTimeout(() => refetchActiveRide(), 1000);
+        }
+      }
+    });
+
+    return () => {
+      unsubNewBooking();
+      unsubOfferAccepted();
+    };
+  }, [connected, activeRide, refetchBookings, refetchActiveRide, profile?.userId, toast, lang, queryClient]);
 
   const formattedPrice = useMemo(() => {
     const price = extractPrice(activeRide);
@@ -425,7 +603,8 @@ export default function DriverHome() {
 
   useEffect(() => {
     if (!connected) return;
-    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
+  
+    const unsubscribeOfferAccepted = subscribe('OFFER_ACCEPTED', (data: any) => {
       console.log('🎉 OFFER_ACCEPTED received in DriverHome:', data);
       if (data.driverId === profile?.userId) {
         refetchActiveRide();
@@ -439,7 +618,10 @@ export default function DriverHome() {
         setChatMinimized(false);
       }
     });
-    return () => unsubscribe();
+  
+    return () => {
+      unsubscribeOfferAccepted();
+    };
   }, [connected, profile?.userId, refetchActiveRide, queryClient, toast, lang]);
 
   const pickupMarkers = useMemo(() => {
@@ -665,14 +847,14 @@ export default function DriverHome() {
         <MapView center={mapCenter} zoom={16} interactive={true} markers={pickupMarkers} driverMarkers={driverMarkers} pickupMarker={pickupCoords} dropoffMarker={dropoffCoords} showRoute={!!routeCoords} routeCoordinates={routeCoords} pickupVehicleType={activeRide?.vehicleType} />
       </div>
 
-      {/* Indicateur de connexion - repositionné en haut à gauche */}
+      {/* Indicateur de connexion */}
       <div className="absolute top-4 left-4 z-10">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
           {connected ? <><Wifi className="w-3 h-3" />{lang === 'mg' ? 'Mifandray' : 'Connecté'}</> : <><WifiOff className="w-3 h-3" />{lang === 'mg' ? 'Tsy mifandray' : 'Déconnecté'}</>}
         </motion.div>
       </div>
 
-      {/* Indicateur GPS - juste à côté */}
+      {/* Indicateur GPS */}
       <div className="absolute top-4 left-28 z-10">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, delay: 0.1 }} className={`px-2 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 ${driverPos ? 'bg-blue-500/20 text-blue-700' : 'bg-red-500/20 text-red-700'}`}>
           <LocateFixed className="w-3 h-3" />
@@ -681,35 +863,57 @@ export default function DriverHome() {
         </motion.div>
       </div>
 
-      {/* Bouton rafraîchir GPS - en haut à droite */}
+      {/* Bouton rafraîchir GPS */}
       <div className="absolute top-4 right-4 z-10">
         <motion.button whileTap={{ scale: 0.95 }} onClick={getSingleLocation} className="p-2 rounded-full bg-background/90 backdrop-blur-sm shadow-lg border border-border/30" disabled={isLocating}>
           <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-pulse text-primary' : 'text-muted-foreground'}`} />
         </motion.button>
       </div>
 
-      {/* Contrôle en ligne - en dessous du bouton GPS */}
+      {/* Contrôle en ligne */}
       <div className="absolute top-16 right-4 z-10">
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, delay: 0.1 }}>
           <Card className="px-4 py-2 rounded-full shadow-lg flex items-center space-x-3 bg-background/90 backdrop-blur-sm border-0">
             <span className="font-bold text-sm">{isOnline ? t('online') : t('offline')}</span>
-            <Switch checked={isOnline} onCheckedChange={(v) => setOnline.mutate(v)} className="data-[state=checked]:bg-green-500" />
+            <Switch
+              checked={isOnline}
+              onCheckedChange={handleToggleOnline}
+              disabled={!driverPos || gpsDenied}
+              className="data-[state=checked]:bg-green-500"
+            />
           </Card>
         </motion.div>
       </div>
 
-      {/* Bouton des réservations - en dessous du switch */}
-      {isOnline && !activeRide && availableBookings.length > 0 && (
-        <div className="absolute top-28 right-4 z-10">
+      {/* Bouton des réservations */}
+      {isOnline && !activeRide && (
+        <div className="absolute top-28 right-4 z-10 flex gap-2">
           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 400 }}>
-            <Button variant="default" size="sm" className="rounded-full shadow-lg bg-amber-500 hover:bg-amber-600" onClick={() => setShowBookings(!showBookings)}>
-              <Calendar className="w-4 h-4 mr-1" /> {availableBookings.length} {lang === 'mg' ? 'Reservation' : 'Réserv'}
+            <Button 
+              variant="default" 
+              size="sm" 
+              className="rounded-full shadow-lg bg-amber-500 hover:bg-amber-600"
+              onClick={() => setShowBookings(!showBookings)}
+            >
+              <Calendar className="w-4 h-4 mr-1" /> 
+              {availableBookings.length} {lang === 'mg' ? 'Reservation' : 'Réserv'}
+            </Button>
+          </motion.div>
+          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 400, delay: 0.1 }}>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="rounded-full shadow-lg bg-background/80"
+              onClick={handleRefreshBookings}
+              disabled={bookingsLoading}
+            >
+              <RefreshCw className={`w-4 h-4 ${bookingsLoading ? 'animate-spin' : ''}`} />
             </Button>
           </motion.div>
         </div>
       )}
 
-      {/* Erreur GPS - centrée */}
+      {/* Erreur GPS */}
       {locationError && (
         <div className="absolute top-36 left-1/2 -translate-x-1/2 z-10">
           <Alert variant="destructive" className="rounded-full py-2">
@@ -719,7 +923,7 @@ export default function DriverHome() {
         </div>
       )}
 
-      {/* Fenêtre de suivi de course (inchangée, déjà bien positionnée en bas) */}
+      {/* Fenêtre de suivi de course */}
       <AnimatePresence>
         {showRideTracking && activeRide && (
           <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="absolute bottom-0 w-full z-20 p-4">
@@ -755,7 +959,7 @@ export default function DriverHome() {
         </DialogContent>
       </Dialog>
 
-      {/* Liste des demandes (en bas) */}
+      {/* Liste des demandes de course immédiates */}
       <AnimatePresence>
         {isOnline && !activeRide && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-0 w-full z-10 p-4 max-h-[50vh] overflow-y-auto space-y-3">
@@ -784,7 +988,7 @@ export default function DriverHome() {
         )}
       </AnimatePresence>
 
-      {/* MODAL D'ENVOI D'OFFRE */}
+      {/* MODAL D'ENVOI D'OFFRE IMMÉDIATE */}
       <Dialog open={!!selectedRequest && !activeRide} onOpenChange={(open) => { if (!open) { setSelectedRequest(null); setPrice(''); setPriceError(null); setAutoEta(null); setCalculatingEta(false); if (etaTimeoutRef.current) clearTimeout(etaTimeoutRef.current); } }}>
         <DialogContent className="rounded-3xl sm:rounded-3xl border-0 shadow-2xl max-w-sm mx-auto">
           <DialogHeader><DialogTitle className="font-display text-xl">{t('send_offer')}</DialogTitle></DialogHeader>
@@ -796,9 +1000,64 @@ export default function DriverHome() {
       {/* Modal des réservations disponibles */}
       <Dialog open={showBookings && !activeRide} onOpenChange={setShowBookings}>
         <DialogContent className="rounded-3xl max-w-md mx-auto max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display text-xl flex items-center gap-2"><Calendar className="w-5 h-5 text-primary" />{lang === 'mg' ? 'Reservation misy' : 'Réservations disponibles'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center justify-between">
+              <span className="flex items-center gap-2"><Calendar className="w-5 h-5 text-primary" />{lang === 'mg' ? 'Reservation misy' : 'Réservations disponibles'}</span>
+              <Button variant="ghost" size="sm" onClick={handleRefreshBookings} disabled={bookingsLoading}>
+                <RefreshCw className={`w-4 h-4 ${bookingsLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
-            {availableBookings.length === 0 ? (<div className="text-center py-8 text-muted-foreground"><Calendar className="w-12 h-12 mx-auto mb-3 opacity-30" /><p>{lang === 'mg' ? 'Tsy misy reservation' : 'Aucune réservation'}</p></div>) : (availableBookings.map((booking: any) => { const VehicleIcon = VEHICLE_TYPES.find(v => v.id === booking.vehicleType)?.icon || Car; return (<Card key={booking.id} className="p-4 rounded-2xl cursor-pointer hover:border-primary transition-all" onClick={() => setSelectedBooking(booking)}><div className="flex justify-between items-start mb-2"><Badge variant="outline" className="text-[10px] flex items-center gap-1"><VehicleIcon className="w-2.5 h-2.5" />{booking.vehicleType === 'TAXI' ? 'Taxi' : booking.vehicleType === 'BAJAJ' ? 'Bajaj' : booking.vehicleType === 'CAMION' ? 'Camion' : '4x4'}</Badge><span className="text-xs text-muted-foreground">{new Date(booking.scheduledFor).toLocaleDateString()}</span></div><div className="space-y-1"><p className="text-xs flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500" /><span className="truncate">{booking.pickupAddress}</span></p><p className="text-xs flex items-center gap-1"><Navigation className="w-3 h-3 text-red-400" /><span className="truncate">{booking.dropAddress}</span></p></div><div className="mt-2 pt-2 border-t flex justify-between items-center text-xs"><span className="text-muted-foreground">{booking.passenger?.name}</span>{booking.estimatedPriceAr && (<span className="font-bold text-primary">{booking.estimatedPriceAr.toLocaleString()} Ar</span>)}</div></Card>); }))}
+            {bookingsLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+            ) : availableBookings.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Calendar className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>{lang === 'mg' ? 'Tsy misy reservation' : 'Aucune réservation'}</p>
+                <p className="text-xs mt-2">{lang === 'mg' ? 'Mijanòna mifandray dia havaozina ho azy' : 'Restez connecté, la liste se mettra à jour'}</p>
+              </div>
+            ) : (
+              availableBookings.map((booking: any) => {
+                const VehicleIcon = VEHICLE_TYPES.find(v => v.id === booking.vehicleType)?.icon || Car;
+                return (
+                  <Card key={booking.id} className="p-4 rounded-2xl cursor-pointer hover:border-primary transition-all" onClick={() => setSelectedBooking(booking)}>
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex gap-2">
+                        <Badge variant="outline" className="text-[10px] flex items-center gap-1">
+                          <VehicleIcon className="w-2.5 h-2.5" />
+                          {booking.vehicleType === 'TAXI' ? 'Taxi' : booking.vehicleType === 'BAJAJ' ? 'Bajaj' : booking.vehicleType === 'CAMION' ? 'Camion' : '4x4'}
+                        </Badge>
+                        {/* Badge de statut pour les réservations acceptées */}
+                        {booking.status === 'CONFIRMED' && (
+                          <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                            {lang === 'mg' ? 'Nekena' : 'Acceptée'}
+                          </Badge>
+                        )}
+                        {booking.status === 'PENDING' && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                            {lang === 'mg' ? 'Miandry' : 'En attente'}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{new Date(booking.scheduledFor).toLocaleDateString()}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500" /><span className="truncate">{booking.pickupAddress}</span></p>
+                      <p className="text-xs flex items-center gap-1"><Navigation className="w-3 h-3 text-red-400" /><span className="truncate">{booking.dropAddress}</span></p>
+                    </div>
+                    <div className="mt-2 pt-2 border-t flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">{booking.passenger?.name}</span>
+                      {booking.finalPriceAr ? (
+                        <span className="font-bold text-primary">{booking.finalPriceAr.toLocaleString()} Ar</span>
+                      ) : booking.estimatedPriceAr && (
+                        <span className="font-bold text-primary">{booking.estimatedPriceAr.toLocaleString()} Ar</span>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -807,8 +1066,26 @@ export default function DriverHome() {
       <Dialog open={!!selectedBooking && !activeRide} onOpenChange={() => setSelectedBooking(null)}>
         <DialogContent className="rounded-3xl max-w-sm mx-auto">
           <DialogHeader><DialogTitle className="font-display text-xl">{lang === 'mg' ? 'Manolotra reservation' : 'Faire une offre'}</DialogTitle></DialogHeader>
-          {selectedBooking && (<div className="space-y-4"><div className="text-xs bg-secondary/50 rounded-xl p-3 space-y-2"><p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500"/><span className="line-clamp-1">{selectedBooking.pickupAddress}</span></p><p className="flex items-center gap-1"><Navigation className="w-3 h-3 text-red-400"/><span className="line-clamp-1">{selectedBooking.dropAddress}</span></p><p className="flex items-center gap-1"><Calendar className="w-3 h-3 text-primary"/><span>{new Date(selectedBooking.scheduledFor).toLocaleString()}</span></p></div><div><label className="text-sm font-semibold mb-1.5 block">{lang === 'mg' ? 'Vidiny (Ar)' : 'Prix (Ar)'}</label><Input type="text" value={bookingPrice} onChange={(e) => { setBookingPrice(e.target.value); const error = validatePrice(e.target.value); setBookingPriceError(error); }} placeholder="5000" className={`h-12 text-lg rounded-xl ${bookingPriceError ? 'border-destructive' : ''}`} inputMode="numeric" />{bookingPriceError && <p className="text-xs text-destructive mt-1">{bookingPriceError}</p>}<p className="text-xs text-muted-foreground mt-1">{lang === 'mg' ? '1000 Ar ny farany ambany' : 'Minimum: 1000 Ar'}</p></div></div>)}
-          <DialogFooter><Button onClick={handleSendBookingOffer} disabled={!bookingPrice || sendBookingOffer.isPending} className="w-auto mx-auto h-12 text-lg font-bold rounded-xl">{sendBookingOffer.isPending ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />{lang === 'mg' ? 'Mandefa...' : 'Envoi...'}</>) : (lang === 'mg' ? 'Andefa tolobidy' : 'Envoyer l\'offre')}</Button></DialogFooter>
+          {selectedBooking && (
+            <div className="space-y-4">
+              <div className="text-xs bg-secondary/50 rounded-xl p-3 space-y-2">
+                <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-green-500"/><span className="line-clamp-1">{selectedBooking.pickupAddress}</span></p>
+                <p className="flex items-center gap-1"><Navigation className="w-3 h-3 text-red-400"/><span className="line-clamp-1">{selectedBooking.dropAddress}</span></p>
+                <p className="flex items-center gap-1"><Calendar className="w-3 h-3 text-primary"/><span>{new Date(selectedBooking.scheduledFor).toLocaleString()}</span></p>
+              </div>
+              <div>
+                <label className="text-sm font-semibold mb-1.5 block">{lang === 'mg' ? 'Vidiny (Ar)' : 'Prix (Ar)'}</label>
+                <Input type="text" value={bookingPrice} onChange={(e) => { setBookingPrice(e.target.value); const error = validatePrice(e.target.value); setBookingPriceError(error); }} placeholder="5000" className={`h-12 text-lg rounded-xl ${bookingPriceError ? 'border-destructive' : ''}`} inputMode="numeric" />
+                {bookingPriceError && <p className="text-xs text-destructive mt-1">{bookingPriceError}</p>}
+                <p className="text-xs text-muted-foreground mt-1">{lang === 'mg' ? '1000 Ar ny farany ambany' : 'Minimum: 1000 Ar'}</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={handleSendBookingOffer} disabled={!bookingPrice || sendBookingOffer.isPending} className="w-auto mx-auto h-12 text-lg font-bold rounded-xl">
+              {sendBookingOffer.isPending ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />{lang === 'mg' ? 'Mandefa...' : 'Envoi...'}</>) : (lang === 'mg' ? 'Andefa tolobidy' : 'Envoyer l\'offre')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

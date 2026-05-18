@@ -2134,131 +2134,131 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/bookings/:id/offers', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+  // ==================== GET /api/bookings/:id/offers ====================
+app.get('/api/bookings/:id/offers', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+  try {
+    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+    const bookingData = booking[0];
+    if (bookingData.passengerId !== req.session.userId && 
+        bookingData.driverId !== req.session.userId &&
+        req.session.role !== 'ADMIN') {
+      return res.status(403).json({ message: "Accès non autorisé" });
     }
-    
-    if (req.session.role !== 'DRIVER') {
-      return res.status(403).json({ message: "Seuls les conducteurs peuvent faire des offres" });
-    }
-    
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de réservation invalide" });
-    }
-    
-    const { priceAr, etaMinutes, message } = req.body;
-    
-    if (!priceAr || !etaMinutes) {
-      return res.status(400).json({ message: "Prix et ETA requis" });
-    }
-    
-    try {
-      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-      
-      if (!booking.length) {
-        return res.status(404).json({ message: "Réservation non trouvée" });
-      }
-      
-      const bookingData = booking[0];
-      
-      if (bookingData.status !== 'PENDING') {
-        return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
-      }
-      
-      if (bookingData.driverId === req.session.userId) {
-        return res.status(400).json({ message: "Vous avez déjà accepté cette réservation" });
-      }
-      
-      const existingOffer = await db.select().from(bookingOffers)
-        .where(and(
-          eq(bookingOffers.bookingId, id),
-          eq(bookingOffers.driverId, req.session.userId),
-          eq(bookingOffers.status, 'SENT')
-        ));
-      
-      if (existingOffer.length) {
-        return res.status(400).json({ message: "Vous avez déjà envoyé une offre" });
-      }
-      
-      const [offer] = await db.insert(bookingOffers).values({
-        bookingId: id,
-        driverId: req.session.userId,
-        priceAr,
-        etaMinutes,
-        message: message || null,
-        expiresAt: new Date(Date.now() + 90000),
-      }).returning();
-      
-      const driver = await storage.getUser(req.session.userId);
-      sendToUser(bookingData.passengerId, {
-        type: WS_EVENTS.BOOKING_OFFER_NEW,
-        payload: { ...offer, driver, booking: bookingData }
-      });
-      
-      res.status(201).json(offer);
-    } catch (error) {
-      console.error('❌ Error creating booking offer:', error);
-      res.status(500).json({ message: "Erreur interne" });
-    }
-  });
+    const offers = await db.select().from(bookingOffers)
+      .where(eq(bookingOffers.bookingId, id))
+      .orderBy(sql`${bookingOffers.createdAt} DESC`);
+    const enrichedOffers = await Promise.all(offers.map(async o => {
+      const driver = await storage.getUser(o.driverId);
+      return { ...o, driver };
+    }));
+    res.json(enrichedOffers);
+  } catch (error) {
+    console.error('❌ Error fetching booking offers:', error);
+    res.status(500).json({ message: "Erreur interne" });
+  }
+});
 
-  app.post('/api/bookings/:id/accept-offer', async (req, res) => {
+// ==================== POST /api/bookings/:id/offers ====================
+app.post('/api/bookings/:id/offers', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+  if (req.session.role !== 'DRIVER') return res.status(403).json({ message: "Seuls les conducteurs peuvent faire des offres" });
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+  const { priceAr, etaMinutes, message } = req.body;
+  if (!priceAr || !etaMinutes) return res.status(400).json({ message: "Prix et ETA requis" });
+  try {
+    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+    const bookingData = booking[0];
+    if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+    if (bookingData.driverId === req.session.userId) return res.status(400).json({ message: "Vous avez déjà accepté cette réservation" });
+    const existingOffer = await db.select().from(bookingOffers)
+      .where(and(eq(bookingOffers.bookingId, id), eq(bookingOffers.driverId, req.session.userId), eq(bookingOffers.status, 'SENT')));
+    if (existingOffer.length) return res.status(400).json({ message: "Vous avez déjà envoyé une offre" });
+    
+    // Calcul de l'expiration : 7 jours par défaut, ou 1h avant la réservation si celle-ci a lieu dans moins de 7j
+    const now = new Date();
+    const scheduledFor = new Date(bookingData.scheduledFor);
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    let finalExpires = new Date(now.getTime() + sevenDays);
+    const timeUntilBooking = scheduledFor.getTime() - now.getTime();
+    if (timeUntilBooking > 0 && timeUntilBooking < sevenDays) {
+      const expiresAt = new Date(scheduledFor.getTime() - 60 * 60 * 1000);
+      finalExpires = expiresAt > now ? expiresAt : new Date(now.getTime() + 60 * 60 * 1000);
+    }
+    console.log(`📅 Offre pour réservation ${id} – expire le ${finalExpires.toISOString()}`);
+    
+    const [offer] = await db.insert(bookingOffers).values({
+      bookingId: id, driverId: req.session.userId, priceAr, etaMinutes,
+      message: message || null, expiresAt: finalExpires,
+    }).returning();
+    const driver = await storage.getUser(req.session.userId);
+    sendToUser(bookingData.passengerId, {
+      type: WS_EVENTS.BOOKING_OFFER_NEW,
+      payload: { ...offer, bookingId: offer.bookingId, driver: { name: driver?.name, id: driver?.id, phone: driver?.phone }, booking: bookingData }
+    });
+    res.status(201).json(offer);
+  } catch (error) {
+    console.error('❌ Error creating booking offer:', error);
+    res.status(500).json({ message: "Erreur interne" });
+  }
+});
+
+  // ==================== ACCEPTER UNE OFFRE DE RÉSERVATION (URL alternative) ====================
+  app.post('/api/bookings/:bookingId/offers/:offerId/accept', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de réservation invalide" });
+    const bookingId = parseInt(req.params.bookingId);
+    const offerId = parseInt(req.params.offerId);
+    if (isNaN(bookingId) || isNaN(offerId)) {
+      return res.status(400).json({ message: "IDs invalides" });
     }
-    
-    const { offerId } = req.body;
-    
+
     try {
-      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-      
+      // Vérifier l'offre
+      const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
+      if (!offer.length || offer[0].bookingId !== bookingId) {
+        return res.status(404).json({ message: "Offre non trouvée" });
+      }
+      const offerData = offer[0];
+
+      // Vérifier la réservation
+      const booking = await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1);
       if (!booking.length) {
         return res.status(404).json({ message: "Réservation non trouvée" });
       }
-      
       const bookingData = booking[0];
-      
+
+      // Contrôles d'autorisation et d'état
       if (bookingData.passengerId !== req.session.userId) {
         return res.status(403).json({ message: "Non autorisé" });
       }
-      
       if (bookingData.status !== 'PENDING') {
         return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
       }
-      
-      const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
-      
-      if (!offer.length || offer[0].bookingId !== id) {
-        return res.status(404).json({ message: "Offre non trouvée" });
-      }
-      
-      const offerData = offer[0];
-      
       if (offerData.status !== 'SENT') {
         return res.status(400).json({ message: "Cette offre n'est plus valide" });
       }
-      
       if (new Date() > offerData.expiresAt) {
         await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
         return res.status(400).json({ message: "L'offre a expiré" });
       }
-      
+
+      // Accepter l'offre
       await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
-      
       await db.update(bookingOffers)
         .set({ status: 'EXPIRED' })
         .where(and(
-          eq(bookingOffers.bookingId, id),
+          eq(bookingOffers.bookingId, bookingId),
           sql`${bookingOffers.id} != ${offerId}`
         ));
-      
+
+      // Mettre à jour la réservation
       const [updatedBooking] = await db.update(bookings)
         .set({ 
           status: 'CONFIRMED', 
@@ -2266,21 +2266,56 @@ export async function registerRoutes(
           finalPriceAr: offerData.priceAr,
           updatedAt: new Date()
         })
-        .where(eq(bookings.id, id))
+        .where(eq(bookings.id, bookingId))
         .returning();
-      
+
+      // Notifier le conducteur
       const passenger = await storage.getUser(req.session.userId);
       sendToUser(offerData.driverId, {
         type: WS_EVENTS.BOOKING_OFFER_ACCEPTED,
         payload: { ...updatedBooking, passenger }
       });
-      
+
       res.json(updatedBooking);
     } catch (error) {
       console.error('❌ Error accepting booking offer:', error);
       res.status(500).json({ message: "Erreur interne" });
     }
   });
+
+  // ==================== POST /api/bookings/:id/accept-offer ====================
+app.post('/api/bookings/:id/accept-offer', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+  const { offerId } = req.body;
+  try {
+    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+    const bookingData = booking[0];
+    if (bookingData.passengerId !== req.session.userId) return res.status(403).json({ message: "Non autorisé" });
+    if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+    const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
+    if (!offer.length || offer[0].bookingId !== id) return res.status(404).json({ message: "Offre non trouvée" });
+    const offerData = offer[0];
+    if (offerData.status !== 'SENT') return res.status(400).json({ message: "Cette offre n'est plus valide" });
+    if (new Date() > offerData.expiresAt) {
+      await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
+      return res.status(400).json({ message: "L'offre a expiré" });
+    }
+    await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
+    await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(and(eq(bookingOffers.bookingId, id), sql`${bookingOffers.id} != ${offerId}`));
+    const [updatedBooking] = await db.update(bookings)
+      .set({ status: 'CONFIRMED', driverId: offerData.driverId, finalPriceAr: offerData.priceAr, updatedAt: new Date() })
+      .where(eq(bookings.id, id)).returning();
+    const passenger = await storage.getUser(req.session.userId);
+    sendToUser(offerData.driverId, { type: WS_EVENTS.BOOKING_OFFER_ACCEPTED, payload: { ...updatedBooking, passenger } });
+    res.json(updatedBooking);
+  } catch (error) {
+    console.error('❌ Error accepting booking offer:', error);
+    res.status(500).json({ message: "Erreur interne" });
+  }
+});
 
   app.post('/api/bookings/:id/cancel', async (req, res) => {
     if (!req.session.userId) {
@@ -2345,21 +2380,43 @@ export async function registerRoutes(
     if (!req.session.userId || req.session.role !== 'DRIVER') {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
+  
     try {
-      const availableBookings = await db.select().from(bookings)
+      console.log(`🔍 Fetching bookings for driver ${req.session.userId}`);
+  
+      // 1. Réservations disponibles (PENDING, dans le futur)
+      const available = await db.select().from(bookings)
         .where(and(
           eq(bookings.status, 'PENDING'),
           sql`${bookings.scheduledFor} > NOW()`
         ))
         .orderBy(sql`${bookings.scheduledFor} ASC`);
-      
-      const enrichedBookings = await Promise.all(availableBookings.map(async b => {
+  
+      // 2. Réservations assignées à ce conducteur (CONFIRMED/ASSIGNED, dans le futur)
+      const myUpcoming = await db.select().from(bookings)
+        .where(and(
+          eq(bookings.driverId, req.session.userId),
+          or(
+            eq(bookings.status, 'CONFIRMED'),
+            eq(bookings.status, 'ASSIGNED')
+          ),
+          sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
+        ))
+        .orderBy(sql`${bookings.scheduledFor} ASC`);
+  
+      // Fusionner les deux listes (sans doublon)
+      const allBookings = [...available, ...myUpcoming];
+      const uniqueById = allBookings.filter((b, i, self) => 
+        i === self.findIndex(t => t.id === b.id)
+      );
+  
+      const enriched = await Promise.all(uniqueById.map(async b => {
         const passenger = await storage.getUser(b.passengerId);
         return { ...b, passenger };
       }));
-      
-      res.json(enrichedBookings);
+  
+      console.log(`✅ ${enriched.length} bookings sent to driver (${available.length} available, ${myUpcoming.length} assigned)`);
+      res.json(enriched);
     } catch (error) {
       console.error('❌ Error fetching driver bookings:', error);
       res.status(500).json({ message: "Erreur interne" });

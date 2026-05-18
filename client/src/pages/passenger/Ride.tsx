@@ -1,6 +1,6 @@
 // src/pages/passenger/Ride.tsx
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useRoute } from 'wouter';
+import { useRoute, useLocation } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, DriverMarkerInfo, fetchOSRMRoute } from '@/components/Map';
 import { useRide, useRideOffers, useAcceptOffer, useCancelRide, useRateRide } from '@/hooks/use-passenger';
@@ -223,6 +223,17 @@ export default function PassengerRide() {
       });
     }
   }, [ride?.pickupLat, ride?.pickupLng, ride?.dropLat, ride?.dropLng]);
+
+  const [, navigate] = useLocation(); 
+
+  useEffect(() => {
+    if (ride && (ride.status === 'COMPLETED' || ride.status === 'CANCELED')) {
+      const timeout = setTimeout(() => {
+        navigate('/passenger');
+      }, 2000);
+      return () => clearTimeout(timeout);
+    }
+  }, [ride, navigate]);
 
   const handleCancelWithReason = async () => {
     if (!selectedCancelReason) {
