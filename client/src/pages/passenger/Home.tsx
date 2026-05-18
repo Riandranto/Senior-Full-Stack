@@ -29,6 +29,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { FullscreenAd } from '@/components/FullscreenAd';
+
 
 // Stockage local pour recherches non trouvées
 const STORAGE_KEY = 'farady_unknown_searches';
@@ -163,6 +165,67 @@ function useCreateBooking() {
     },
   });
 }
+interface CustomPlace {
+  id: number;
+  name: string;
+  nameFr: string;
+  lat: string;
+  lng: string;
+}
+
+async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]> {
+  if (!query || query.length < 2) return [];
+  
+  try {
+    // 1. Récupérer les lieux personnalisés depuis l'API
+    const customRes = await fetch('/api/places', { credentials: 'include' });
+    let customPlaces: CustomPlace[] = [];
+    if (customRes.ok) {
+      customPlaces = await customRes.json();
+    }
+    
+    // 2. Filtrer les lieux personnalisés selon la recherche
+    const qLower = query.toLowerCase();
+    const matchedCustom = customPlaces.filter(place => 
+      place.name.toLowerCase().includes(qLower) || 
+      place.nameFr.toLowerCase().includes(qLower)
+    );
+    
+    // 3. Convertir en format NominatimResult
+    const customResults: NominatimResult[] = matchedCustom.map(place => ({
+      place_id: -place.id, // ID négatif pour les distinguer
+      display_name: `${place.name} (${place.nameFr})`,
+      lat: place.lat,
+      lon: place.lng,
+      type: 'custom',
+      class: 'place',
+      address: { city: place.name, state: place.nameFr }
+    }));
+    
+    // 4. Recherche Nominatim classique
+    const nominatimRes = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=mg&limit=8&addressdetails=1`,
+      { headers: { 'Accept-Language': 'fr' } }
+    );
+    const nominatimResults: NominatimResult[] = await nominatimRes.json();
+    
+    // 5. Fusionner les résultats (custom en premier)
+    const allResults = [...customResults, ...nominatimResults];
+    
+    // 6. Éviter les doublons par coordonnées (approximatif)
+    const unique = allResults.filter((result, index, self) =>
+      index === self.findIndex(r => 
+        Math.abs(parseFloat(r.lat) - parseFloat(result.lat)) < 0.0001 &&
+        Math.abs(parseFloat(r.lon) - parseFloat(result.lon)) < 0.0001
+      )
+    );
+    
+    return unique.slice(0, 10);
+  } catch (error) {
+    console.error('Geocoding error:', error);
+    return [];
+  }
+}
 
 export default function PassengerHome() {
   const [, setLocation] = useLocation();
@@ -185,10 +248,10 @@ export default function PassengerHome() {
       setGpsDenied(true);
       return false;
     }
-
+  
     setIsLocating(true);
     setLocationError(null);
-
+  
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -208,29 +271,40 @@ export default function PassengerHome() {
           console.error('GPS error:', error);
           setIsLocating(false);
           let message = '';
+          let showRetryButton = true;
+          
           if (error.code === error.PERMISSION_DENIED) {
-            message = lang === 'mg' ? "Navela ny GPS, ilaina ny mamela azy" : "Permission GPS refusée, activez la localisation";
+            message = lang === 'mg' 
+              ? "Navela ny GPS, ilaina ny mamela azy. Tsindrio ny bokotra 'Réessayer' raha vao manome alalana ianao."
+              : "Permission GPS refusée. Veuillez autoriser la localisation dans les paramètres de votre appareil, puis appuyez sur 'Réessayer'.";
             setGpsDenied(true);
+            showRetryButton = true;
           } else if (error.code === error.POSITION_UNAVAILABLE) {
             message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
+            showRetryButton = false;
           } else if (error.code === error.TIMEOUT) {
             message = lang === 'mg' ? "Lany daty ny GPS" : "Délai dépassé";
+            showRetryButton = true;
           } else {
             message = error.message;
+            showRetryButton = true;
           }
+          
           setLocationError(message);
           toast({
             variant: "destructive",
             title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée",
             description: message,
-            className: "mobile-toast"
+            className: "mobile-toast",
+            duration: showRetryButton ? 8000 : 4000,
           });
           resolve(false);
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 } // maximumAge:0 force une nouvelle position
       );
     });
   }, [lang, toast]);
+  
 
   // Au chargement, demander la position
   useEffect(() => {
@@ -315,6 +389,8 @@ export default function PassengerHome() {
   const [showTopAd, setShowTopAd] = useState(true);
   const { connected, subscribe } = useWebSocket();
   const queryClient = useQueryClient();
+  const [showFullscreenAd, setShowFullscreenAd] = useState(true);
+
 
   // État pour le badge des offres non lues
   const [unreadBookingOffers, setUnreadBookingOffers] = useState(0);
@@ -413,7 +489,7 @@ export default function PassengerHome() {
     setShowPickupSuggestions(true);
     pickupDebounceRef.current = setTimeout(async () => {
       try {
-        const results = await searchPlaces(value);
+        const results = await searchPlacesWithCustom(value);
         setPickupSuggestions(results);
         setPickupNoResults(results.length === 0);
       } catch (error) {
@@ -438,7 +514,7 @@ export default function PassengerHome() {
     setShowDropoffSuggestions(true);
     dropoffDebounceRef.current = setTimeout(async () => {
       try {
-        const results = await searchPlaces(value);
+        const results = await searchPlacesWithCustom(value);
         setDropoffSuggestions(results);
         setDropoffNoResults(results.length === 0);
       } catch (error) {
@@ -697,6 +773,12 @@ export default function PassengerHome() {
 
   return (
     <>
+      {showFullscreenAd && (
+        <FullscreenAd 
+          onClose={() => setShowFullscreenAd(false)} 
+          delay={1000} // s'affiche après 1 seconde
+        />
+      )}
       <SideMenu isOpen={isMenuOpen} onClose={setIsMenuOpen} user={user} onLogout={handleLogout} lang={lang} />
       <MobileLayout role="passenger">
         {/* Bouton Menu (pour ouvrir le sheet) - positionné sous l'en-tête du layout */}

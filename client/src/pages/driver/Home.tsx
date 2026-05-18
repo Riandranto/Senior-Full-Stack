@@ -38,6 +38,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ChatBox from '@/components/ChatBox';
 import { GEOCENTER } from '@shared/schema';
 import { apiFetch } from '@/lib/api';
+import { AdBanner } from '@/components/AdBanner';
+import { FullscreenAd } from '@/components/FullscreenAd';
+
 
 const VEHICLE_TYPES = [
   { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, color: 'from-blue-500 to-blue-600' },
@@ -95,6 +98,16 @@ const extractPrice = (ride: any): number => {
     }
   }
   return 0;
+};
+
+const openLocationSettings = () => {
+  if (navigator.userAgent.includes('iOS')) {
+    window.open('app-settings:');
+  } else if (navigator.userAgent.includes('Android')) {
+    window.open('android.settings.LOCATION_SOURCE_SETTINGS');
+  } else {
+    toast({ title: "Veuillez activer la localisation dans les paramètres de votre navigateur." });
+  }
 };
 
 const deg2rad = (deg: number): number => deg * (Math.PI / 180);
@@ -215,6 +228,8 @@ export default function DriverHome() {
 
   const isOnline = profile?.online || false;
   const isPending = profile?.status === 'PENDING';
+
+  const [showFullscreenAd, setShowFullscreenAd] = useState(true);
 
   // ========== RÉSERVATIONS : polling + WebSocket ==========
   const { data: driverBookings, refetch: refetchBookings, isLoading: bookingsLoading } = useQuery({
@@ -446,6 +461,30 @@ export default function DriverHome() {
       { enableHighAccuracy: true, timeout: 10000 }
     );
   }, [profile?.online, updateLocation, toast, lang]);
+
+  if (gpsDenied) {
+    return (
+      <MobileLayout role="driver">
+        <div className="flex flex-col items-center justify-center h-screen p-6 text-center">
+          <AlertCircle className="w-16 h-16 text-red-500 mb-4" />
+          <h2 className="text-xl font-bold mb-2">{lang === 'mg' ? 'GPS tsy azo' : 'Localisation requise'}</h2>
+          <p className="text-muted-foreground mb-6">
+            {lang === 'mg'
+              ? 'Ity fampiharana ity dia mila ny toerana misy anao mba hahitana sy handraisana ny asa.'
+              : 'Cette application a besoin de votre position pour trouver et accepter des courses.'}
+          </p>
+          <div className="space-y-3 w-full max-w-xs">
+            <Button onClick={() => { setGpsDenied(false); requestGpsPermission(); }} className="rounded-xl w-full">
+              {lang === 'mg' ? 'Andramo indray' : 'Réessayer'}
+            </Button>
+            <Button variant="outline" onClick={openLocationSettings} className="rounded-xl w-full">
+              {lang === 'mg' ? 'Mankany amin\'ny paramètres GPS' : 'Ouvrir les paramètres de localisation'}
+            </Button>
+          </div>
+        </div>
+      </MobileLayout>
+    );
+  }
 
   useEffect(() => {
     startLocationTracking();
@@ -839,6 +878,13 @@ export default function DriverHome() {
   }
 
   return (
+    <>
+    {showFullscreenAd && (
+      <FullscreenAd 
+        onClose={() => setShowFullscreenAd(false)} 
+        delay={1000}
+      />
+    )}
     <MobileLayout role="driver">
       <RefreshIndicator isRefreshing={isRefreshing} />
 
@@ -852,6 +898,12 @@ export default function DriverHome() {
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 ${connected ? 'bg-green-500/20 text-green-700' : 'bg-red-500/20 text-red-700'}`}>
           {connected ? <><Wifi className="w-3 h-3" />{lang === 'mg' ? 'Mifandray' : 'Connecté'}</> : <><WifiOff className="w-3 h-3" />{lang === 'mg' ? 'Tsy mifandray' : 'Déconnecté'}</>}
         </motion.div>
+      </div>
+      {/* Bannière publicitaire */}
+      <div className="absolute top-24 left-0 right-0 z-20 px-3 pointer-events-none">
+        <div className="pointer-events-auto">
+          <AdBanner position="HOME_TOP" onClose={() => {}} />
+        </div>
       </div>
 
       {/* Indicateur GPS */}
@@ -1096,5 +1148,6 @@ export default function DriverHome() {
         )}
       </AnimatePresence>
     </MobileLayout>
+    </>
   );
 }

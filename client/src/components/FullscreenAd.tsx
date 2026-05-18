@@ -1,3 +1,4 @@
+// src/components/FullscreenAd.tsx
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
@@ -6,7 +7,7 @@ import { useTranslation } from '@/lib/i18n';
 
 interface FullscreenAdProps {
   onClose: () => void;
-  delay?: number; // Délai avant affichage (ms)
+  delay?: number;
 }
 
 export function FullscreenAd({ onClose, delay = 0 }: FullscreenAdProps) {
@@ -19,7 +20,6 @@ export function FullscreenAd({ onClose, delay = 0 }: FullscreenAdProps) {
     const timer = setTimeout(() => {
       fetchFullscreenAd();
     }, delay);
-
     return () => clearTimeout(timer);
   }, [delay]);
 
@@ -29,9 +29,7 @@ export function FullscreenAd({ onClose, delay = 0 }: FullscreenAdProps) {
       const res = await fetch(`/api/ads?position=FULLSCREEN&userRole=${userRole}`, {
         credentials: 'include',
       });
-      
       if (!res.ok) return;
-      
       const data = await res.json();
       if (data.length > 0) {
         setAd(data[0]);
@@ -53,7 +51,6 @@ export function FullscreenAd({ onClose, delay = 0 }: FullscreenAdProps) {
         body: JSON.stringify({ screen: 'FULLSCREEN' }),
         credentials: 'include',
       });
-      
       window.open(ad.linkUrl, '_blank', 'noopener,noreferrer');
     }
     onClose();
@@ -76,33 +73,30 @@ export function FullscreenAd({ onClose, delay = 0 }: FullscreenAdProps) {
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="relative max-w-lg w-full bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl"
+            className="relative w-[90vw] h-[90vh] max-w-none bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <img 
-              src={ad.imageUrl} 
+            <img
+              src={ad.imageUrl}
               alt={title}
-              className="w-full h-auto max-h-[70vh] object-contain"
+              className="w-full h-full object-contain bg-black/5"
             />
-            
-            <div className="p-6 text-center">
-              <h2 className="text-xl font-bold font-display mb-2">{title}</h2>
-              {description && (
-                <p className="text-muted-foreground text-sm mb-4">{description}</p>
-              )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+            <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent text-white">
+              <h2 className="text-xl font-bold mb-2">{title}</h2>
+              {description && <p className="text-sm opacity-90 mb-4">{description}</p>}
               {ad.linkUrl && (
                 <button
                   onClick={handleAdClick}
-                  className="px-6 py-2 bg-primary text-primary-foreground rounded-full font-bold text-sm"
+                  className="px-6 py-2 bg-primary rounded-full font-bold text-sm shadow-lg"
                 >
                   En savoir plus
                 </button>
               )}
             </div>
-            
             <button
               onClick={onClose}
-              className="absolute top-3 right-3 w-8 h-8 bg-black/50 rounded-full flex items-center justify-center hover:bg-black/70 transition-colors"
+              className="absolute top-4 right-4 w-8 h-8 bg-black/50 rounded-full flex items-center justify-center hover:bg-black/70 z-10"
             >
               <X className="w-4 h-4 text-white" />
             </button>

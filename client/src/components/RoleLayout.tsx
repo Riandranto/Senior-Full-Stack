@@ -90,7 +90,7 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
           className="text-xl font-bold font-display tracking-tight text-foreground" 
           data-testid="app-title"
         >
-          Ride<span className="text-primary">Madagascar</span>
+          An<span className="text-primary">dao</span>
         </motion.h1>
         <div className="flex items-center gap-1">
           <div className="relative">
