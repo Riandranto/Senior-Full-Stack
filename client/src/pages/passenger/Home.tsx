@@ -177,23 +177,22 @@ async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]>
   if (!query || query.length < 2) return [];
   
   try {
-    // 1. Récupérer les lieux personnalisés depuis l'API
-    const customRes = await fetch('/api/places', { credentials: 'include' });
-    let customPlaces: CustomPlace[] = [];
-    if (customRes.ok) {
-      customPlaces = await customRes.json();
-    }
+    // 1. Récupérer tous les lieux personnalisés
+    const res = await fetch('/api/places', { credentials: 'include' });
+    if (!res.ok) return [];
     
-    // 2. Filtrer les lieux personnalisés selon la recherche
+    const customPlaces: CustomPlace[] = await res.json();
+    
+    // 2. Filtrer selon la recherche (insensible à la casse)
     const qLower = query.toLowerCase();
-    const matchedCustom = customPlaces.filter(place => 
+    const matched = customPlaces.filter(place => 
       place.name.toLowerCase().includes(qLower) || 
       place.nameFr.toLowerCase().includes(qLower)
     );
     
-    // 3. Convertir en format NominatimResult
-    const customResults: NominatimResult[] = matchedCustom.map(place => ({
-      place_id: -place.id, // ID négatif pour les distinguer
+    // 3. Convertir au format attendu par la suggestion
+    const results: NominatimResult[] = matched.map(place => ({
+      place_id: place.id,
       display_name: `${place.name} (${place.nameFr})`,
       lat: place.lat,
       lon: place.lng,
@@ -202,27 +201,9 @@ async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]>
       address: { city: place.name, state: place.nameFr }
     }));
     
-    // 4. Recherche Nominatim classique
-    const nominatimRes = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=mg&limit=8&addressdetails=1`,
-      { headers: { 'Accept-Language': 'fr' } }
-    );
-    const nominatimResults: NominatimResult[] = await nominatimRes.json();
-    
-    // 5. Fusionner les résultats (custom en premier)
-    const allResults = [...customResults, ...nominatimResults];
-    
-    // 6. Éviter les doublons par coordonnées (approximatif)
-    const unique = allResults.filter((result, index, self) =>
-      index === self.findIndex(r => 
-        Math.abs(parseFloat(r.lat) - parseFloat(result.lat)) < 0.0001 &&
-        Math.abs(parseFloat(r.lon) - parseFloat(result.lon)) < 0.0001
-      )
-    );
-    
-    return unique.slice(0, 10);
+    return results;
   } catch (error) {
-    console.error('Geocoding error:', error);
+    console.error('Erreur lors de la recherche de lieux personnalisés :', error);
     return [];
   }
 }
