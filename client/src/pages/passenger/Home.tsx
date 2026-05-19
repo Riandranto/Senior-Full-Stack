@@ -13,12 +13,11 @@ import { Input } from '@/components/ui/input';
 import { saveUnknownSearch } from '@/lib/unknown-searches';
 import {
   MapPin, Navigation, Car, Bike, Crosshair, X, Loader2, LocateFixed,
-  Route, Calendar, Clock, Menu, Home, History, User, LogOut,
-  BookMarked, ChevronRight, Settings, Star, MessageCircle, Bell, Truck, Gauge,
-  Shield, HelpCircle, Info, Search, Sparkles, TrendingUp, AlertCircle, Briefcase
+  Route, Calendar, Clock, Truck, Gauge,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GEOCENTER, isWithinRange } from '@shared/schema';
+import { GEOCENTER } from '@shared/schema';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { AdBanner } from '@/components/AdBanner';
@@ -26,11 +25,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/hooks/use-auth';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
-import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { FullscreenAd } from '@/components/FullscreenAd';
-
 
 // Stockage local pour recherches non trouvées
 const STORAGE_KEY = 'farady_unknown_searches';
@@ -165,6 +160,7 @@ function useCreateBooking() {
     },
   });
 }
+
 interface CustomPlace {
   id: number;
   name: string;
@@ -177,20 +173,16 @@ async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]>
   if (!query || query.length < 2) return [];
   
   try {
-    // 1. Récupérer tous les lieux personnalisés
     const res = await fetch('/api/places', { credentials: 'include' });
     if (!res.ok) return [];
     
     const customPlaces: CustomPlace[] = await res.json();
-    
-    // 2. Filtrer selon la recherche (insensible à la casse)
     const qLower = query.toLowerCase();
     const matched = customPlaces.filter(place => 
       place.name.toLowerCase().includes(qLower) || 
       place.nameFr.toLowerCase().includes(qLower)
     );
     
-    // 3. Convertir au format attendu par la suggestion
     const results: NominatimResult[] = matched.map(place => ({
       place_id: place.id,
       display_name: `${place.name} (${place.nameFr})`,
@@ -214,7 +206,7 @@ export default function PassengerHome() {
   const createRide = useCreateRide();
   const createBooking = useCreateBooking();
   const { toast } = useToast();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   // --- Gestion de la localisation obligatoire pour le passager ---
   const [passengerLocation, setPassengerLocation] = useState<LatLng | null>(null);
@@ -222,7 +214,6 @@ export default function PassengerHome() {
   const [isLocating, setIsLocating] = useState(false);
   const [gpsDenied, setGpsDenied] = useState(false);
 
-  // Demander la permission et obtenir la position
   const requestPassengerLocation = useCallback(async (): Promise<boolean> => {
     if (!navigator.geolocation) {
       setLocationError(lang === 'mg' ? "Tsy manohana GPS ity navigateur ity" : "Ce navigateur ne supporte pas la géolocalisation");
@@ -281,18 +272,15 @@ export default function PassengerHome() {
           });
           resolve(false);
         },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 } // maximumAge:0 force une nouvelle position
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     });
   }, [lang, toast]);
   
-
-  // Au chargement, demander la position
   useEffect(() => {
     requestPassengerLocation();
   }, [requestPassengerLocation]);
 
-  // Utiliser la position actuelle comme point de départ par défaut
   const useMyLocationAsPickup = useCallback(async () => {
     if (!passengerLocation) {
       const ok = await requestPassengerLocation();
@@ -314,7 +302,6 @@ export default function PassengerHome() {
     }
   }, [passengerLocation, requestPassengerLocation, lang, toast]);
 
-  // --- Reste du code du passager ---
   // Correction des notifications sur mobile
   useEffect(() => {
     const style = document.createElement('style');
@@ -334,7 +321,6 @@ export default function PassengerHome() {
     return () => { document.head.removeChild(style); };
   }, []);
 
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoff, setDropoff] = useState('');
@@ -372,8 +358,6 @@ export default function PassengerHome() {
   const queryClient = useQueryClient();
   const [showFullscreenAd, setShowFullscreenAd] = useState(true);
 
-
-  // État pour le badge des offres non lues
   const [unreadBookingOffers, setUnreadBookingOffers] = useState(0);
 
   const { data: activeRide } = useQuery({
@@ -395,8 +379,6 @@ export default function PassengerHome() {
     setHasActiveRide(!!(activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED'));
   }, [activeRide]);
 
-  // Réinitialiser le badge quand on ouvre la page des réservations (ou au clic sur l'icône)
-  // Pour simplifier, on réinitialise quand l'utilisateur navigue vers /passenger/bookings
   useEffect(() => {
     const unloadHandler = () => {
       if (window.location.pathname === '/passenger/bookings') {
@@ -407,7 +389,6 @@ export default function PassengerHome() {
     return () => window.removeEventListener('popstate', unloadHandler);
   }, []);
 
-  // WebSocket : nouvelles offres de réservation
   useEffect(() => {
     if (!connected) return;
     const unsub = subscribe('BOOKING_NEW_OFFER', (data) => {
@@ -634,93 +615,6 @@ export default function PassengerHome() {
     setBookingNote('');
   };
 
-  const handleLogout = async () => {
-    await logout();
-    setIsMenuOpen(false);
-  };
-
-  // Composant SideMenu défini à l'intérieur pour avoir accès à unreadBookingOffers
-  const SideMenu = ({ isOpen, onClose, user, onLogout, lang }: any) => {
-    const [, setLocation] = useLocation();
-
-    const menuItems = [
-      { icon: Home, label: lang === 'mg' ? "Fandraisana" : "Accueil", href: '/passenger', color: 'text-primary' },
-      { icon: History, label: lang === 'mg' ? "Tantaran'ny dia" : "Historique", href: '/passenger/history', color: 'text-emerald-500' },
-      { icon: BookMarked, label: lang === 'mg' ? "Reservation" : "Réservations", href: '/passenger/bookings', color: 'text-violet-500', badge: unreadBookingOffers },
-      { icon: User, label: lang === 'mg' ? "Momba ahy" : "Mon profil", href: '/passenger/profile', color: 'text-amber-500' },
-      { icon: Settings, label: lang === 'mg' ? "Fandrindrana" : "Paramètres", href: '/passenger/settings', color: 'text-gray-500' },
-      { icon: HelpCircle, label: lang === 'mg' ? "Fanampiana" : "Aide", href: '/passenger/help', color: 'text-indigo-500' },
-    ];
-
-    return (
-      <Sheet open={isOpen} onOpenChange={onClose}>
-        <SheetContent side="left" className="w-[280px] p-0 rounded-r-3xl overflow-y-auto">
-          <div className="flex flex-col h-full">
-            <div className="bg-gradient-to-r from-primary to-primary/80 p-6 text-white">
-              <div className="flex items-center gap-3 mb-4">
-                <Avatar className="w-14 h-14 border-2 border-white/30 bg-white/20">
-                  <AvatarFallback className="bg-white/20 text-white text-lg">
-                    {user?.name?.charAt(0)?.toUpperCase() || 'U'}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <h3 className="font-bold text-lg">{user?.name || 'Utilisateur'}</h3>
-                  <p className="text-xs text-white/70">{user?.phone || ''}</p>
-                  <Badge className="mt-1 bg-white/20 text-white border-0 text-[10px]">
-                    {user?.role === 'PASSENGER' ? (lang === 'mg' ? 'Mpandeha' : 'Passager') : user?.role}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 py-4">
-              {menuItems.map((item, idx) => (
-                <motion.button
-                  key={item.href}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  onClick={() => {
-                    if (item.href === '/passenger/bookings') {
-                      setUnreadBookingOffers(0);
-                    }
-                    setLocation(item.href);
-                    onClose(false);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group relative"
-                >
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${item.color} bg-muted/50 group-hover:bg-muted transition-colors`}>
-                    <item.icon className="w-4 h-4" />
-                  </div>
-                  <span className="text-sm font-medium flex-1 text-left">{item.label}</span>
-                  {item.badge > 0 && (
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {item.badge > 9 ? '9+' : item.badge}
-                    </span>
-                  )}
-                  <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                </motion.button>
-              ))}
-            </div>
-
-            <div className="p-4 border-t border-border/30">
-              <button
-                onClick={onLogout}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="text-sm font-medium">{lang === 'mg' ? 'Fivoahana' : 'Déconnexion'}</span>
-              </button>
-              <div className="mt-3 text-center">
-                <p className="text-[10px] text-muted-foreground">Farady v1.0.0</p>
-              </div>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
-  };
-
   if (hasActiveRide) {
     return (
       <MobileLayout role="passenger">
@@ -757,18 +651,12 @@ export default function PassengerHome() {
       {showFullscreenAd && (
         <FullscreenAd 
           onClose={() => setShowFullscreenAd(false)} 
-          delay={1000} // s'affiche après 1 seconde
+          delay={1000}
         />
       )}
-      <SideMenu isOpen={isMenuOpen} onClose={setIsMenuOpen} user={user} onLogout={handleLogout} lang={lang} />
       <MobileLayout role="passenger">
-        {/* Bouton Menu (pour ouvrir le sheet) - positionné sous l'en-tête du layout */}
-        <button onClick={() => setIsMenuOpen(true)} className="absolute top-14 left-4 z-30 w-10 h-10 rounded-full bg-background/90 backdrop-blur-sm shadow-lg flex items-center justify-center border border-border/30">
-          <Menu className="w-5 h-5" />
-        </button>
-
         {/* Indicateur de connexion WebSocket */}
-        <div className="absolute top-14 left-16 z-20">
+        <div className="absolute top-14 left-4 z-20">
           <div className={`px-2 py-1 rounded-full text-xs font-medium ${connected ? 'bg-emerald-500/20 text-emerald-700' : 'bg-red-500/20 text-red-700'}`}>
             {connected ? (lang === 'mg' ? 'Mifandray' : 'Connecté') : (lang === 'mg' ? 'Tsy mifandray' : 'Déconnecté')}
           </div>
@@ -906,18 +794,16 @@ export default function PassengerHome() {
                 ))}
               </div>
             </div>
-            <div className="flex justify-center mb-3">
-              <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                <Button variant="outline" className="rounded-xl border-dashed border-primary/50 text-primary hover:bg-primary/10 h-9 px-6" onClick={() => setShowBookingModal(true)}>
-                  <Calendar className="w-4 h-4 mr-2" />{lang === 'mg' ? 'Famandriana' : 'Réserver'}
-                </Button>
-              </motion.div>
-            </div>
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="flex justify-center">
-              <Button onClick={handleRequest} disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending} className="w-auto min-w-[200px] h-10 rounded-xl text-sm font-bold shadow-lg shadow-primary/30 bg-gradient-to-r from-primary to-primary/80">
-                {createRide.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t('finding_drivers')}</> : t('request_ride')}
+            <div className="flex justify-center mb-3 gap-3">
+              <Button variant="outline" className="rounded-xl border-dashed border-primary/50 text-primary hover:bg-primary/10 h-9 px-6" onClick={() => setShowBookingModal(true)}>
+                <Calendar className="w-4 h-4 mr-2" />{lang === 'mg' ? 'Famandriana' : 'Réserver'}
               </Button>
-            </motion.div>
+              {(vehicle !== 'CAMION' && vehicle !== '4X4') && (
+                <Button onClick={handleRequest} disabled={!pickup || !dropoff || !pickupCoords || !dropoffCoords || createRide.isPending} className="w-auto min-w-[140px] h-10 rounded-xl text-sm font-bold shadow-lg shadow-primary/30 bg-gradient-to-r from-primary to-primary/80">
+                  {createRide.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t('finding_drivers')}</> : t('request_ride')}
+                </Button>
+              )}
+            </div>
           </Card>
         </motion.div>
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation } from 'wouter';
-import { Home, History, User, LogOut, Menu, HelpCircle, Bell, Settings } from 'lucide-react';
+import { Home, History, User, LogOut, Menu, HelpCircle, Bell, Settings, BookMarked } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslation } from '@/lib/i18n';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,7 +30,6 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
 
   const unreadCount = unreadData?.count || 0;
 
-  // 🔥 Rafraîchissement automatique des notifications
   const refreshNotifications = useCallback(async () => {
     if (!showNotifs) return;
     setIsRefreshingNotifs(true);
@@ -54,7 +53,6 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
         clearInterval(refreshIntervalRef.current);
       }
     }
-
     return () => {
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
@@ -71,6 +69,7 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
   const navItems = role === 'passenger' ? [
     { href: '/passenger', icon: Home, label: t('request_ride') },
     { href: '/passenger/history', icon: History, label: t('history') },
+    { href: '/passenger/bookings', icon: BookMarked, label: t('bookings') },
     { href: '/passenger/profile', icon: User, label: t('profile') },
     { href: '/passenger/settings', icon: Settings, label: t('settings') || 'Settings' },
     { href: '/passenger/help', icon: HelpCircle, label: t('help') },

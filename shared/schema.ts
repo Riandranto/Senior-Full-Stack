@@ -44,8 +44,14 @@ export const users = pgTable("users", {
 export const driverProfiles = pgTable("driver_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
-  vehicleType: text("vehicle_type").notNull(),
+  vehicleType: text("vehicle_type").notNull(),  // TAXI, BAJAJ, CAMION, 4X4
   vehicleNumber: text("vehicle_number"),
+  // NOUVELLES COLONNES
+  vehicleMake: text("vehicle_make"),        // marque
+  vehicleModel: text("vehicle_model"),      // modèle
+  vehicleColor: text("vehicle_color"),      // couleur
+  vehicleSeats: integer("vehicle_seats"),   // nombre de places
+  // Fin des nouvelles colonnes
   licenseNumber: text("license_number"),
   status: text("status").notNull().default("PENDING"),
   online: boolean("online").notNull().default(false),

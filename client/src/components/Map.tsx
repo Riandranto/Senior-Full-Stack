@@ -1,4 +1,4 @@
-// client/src/components/Map.tsx - Version PNG avec icônes transparentes et popups stylisés
+// client/src/components/Map.tsx
 import { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
@@ -29,7 +29,7 @@ const getVehicleIconUrl = (vehicleType?: string): string => {
   return `${baseUrl}${filename}`;
 };
 
-// ==================== ICÔNES DES CONDUCTEURS (PNG sans fond) ====================
+// ==================== ICÔNES DES CONDUCTEURS ====================
 function createDriverIcon(vehicleType?: string, rating?: number, isAssigned?: boolean) {
   const iconUrl = getVehicleIconUrl(vehicleType);
   return L.icon({
@@ -41,7 +41,6 @@ function createDriverIcon(vehicleType?: string, rating?: number, isAssigned?: bo
   });
 }
 
-// Icône pour la position actuelle du conducteur (point de départ du conducteur)
 function createDriverStartIcon(vehicleType?: string) {
   const iconUrl = getVehicleIconUrl(vehicleType);
   return L.icon({
@@ -53,7 +52,7 @@ function createDriverStartIcon(vehicleType?: string) {
   });
 }
 
-// ==================== ICÔNES POINTS A ET B (sans fond) ====================
+// ==================== ICÔNES POINTS A ET B ====================
 function createPickupIcon(vehicleType?: string) {
   if (vehicleType) {
     const iconUrl = getVehicleIconUrl(vehicleType);
@@ -72,7 +71,6 @@ function createPickupIcon(vehicleType?: string) {
       popupAnchor: [0, -22],
     });
   }
-  // Icône par défaut si pas de véhicule (simple cercle vert, mais sans fond ? on garde le style d'origine mais on peut aussi simplifier)
   return L.divIcon({
     className: 'custom-pin pickup-pin',
     html: `<div style="background:#22C55E;width:36px;height:36px;border-radius:50%;border:3px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform 0.2s;">
@@ -112,7 +110,11 @@ export interface OSRMRouteResult {
 export async function fetchOSRMRoute(pickup: LatLng, dropoff: LatLng): Promise<OSRMRouteResult | null> {
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}?overview=full&geometries=geojson`;
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Farady/1.0 (https://farady.com; support@farady.com)'
+      }
+    });
     if (!res.ok) return null;
     const data = await res.json();
     if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) return null;
@@ -123,7 +125,8 @@ export async function fetchOSRMRoute(pickup: LatLng, dropoff: LatLng): Promise<O
       distanceKm: route.distance / 1000,
       durationMin: Math.ceil(route.duration / 60),
     };
-  } catch {
+  } catch (err) {
+    console.warn('OSRM fetch error:', err);
     return null;
   }
 }
@@ -205,10 +208,6 @@ function FitBounds({ pickup, dropoff, driverMarkers }: { pickup?: LatLng | null;
   return null;
 }
 
-// Composant Popup personnalisé avec fond transparent (via CSS global)
-// On va utiliser le Popup normal de Leaflet mais on override le style avec des classes CSS.
-// Dans le rendu, on utilise <Popup> avec className pour personnaliser.
-
 // ==================== COMPOSANT PRINCIPAL ====================
 export function MapView({ 
   center = { lat: -18.8792, lng: 47.5079 },  
@@ -235,7 +234,6 @@ export function MapView({
 
   return (
     <div className="w-full h-full relative z-0">
-      {/* Style global pour les popups transparents */}
       <style>{`
         .custom-popup .leaflet-popup-content-wrapper {
           background: rgba(0, 0, 0, 0.75);
@@ -306,15 +304,7 @@ export function MapView({
           <Marker 
             position={[pickupMarker.lat, pickupMarker.lng]} 
             icon={pickupIcon}
-            eventHandlers={{
-              click: () => {
-                // On laisse le popup par défaut, mais on peut aussi afficher un message personnalisé sans popup si on veut.
-                // Pour rester simple, on n'ajoute pas de popup ici, on utilise celui de Leaflet si besoin.
-                // Mais on peut en ajouter un via le composant <Popup> ci-dessous.
-              }
-            }}
           >
-            {/* Popup transparent pour le point A */}
             <Popup className="custom-popup" autoPan={false}>
               <div className="text-center">
                 <strong>Point A - Départ</strong><br />

@@ -1,13 +1,13 @@
-// src/App.tsx - Version modifiée
-import { Switch, Route, Redirect } from "wouter";
+// src/App.tsx
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { I18nProvider } from "./lib/i18n";
 import { useAuth } from "./hooks/use-auth";
 import { useOfflineSync } from "./hooks/use-offline-sync";
+import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { capacitorStorage } from "./lib/capacitor-storage";
-import { offlineSync } from "./lib/offline-sync";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { Capacitor } from '@capacitor/core';
 
 // Pages
@@ -22,44 +22,110 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import Help from "./pages/Help";
 import BookingsPage from './pages/passenger/Bookings';
 
-// Composants publicitaires
 import { FullscreenAd } from "@/components/FullscreenAd";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
-// Composant de chargement
 const LoadingSpinner = () => (
   <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
     <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
   </div>
 );
 
+// Error Boundary pour capturer les erreurs de rendu
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    // Optionnel : envoyer l'erreur à un service de monitoring
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground p-4 text-center">
+          <h1 className="text-2xl font-bold text-red-500 mb-4">Une erreur est survenue</h1>
+          <p className="text-muted-foreground mb-6">{this.state.error?.message || "Erreur inconnue"}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-primary text-white rounded-xl"
+          >
+            Rafraîchir la page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Hook pour stocker la dernière route active
+function useLastRoute() {
+  const STORAGE_KEY = 'farady_last_route';
+  const [lastRoute, setLastRoute] = useState<string>('/passenger');
+
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) setLastRoute(saved);
+  }, []);
+
+  const updateLastRoute = (route: string) => {
+    if (route !== '/login' && route !== '/auth' && !route.includes('offline')) {
+      setLastRoute(route);
+      localStorage.setItem(STORAGE_KEY, route);
+    }
+  };
+
+  return { lastRoute, updateLastRoute };
+}
+
+// Composant pour traquer les changements de route
+function RouteTracker({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const { updateLastRoute } = useLastRoute();
+
+  useEffect(() => {
+    updateLastRoute(location);
+  }, [location, updateLastRoute]);
+
+  return <>{children}</>;
+}
+
 function ProtectedRoute({ component: Component, allowedRoles }: { component: any, allowedRoles: string[] }) {
   const { user, isLoading } = useAuth();
   const [offlineMode, setOfflineMode] = useState(false);
+  const { isConnected } = useNetworkStatus();
 
   useEffect(() => {
     capacitorStorage.isOfflineMode().then(setOfflineMode);
   }, []);
 
-  // Mode hors-ligne : bypass l'authentification
   if (offlineMode) {
     console.log('🔓 Offline mode: bypassing auth');
     return <Component />;
   }
 
-  if (isLoading) {
-    return <LoadingSpinner />;
-  }
+  if (isLoading) return <LoadingSpinner />;
 
-  if (!user) {
+  if (!user && isConnected) {
     console.log('🔒 No user, redirecting to login');
     return <Redirect to="/login" />;
   }
 
-  if (!allowedRoles.includes(user.role)) {
-    console.log(`🔒 Role ${user.role} not allowed, redirecting`);
-    if (user.role === 'DRIVER') return <Redirect to="/driver" />;
-    if (user.role === 'ADMIN') return <Redirect to="/admin" />;
+  if (!user && !isConnected) {
+    return <Redirect to="/login" />;
+  }
+
+  if (!allowedRoles.includes(user!.role)) {
+    if (user!.role === 'DRIVER') return <Redirect to="/driver" />;
+    if (user!.role === 'ADMIN') return <Redirect to="/admin" />;
     return <Redirect to="/passenger" />;
   }
 
@@ -67,14 +133,39 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 }
 
 function Router() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, refetch } = useAuth();
   const [offlineMode, setOfflineMode] = useState(false);
+  const { isConnected } = useNetworkStatus();
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const { lastRoute } = useLastRoute();
+
+  // Reconnexion automatique
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    const handleReconnect = async () => {
+      if (!isConnected) return;
+      if (!user && !isLoading && window.location.pathname !== '/login') {
+        setIsReconnecting(true);
+        try {
+          const result = await refetch();
+          if (result.data) {
+            window.location.href = lastRoute;
+          }
+        } catch (err) {
+          console.error('Reconnection auth failed', err);
+        } finally {
+          setTimeout(() => setIsReconnecting(false), 500);
+        }
+      }
+    };
+    timeoutId = setTimeout(handleReconnect, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [isConnected, user, isLoading, refetch, lastRoute]);
 
   useEffect(() => {
     capacitorStorage.isOfflineMode().then(setOfflineMode);
   }, []);
 
-  // En mode hors-ligne, on force le rôle passager par défaut
   if (offlineMode) {
     return (
       <Switch>
@@ -99,19 +190,13 @@ function Router() {
         <Route path="/passenger/bookings">
           {() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />}
         </Route>
-        <Route path="/">
-          <Redirect to="/passenger" />
-        </Route>
-        <Route>
-          <Redirect to="/passenger" />
-        </Route>
+        <Route path="/"><Redirect to="/passenger" /></Route>
+        <Route><Redirect to="/passenger" /></Route>
       </Switch>
     );
   }
 
-  if (isLoading) {
-    return <LoadingSpinner />;
-  }
+  if (isLoading || isReconnecting) return <LoadingSpinner />;
 
   return (
     <Switch>
@@ -119,12 +204,9 @@ function Router() {
         {user ? (
           <Redirect to={
             user.role === 'DRIVER' ? '/driver' : 
-            user.role === 'ADMIN' ? '/admin' : 
-            '/passenger'
+            user.role === 'ADMIN' ? '/admin' : '/passenger'
           } />
-        ) : (
-          <Redirect to="/login" />
-        )}
+        ) : <Redirect to="/login" />}
       </Route>
       
       <Route path="/login" component={AuthPage} />
@@ -182,16 +264,11 @@ function AppContent() {
   const [showFullscreenAd, setShowFullscreenAd] = useState(false);
   const { user, isLoading } = useAuth();
   const { isOfflineMode, isSyncing, pendingSyncCount, syncNow, saveDataForOffline } = useOfflineSync();
-  const isCapacitor = Capacitor.isNativePlatform();
 
-  // Sauvegarder les données pour offline au démarrage
   useEffect(() => {
-    if (user && !isLoading && !isOfflineMode) {
-      saveDataForOffline();
-    }
+    if (user && !isLoading && !isOfflineMode) saveDataForOffline();
   }, [user, isLoading, isOfflineMode, saveDataForOffline]);
 
-  // Gestion de l'affichage des publicités plein écran (désactivé en mode hors-ligne)
   useEffect(() => {
     if (isOfflineMode) return;
     if (!user || isLoading) return;
@@ -204,27 +281,23 @@ function AppContent() {
     
     if (shouldShowAd) {
       const delay = user.role === 'DRIVER' ? 3000 : 2000;
-      
       const timer = setTimeout(() => {
         setShowFullscreenAd(true);
         sessionStorage.setItem('fullscreen_ad_shown', 'true');
         localStorage.setItem('last_fullscreen_ad_date', today);
       }, delay);
-      
       return () => clearTimeout(timer);
     }
   }, [user, isLoading, isOfflineMode]);
 
-  const handleCloseFullscreenAd = () => {
-    setShowFullscreenAd(false);
-  };
+  const handleCloseFullscreenAd = () => setShowFullscreenAd(false);
 
   return (
     <>
-      {/* Bannière offline */}
-      {isOfflineMode && <OfflineBanner onSync={syncNow} isSyncing={isSyncing} pendingCount={pendingSyncCount} />}
-      
-      <Router />
+      <RouteTracker>
+        {isOfflineMode && <OfflineBanner onSync={syncNow} isSyncing={isSyncing} pendingCount={pendingSyncCount} />}
+        <Router />
+      </RouteTracker>
       
       {showFullscreenAd && !isLoading && user && !isOfflineMode && (
         <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
@@ -234,30 +307,27 @@ function AppContent() {
 }
 
 function App() {
-  // Initialiser le service worker pour PWA
   useEffect(() => {
     if ('serviceWorker' in navigator && import.meta.env.MODE === 'development') {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js').catch(console.error);
       });
     } else if ('serviceWorker' in navigator) {
-      
       navigator.serviceWorker.getRegistrations().then(registrations => {
-        for (const registration of registrations) {
-          registration.unregister();
-          console.log('Service Worker unregistered');
-        }
+        for (const registration of registrations) registration.unregister();
       });
     }
   }, []);
 
   return (
-    <I18nProvider>
-      <TooltipProvider>
-        <Toaster />
-        <AppContent />
-      </TooltipProvider>
-    </I18nProvider>
+    <ErrorBoundary>
+      <I18nProvider>
+        <TooltipProvider>
+          <Toaster />
+          <AppContent />
+        </TooltipProvider>
+      </I18nProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -201,6 +201,10 @@ export class DatabaseStorage implements IStorage {
       userId: profile.userId,
       vehicleType: profile.vehicleType,
       vehicleNumber: profile.vehicleNumber,
+      vehicleMake: profile.vehicleMake || null,
+      vehicleModel: profile.vehicleModel || null,
+      vehicleColor: profile.vehicleColor || null,
+      vehicleSeats: profile.vehicleSeats || null,
       licenseNumber: profile.licenseNumber,
       status: profile.status || "PENDING",
       online: profile.online || false,
@@ -341,12 +345,17 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getNearbyRequests(lat?: number, lng?: number): Promise<Ride[]> {
-    const allRequests = await db.select().from(rides).where(or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING"))).orderBy(sql`${rides.createdAt} DESC`);
-    /*if (lat !== undefined && lng !== undefined) {
-      return allRequests.filter(r => isWithinRange(Number(r.pickupLat), Number(r.pickupLng)));
-    }*/
-    return allRequests;
+  async getNearbyRequests(vehicleType?: string): Promise<Ride[]> {
+    let query = db.select().from(rides).where(
+      and(
+        or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING")),
+        eq(rides.isBooking, false) // exclusion des courses issues de réservation si besoin
+      )
+    );
+    if (vehicleType) {
+      query = query.where(eq(rides.vehicleType, vehicleType));
+    }
+    return await query.orderBy(sql`${rides.createdAt} DESC`);
   }
 
   async getAllRides(): Promise<Ride[]> {

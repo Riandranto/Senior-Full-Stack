@@ -1,4 +1,4 @@
-// src/pages/driver/Home.tsx
+// src/pages/driver/Home.tsx - Version corrigée
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
@@ -40,7 +40,6 @@ import { GEOCENTER } from '@shared/schema';
 import { apiFetch } from '@/lib/api';
 import { AdBanner } from '@/components/AdBanner';
 import { FullscreenAd } from '@/components/FullscreenAd';
-
 
 const VEHICLE_TYPES = [
   { id: 'TAXI', label: 'Taxi', labelMg: 'Taxi', icon: Car, color: 'from-blue-500 to-blue-600' },
@@ -212,6 +211,9 @@ export default function DriverHome() {
   const timerIntervalRef = useRef<NodeJS.Timeout>();
   const secondsIntervalRef = useRef<NodeJS.Timeout>();
 
+  const mountedRef = useRef(true);
+  const initializedRef = useRef(false);
+
   const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
   const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
@@ -257,7 +259,6 @@ export default function DriverHome() {
   useEffect(() => {
     if (driverBookings) {
       setAvailableBookings(driverBookings);
-      // Notification si nouvelles réservations disponibles (PENDING)
       const newPending = driverBookings.filter(b => b.status === 'PENDING').length;
       if (newPending > 0 && !activeRide && !showBookings) {
         toast({
@@ -269,6 +270,11 @@ export default function DriverHome() {
       }
     }
   }, [driverBookings, activeRide, showBookings, toast, lang]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Rafraîchissement manuel des réservations
   const handleRefreshBookings = useCallback(() => {
@@ -291,6 +297,7 @@ export default function DriverHome() {
       }
       navigator.geolocation.getCurrentPosition(
         () => {
+          if (!mountedRef.current) return;
           setGpsPermissionAsked(true);
           setGpsDenied(false);
           resolve(true);
@@ -312,46 +319,52 @@ export default function DriverHome() {
 
   // Démarrage du suivi de position
   const startLocationTracking = useCallback(async () => {
+    if (!mountedRef.current) return false;
     const hasPermission = await requestGpsPermission();
     if (!hasPermission) {
-      setGpsDenied(true);
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "GPS tsy azo" : "GPS inaccessible",
-        description: lang === 'mg' ? "Mila mamela ny GPS ianao mba hahazoana ny toerana misy anao" : "Vous devez autoriser la localisation pour utiliser l'application",
-        className: "mobile-toast"
-      });
+      if (mountedRef.current) {
+        setGpsDenied(true);
+        toast({
+          variant: "destructive",
+          title: lang === 'mg' ? "GPS tsy azo" : "GPS inaccessible",
+          description: lang === 'mg' ? "Mila mamela ny GPS ianao mba hahazoana ny toerana misy anao" : "Vous devez autoriser la localisation pour utiliser l'application",
+          className: "mobile-toast"
+        });
+      }
       return false;
     }
-
+  
     if (!navigator.geolocation) {
-      setLocationError(lang === 'mg' ? "Tsy misy GPS" : "GPS non disponible");
+      if (mountedRef.current) setLocationError(lang === 'mg' ? "Tsy misy GPS" : "GPS non disponible");
       return false;
     }
-
-    setIsLocating(true);
-    setLocationError(null);
-    setGpsDenied(false);
-
+  
+    if (mountedRef.current) {
+      setIsLocating(true);
+      setLocationError(null);
+      setGpsDenied(false);
+    }
+  
     if (watchId !== null) {
       navigator.geolocation.clearWatch(watchId);
     }
-
+  
     const options: PositionOptions = {
       enableHighAccuracy: true,
       timeout: 15000,
       maximumAge: 5000
     };
-
+  
     // Position immédiate
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (!mountedRef.current) return;
         const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setDriverPos(location);
         setLocationAccuracy(pos.coords.accuracy);
         setLocationError(null);
         setIsLocating(false);
-
+  
         if (profile?.online) {
           updateLocation.mutate(location);
           if (activeRide) {
@@ -364,6 +377,7 @@ export default function DriverHome() {
         console.log(`📍 Position initiale: ${location.lat}, ${location.lng} (précision: ${pos.coords.accuracy}m)`);
       },
       (error) => {
+        if (!mountedRef.current) return;
         console.error('GPS getCurrentPosition error:', error);
         setIsLocating(false);
         let message = '';
@@ -386,17 +400,18 @@ export default function DriverHome() {
       },
       options
     );
-
+  
     // Suivi continu
     const newWatchId = navigator.geolocation.watchPosition(
       (pos) => {
+        if (!mountedRef.current) return;
         const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setDriverPos(location);
         setLocationAccuracy(pos.coords.accuracy);
         setLocationError(null);
         setIsLocating(false);
         setGpsDenied(false);
-
+  
         if (profile?.online) {
           updateLocation.mutate(location);
           if (activeRide) {
@@ -408,6 +423,7 @@ export default function DriverHome() {
         }
       },
       (error) => {
+        if (!mountedRef.current) return;
         console.error('GPS watch error:', error);
         setIsLocating(false);
         if (error.code === error.PERMISSION_DENIED) {
@@ -417,11 +433,11 @@ export default function DriverHome() {
       },
       options
     );
-
+  
     setWatchId(newWatchId);
     return true;
-  }, [profile?.online, activeRide, updateLocation, sendMessage, toast, lang, requestGpsPermission, watchId]);
-
+  }, [profile?.online, activeRide, updateLocation, sendMessage, toast, lang, requestGpsPermission, watchId, mountedRef]);
+  
   // Obtenir une position unique
   const getSingleLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -487,8 +503,15 @@ export default function DriverHome() {
   }
 
   useEffect(() => {
-    startLocationTracking();
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    let isActive = true;
+    const start = async () => {
+      if (isActive) await startLocationTracking();
+    };
+    start();
     return () => {
+      isActive = false;
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     };
   }, []);
@@ -751,16 +774,22 @@ export default function DriverHome() {
     setPriceError(value ? validatePrice(value) : null);
   };
 
+  // Correction de handleSendOffer
   const handleSendOffer = async () => {
     if (!selectedRequest || !price) {
       toast({ variant: "destructive", title: lang === 'mg' ? "Tsy feno" : "Incomplet", description: lang === 'mg' ? "Ampidiro ny vidiny" : "Entrez le prix", className: "mobile-toast" });
       return;
     }
     const error = validatePrice(price);
-    if (error) { setPriceError(error); return; }
+    if (error) {
+      setPriceError(error);
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error, className: "mobile-toast" });
+      return;
+    }
     const eta = autoEta || selectedRequest?.etaMinutes || 5;
     try {
       await sendOffer.mutateAsync({ rideId: selectedRequest.id, priceAr: parseInt(price), etaMinutes: eta });
+      if (!mountedRef.current) return;
       setOfferSentFor(prev => new Set(prev).add(selectedRequest.id));
       setSelectedRequest(null);
       setPrice('');
@@ -768,8 +797,20 @@ export default function DriverHome() {
       setAutoEta(null);
       setCalculatingEta(false);
       refresh();
-      toast({ title: lang === 'mg' ? 'Tolobidy nalefa!' : 'Offre envoyée !', description: lang === 'mg' ? `Ar ${price} - ${eta} minitra` : `Ar ${price} - ${eta} minutes`, className: "mobile-toast" });
-    } catch (err: any) {}
+      toast({
+        title: lang === 'mg' ? 'Tolobidy nalefa!' : 'Offre envoyée !',
+        description: lang === 'mg' ? `Ar ${price} - ${eta} minitra` : `Ar ${price} - ${eta} minutes`,
+        className: "mobile-toast"
+      });
+    } catch (err: any) {
+      if (!mountedRef.current) return;
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: err.message || (lang === 'mg' ? "Tsy afaka nandefa ny tolobidy" : "Impossible d'envoyer l'offre"),
+        className: "mobile-toast"
+      });
+    }
   };
 
   const handleStartBookingRide = async () => {
@@ -1080,7 +1121,6 @@ export default function DriverHome() {
                           <VehicleIcon className="w-2.5 h-2.5" />
                           {booking.vehicleType === 'TAXI' ? 'Taxi' : booking.vehicleType === 'BAJAJ' ? 'Bajaj' : booking.vehicleType === 'CAMION' ? 'Camion' : '4x4'}
                         </Badge>
-                        {/* Badge de statut pour les réservations acceptées */}
                         {booking.status === 'CONFIRMED' && (
                           <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
                             {lang === 'mg' ? 'Nekena' : 'Acceptée'}

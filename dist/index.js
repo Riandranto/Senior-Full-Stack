@@ -182,7 +182,18 @@ var driverProfiles = pgTable("driver_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   vehicleType: text("vehicle_type").notNull(),
+  // TAXI, BAJAJ, CAMION, 4X4
   vehicleNumber: text("vehicle_number"),
+  // NOUVELLES COLONNES
+  vehicleMake: text("vehicle_make"),
+  // marque
+  vehicleModel: text("vehicle_model"),
+  // modèle
+  vehicleColor: text("vehicle_color"),
+  // couleur
+  vehicleSeats: integer("vehicle_seats"),
+  // nombre de places
+  // Fin des nouvelles colonnes
   licenseNumber: text("license_number"),
   status: text("status").notNull().default("PENDING"),
   online: boolean("online").notNull().default(false),
@@ -498,6 +509,10 @@ var DatabaseStorage = class {
       userId: profile.userId,
       vehicleType: profile.vehicleType,
       vehicleNumber: profile.vehicleNumber,
+      vehicleMake: profile.vehicleMake || null,
+      vehicleModel: profile.vehicleModel || null,
+      vehicleColor: profile.vehicleColor || null,
+      vehicleSeats: profile.vehicleSeats || null,
       licenseNumber: profile.licenseNumber,
       status: profile.status || "PENDING",
       online: profile.online || false
@@ -614,9 +629,18 @@ var DatabaseStorage = class {
       return [];
     }
   }
-  async getNearbyRequests(lat, lng) {
-    const allRequests = await db.select().from(rides).where(or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING"))).orderBy(sql`${rides.createdAt} DESC`);
-    return allRequests;
+  async getNearbyRequests(vehicleType) {
+    let query = db.select().from(rides).where(
+      and(
+        or(eq(rides.status, "REQUESTED"), eq(rides.status, "BIDDING")),
+        eq(rides.isBooking, false)
+        // exclusion des courses issues de réservation si besoin
+      )
+    );
+    if (vehicleType) {
+      query = query.where(eq(rides.vehicleType, vehicleType));
+    }
+    return await query.orderBy(sql`${rides.createdAt} DESC`);
   }
   async getAllRides() {
     return await db.select().from(rides).orderBy(sql`${rides.createdAt} DESC`);
@@ -2361,40 +2385,68 @@ async function registerRoutes(httpServer2, app2) {
       return res.status(401).json({ message: "Non authentifi\xE9" });
     }
     try {
-      const { vehicleType, vehicleNumber, licenseNumber } = req.body;
-      let existingProfile = await storage.getDriverProfile(req.session.userId);
-      if (existingProfile) {
-        await storage.updateDriverStatus(existingProfile.id, "PENDING");
-        await storage.updateDriverOnline(req.session.userId, false);
-        await db.update(driverProfiles).set({
-          vehicleNumber: vehicleNumber || existingProfile.vehicleNumber,
-          licenseNumber: licenseNumber || existingProfile.licenseNumber,
-          vehicleType: vehicleType || existingProfile.vehicleType,
-          status: "PENDING"
-        }).where(eq4(driverProfiles.id, existingProfile.id));
-        const updatedProfile = await storage.getDriverProfile(req.session.userId);
-        return res.json(updatedProfile);
+      const {
+        vehicleType,
+        vehicleNumber,
+        licenseNumber,
+        vehicleMake,
+        vehicleModel,
+        vehicleColor,
+        vehicleSeats
+      } = req.body;
+      if (!vehicleType || !vehicleNumber || !licenseNumber) {
+        return res.status(400).json({ message: "Veuillez fournir le type de v\xE9hicule, la plaque et le num\xE9ro de permis." });
       }
-      await storage.updateUserRole(req.session.userId, "DRIVER");
-      const profile = await storage.createDriverProfile({
-        userId: req.session.userId,
-        vehicleType: vehicleType || "TAXI",
-        vehicleNumber: vehicleNumber || "",
-        licenseNumber: licenseNumber || "",
-        status: "PENDING",
-        online: false
-      });
+      let existingProfile = await storage.getDriverProfile(req.session.userId);
+      let profile;
+      if (existingProfile) {
+        const [updated] = await db.update(driverProfiles).set({
+          vehicleType,
+          vehicleNumber,
+          licenseNumber,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleColor: vehicleColor || null,
+          vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
+          status: "PENDING",
+          online: false
+        }).where(eq4(driverProfiles.id, existingProfile.id)).returning();
+        profile = updated;
+      } else {
+        await storage.updateUserRole(req.session.userId, "DRIVER");
+        profile = await storage.createDriverProfile({
+          userId: req.session.userId,
+          vehicleType,
+          vehicleNumber,
+          licenseNumber,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleColor: vehicleColor || null,
+          vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
+          status: "PENDING",
+          online: false
+        });
+      }
       req.session.role = "DRIVER";
       await new Promise((resolve, reject) => {
         req.session.save((err) => {
           if (err) reject(err);
-          else resolve(null);
+          else resolve();
         });
       });
+      const admins = await db.select().from(users).where(eq4(users.role, "ADMIN"));
+      for (const admin of admins) {
+        await storage.createNotification({
+          userId: admin.id,
+          title: "Nouvelle demande conducteur",
+          message: `${req.session.userId} a demand\xE9 \xE0 devenir conducteur.`,
+          type: "INFO"
+        });
+      }
       res.status(201).json(profile);
     } catch (error) {
       console.error("\u274C Error registering driver:", error);
-      res.status(500).json({ message: "Erreur serveur" });
+      res.status(500).json({ message: "Erreur serveur lors de l'enregistrement." });
     }
   });
   app2.post(api.passenger.acceptOffer.path, async (req, res) => {
@@ -2476,37 +2528,81 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.get(api.driver.getRequests.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const rides2 = await storage.getNearbyRequests();
-    const enrichedRides = await Promise.all(rides2.map(async (r) => {
+    const driverProfile = await storage.getDriverProfile(req.session.userId);
+    if (!driverProfile || driverProfile.status !== "APPROVED") {
+      return res.json([]);
+    }
+    const rides2 = await storage.getNearbyRequests(driverProfile.vehicleType);
+    const activeRides = rides2.filter((r) => r.status === "REQUESTED" || r.status === "BIDDING");
+    const enrichedRides = await Promise.all(activeRides.map(async (r) => {
       const passenger = await storage.getUser(r.passengerId);
       return { ...r, passenger };
     }));
     res.json(enrichedRides);
   });
   app2.post(api.driver.sendOffer.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     try {
       const input = api.driver.sendOffer.input.parse(req.body);
-      const offer = await storage.createOffer({
-        ...input,
-        driverId: req.session.userId,
-        expiresAt: new Date(Date.now() + 9e4)
-      });
+      const driverProfile = await storage.getDriverProfile(req.session.userId);
+      if (!driverProfile) {
+        return res.status(403).json({ message: "Vous n'\xEAtes pas enregistr\xE9 comme conducteur." });
+      }
       const ride = await storage.getRide(input.rideId);
-      if (ride) {
-        sendToUser(ride.passengerId, { type: WS_EVENTS.OFFER_NEW, payload: offer });
-        const driver = await storage.getUser(req.session.userId);
-        await storage.createNotification({
-          userId: ride.passengerId,
-          title: "Tolobidy vaovao",
-          message: `${driver?.name || "Mpamily"} dia nanolotra Ar ${input.priceAr}`,
-          type: "OFFER",
-          rideId: input.rideId
+      if (!ride) {
+        return res.status(404).json({ message: "Course introuvable" });
+      }
+      if (driverProfile.vehicleType !== ride.vehicleType) {
+        return res.status(403).json({
+          message: `Vous ne pouvez faire d'offre que pour les v\xE9hicules de type ${driverProfile.vehicleType}.`
         });
       }
+      if (!["REQUESTED", "BIDDING"].includes(ride.status)) {
+        return res.status(400).json({ message: "Cette course n'est plus disponible." });
+      }
+      const existingOffers = await storage.getOffersForRide(input.rideId);
+      const alreadySent = existingOffers.some((o) => o.driverId === req.session.userId && o.status === "SENT");
+      if (alreadySent) {
+        return res.status(400).json({ message: "Vous avez d\xE9j\xE0 envoy\xE9 une offre pour cette course." });
+      }
+      const expiresAt = new Date(Date.now() + 9e4);
+      const offer = await storage.createOffer({
+        rideId: input.rideId,
+        driverId: req.session.userId,
+        priceAr: input.priceAr,
+        etaMinutes: input.etaMinutes,
+        message: input.message,
+        expiresAt
+      });
+      if (ride.status === "REQUESTED") {
+        await db.update(rides).set({ status: "BIDDING" }).where(eq4(rides.id, input.rideId));
+      }
+      const passenger = await storage.getUser(ride.passengerId);
+      const driver = await storage.getUser(req.session.userId);
+      sendToUser(ride.passengerId, {
+        type: WS_EVENTS.OFFER_NEW,
+        payload: {
+          ...offer,
+          driver: { id: driver?.id, name: driver?.name, phone: driver?.phone },
+          passenger: { id: passenger?.id, name: passenger?.name }
+        }
+      });
+      await storage.createNotification({
+        userId: ride.passengerId,
+        title: "Nouvelle offre",
+        message: `${driver?.name || "Un conducteur"} propose ${input.priceAr} Ar pour votre trajet.`,
+        type: "OFFER",
+        rideId: input.rideId
+      });
       res.status(201).json(offer);
     } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
+      if (e instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Donn\xE9es invalides", errors: e.errors });
+      }
+      console.error("\u274C Error sending offer:", e);
+      res.status(500).json({ message: "Erreur interne lors de l'envoi de l'offre." });
     }
   });
   app2.post(api.driver.updateRideStatus.path, async (req, res) => {
@@ -2584,7 +2680,7 @@ async function registerRoutes(httpServer2, app2) {
     try {
       const activeRide = await storage.getDriverActiveRide(req.session.userId);
       if (!activeRide) {
-        return res.status(404).json({ message: "No active ride" });
+        return res.json(null);
       }
       const passenger = await storage.getUser(activeRide.passengerId);
       res.json({
@@ -3696,6 +3792,17 @@ var sessionMiddleware = session2({
 });
 app.use(sessionMiddleware);
 logger.info("\u2705 Session middleware configured (manual MemoryStore)");
+app.use((req, res, next) => {
+  if (req.session && req.session.userId && !req.headers.cookie?.includes("farady.sid")) {
+    console.log("\u26A0\uFE0F Session existe mais cookie absent \u2192 forcing save()");
+    req.session.save((err) => {
+      if (err) console.error("Session save error:", err);
+      next();
+    });
+  } else {
+    next();
+  }
+});
 app.use((req, res, next) => {
   const originalSetHeader = res.setHeader.bind(res);
   res.setHeader = function(name, value) {

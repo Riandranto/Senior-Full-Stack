@@ -182,6 +182,18 @@ app.use(sessionMiddleware);
 
 logger.info('✅ Session middleware configured (manual MemoryStore)');
 
+app.use((req, res, next) => {
+  if (req.session && req.session.userId && !req.headers.cookie?.includes('farady.sid')) {
+    console.log('⚠️ Session existe mais cookie absent → forcing save()');
+    req.session.save((err) => {
+      if (err) console.error('Session save error:', err);
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
 
 // Middleware pour loguer les cookies émis (debug)
 app.use((req, res, next) => {

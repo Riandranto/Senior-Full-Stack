@@ -298,19 +298,9 @@ export function useUpdateLocation() {
       queryKey: ['/api/driver/active-ride'],
       queryFn: async () => {
         try {
-          const res = await apiFetch('/api/driver/active-ride', {
-            credentials: 'include',
-          });
-          
-          if (res.status === 404) {
-            return null;
-          }
-          
-          if (!res.ok) {
-            console.warn('Failed to fetch active ride:', res.status);
-            return null;
-          }
-          
+          const res = await apiFetch('/api/driver/active-ride', { credentials: 'include' });
+          if (res.status === 404) return null;
+          if (!res.ok) return null;
           return res.json();
         } catch (error) {
           console.error('Error fetching active ride:', error);
@@ -318,7 +308,7 @@ export function useUpdateLocation() {
         }
       },
       refetchInterval: 10000,
-      retry: 1,
+      retry: false,
       staleTime: 0,
     });
   }

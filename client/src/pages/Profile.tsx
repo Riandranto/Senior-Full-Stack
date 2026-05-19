@@ -1,4 +1,4 @@
-// client/src/pages/passenger/Profile.tsx (version améliorée avec affichage des documents)
+// client/src/pages/passenger/Profile.tsx (version corrigée - suppression de vehicleYear)
 import React, { useState, useEffect } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { useAuth } from '@/hooks/use-auth';
@@ -48,6 +48,12 @@ export default function ProfilePage() {
   const [showDriverForm, setShowDriverForm] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<any>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  const [vehicleType, setVehicleType] = useState<'TAXI'|'BAJAJ'|'CAMION'|'4X4'>('TAXI');
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleColor, setVehicleColor] = useState('');
+  const [vehicleSeats, setVehicleSeats] = useState('');
 
   // Récupérer les documents passager
   const { data: passengerDocuments = [], refetch: refetchPassengerDocs } = useQuery({
@@ -160,7 +166,6 @@ export default function ProfilePage() {
       formData.append('file', file);
       formData.append('type', type);
       
-      // Simuler progression
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => Math.min(prev + 10, 90));
       }, 200);
@@ -274,46 +279,33 @@ export default function ProfilePage() {
   });
 
   const handleBecomeDriver = async () => {
-    if (!vehicleNum || !licenseNum) {
-      toast({ 
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy feno" : "Champs manquants",
-        description: lang === 'mg' ? "Ampidiro ny matricule sy ny laharana permis" : "Veuillez entrer la plaque et le numéro de permis"
-      });
+    if (!vehicleNum || !licenseNum || !vehicleType) {
+      toast({ variant: "destructive", title: "Champs manquants", description: "Veuillez remplir tous les champs obligatoires" });
       return;
     }
-    
     try {
       const res = await apiFetch('/api/driver/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          vehicleType: 'TAXI',
-          vehicleNumber: vehicleNum, 
-          licenseNumber: licenseNum 
+          vehicleType,
+          vehicleNumber: vehicleNum,
+          licenseNumber: licenseNum,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleColor: vehicleColor || null,
+          vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
+          // vehicleYear supprimé car non présent dans le schéma
         }),
         credentials: 'include',
       });
-      
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "Failed to register as driver");
-      }
-      
-      toast({ 
-        title: lang === 'mg' ? "Fangatahana nalefa" : "Demande envoyée",
-        description: lang === 'mg' ? "Hiandry fankatoavana" : "En attente de validation" 
-      });
-      
-      refetchUser();
-      refetchDriverProfile();
+      if (!res.ok) throw new Error();
+      toast({ title: "Demande envoyée", description: "En attente de validation" });
+      await refetchUser();
+      await refetchDriverProfile();
       setShowDriverForm(false);
-    } catch (error: any) {
-      toast({ 
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message || (lang === 'mg' ? "Tsy afaka nandefa ny fangatahana" : "Impossible d'envoyer la demande")
-      });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Erreur", description: "Impossible d'envoyer la demande" });
     }
   };
 
@@ -761,6 +753,21 @@ export default function ProfilePage() {
               </Card>
             </motion.div>
           )}
+          {user.role === 'DRIVER' && driverProfile && (
+            <Card className="p-6 rounded-3xl space-y-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Car className="w-5 h-5 text-primary" /> Caractéristiques du véhicule
+              </h2>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><span className="text-muted-foreground">Type :</span> {driverProfile.vehicleType}</div>
+                {driverProfile.vehicleMake && <div><span className="text-muted-foreground">Marque :</span> {driverProfile.vehicleMake}</div>}
+                {driverProfile.vehicleModel && <div><span className="text-muted-foreground">Modèle :</span> {driverProfile.vehicleModel}</div>}
+                {driverProfile.vehicleColor && <div><span className="text-muted-foreground">Couleur :</span> {driverProfile.vehicleColor}</div>}
+                {driverProfile.vehicleSeats && <div><span className="text-muted-foreground">Places :</span> {driverProfile.vehicleSeats}</div>}
+                <div><span className="text-muted-foreground">Plaque :</span> {driverProfile.vehicleNumber}</div>
+              </div>
+            </Card>
+          )}
 
           {/* Liste des documents conducteur */}
           {user.role === 'DRIVER' && driverDocs.length > 0 && (
@@ -856,19 +863,45 @@ export default function ProfilePage() {
                       onChange={(e) => setLicenseNum(e.target.value)}
                       className="rounded-xl"
                     />
-                    <div className="flex gap-2">
-                      <Button 
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => setShowDriverForm(false)}
+                    <div>
+                      <label className="text-sm font-semibold">Type de véhicule</label>
+                      <select 
+                        value={vehicleType} 
+                        onChange={(e) => setVehicleType(e.target.value as any)}
+                        className="w-full rounded-xl border p-2"
                       >
+                        <option value="TAXI">Taxi</option>
+                        <option value="BAJAJ">Bajaj</option>
+                        <option value="CAMION">Camion</option>
+                        <option value="4X4">4x4</option>
+                      </select>
+                    </div>
+                    <Input 
+                      placeholder="Marque (ex: Toyota)" 
+                      value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)}
+                      className="rounded-xl"
+                    />
+                    <Input 
+                      placeholder="Modèle (ex: Hiace)" 
+                      value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)}
+                      className="rounded-xl"
+                    />
+                    <Input 
+                      placeholder="Couleur" 
+                      value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}
+                      className="rounded-xl"
+                    />
+                    <Input 
+                      placeholder="Nombre de places" 
+                      value={vehicleSeats} onChange={(e) => setVehicleSeats(e.target.value)}
+                      className="rounded-xl"
+                    />
+                    {/* Suppression du champ Année (vehicleYear) */}
+                    <div className="flex gap-2 mt-2">
+                      <Button variant="outline" className="flex-1" onClick={() => setShowDriverForm(false)}>
                         {lang === 'mg' ? 'Miverina' : 'Annuler'}
                       </Button>
-                      <Button 
-                        className="flex-1 bg-primary"
-                        onClick={handleBecomeDriver}
-                        disabled={!vehicleNum || !licenseNum}
-                      >
+                      <Button className="flex-1 bg-primary" onClick={handleBecomeDriver} disabled={!vehicleNum || !licenseNum || !vehicleType}>
                         {lang === 'mg' ? 'Alefaso' : 'Envoyer'}
                       </Button>
                     </div>
