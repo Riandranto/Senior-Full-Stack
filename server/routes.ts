@@ -1059,11 +1059,20 @@ export async function registerRoutes(
     if (!ride) return res.status(404).json({ message: "Not found" });
     
     let driver = undefined;
+    let vehicleDetails = null;
     if (ride.driverId) {
       driver = await storage.getUser(ride.driverId);
+      const profile = await storage.getDriverProfile(ride.driverId);
+      if (profile) {
+        vehicleDetails = {
+          vehicleNumber: profile.vehicleNumber,
+          vehicleMake: profile.vehicleMake,
+          vehicleModel: profile.vehicleModel,
+          vehicleColor: profile.vehicleColor
+        };
+      }
     }
-    
-    res.json({ ...ride, driver });
+    res.json({ ...ride, driver, vehicleDetails });
   });
 
   app.get(api.passenger.history.path, async (req, res) => {
@@ -1107,7 +1116,14 @@ export async function registerRoutes(
         .orderBy(sql`timestamp DESC`)
         .limit(1);
       const location = locResult.length > 0 ? { lat: parseFloat(locResult[0].lat as any), lng: parseFloat(locResult[0].lng as any) } : null;
-      return { ...o, driver, profile, location };
+      
+      const vehicleDetails = profile ? {
+        vehicleNumber: profile.vehicleNumber,
+        vehicleMake: profile.vehicleMake,
+        vehicleModel: profile.vehicleModel,
+        vehicleColor: profile.vehicleColor
+      } : null;
+      return { ...o, driver, profile, location, vehicleDetails };
     }));
     
     res.json(enrichedOffers);
@@ -1422,7 +1438,7 @@ export async function registerRoutes(
     try {
       const input = api.driver.sendOffer.input.parse(req.body);
   
-      // Vérification du type de véhicule
+      // Vérification du profil conducteur
       const driverProfile = await storage.getDriverProfile(req.session.userId);
       if (!driverProfile) {
         return res.status(403).json({ message: "Vous n'êtes pas enregistré comme conducteur." });
@@ -1439,20 +1455,23 @@ export async function registerRoutes(
         });
       }
   
-      // Vérifier que la course est encore en REQUESTED ou BIDDING
       if (!['REQUESTED', 'BIDDING'].includes(ride.status)) {
         return res.status(400).json({ message: "Cette course n'est plus disponible." });
       }
   
-      // Vérifier que le conducteur n'a pas déjà une offre active sur cette course
+      // Vérifier qu'il n'y a pas déjà une offre active du même conducteur
       const existingOffers = await storage.getOffersForRide(input.rideId);
-      const alreadySent = existingOffers.some(o => o.driverId === req.session.userId && o.status === 'SENT');
-      if (alreadySent) {
-        return res.status(400).json({ message: "Vous avez déjà envoyé une offre pour cette course." });
+      const hasActiveOffer = existingOffers.some(o =>
+        o.driverId === req.session.userId &&
+        (o.status === 'SENT' || o.status === 'ACCEPTED')
+      );
+      if (hasActiveOffer) {
+        return res.status(400).json({ message: "Vous avez déjà une offre active pour cette course." });
       }
   
       const expiresAt = new Date(Date.now() + 90000); // 90 secondes
   
+      // Création de l'offre
       const offer = await storage.createOffer({
         rideId: input.rideId,
         driverId: req.session.userId,
@@ -1462,12 +1481,29 @@ export async function registerRoutes(
         expiresAt
       });
   
-      // Mettre à jour le statut de la course en BIDDING si ce n'est pas déjà fait
+      // Planification de l'expiration
+      setTimeout(async () => {
+        const currentOffer = await db.select().from(offers).where(eq(offers.id, offer.id)).limit(1);
+        if (currentOffer.length && currentOffer[0].status === 'SENT') {
+          await db.update(offers).set({ status: 'EXPIRED' }).where(eq(offers.id, offer.id));
+          // Notifications
+          sendToUser(ride.passengerId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, passengerId: ride.passengerId, driverId: req.session.userId }
+          });
+          sendToUser(req.session.userId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, driverId: req.session.userId, passengerId: ride.passengerId }
+          });
+        }
+      }, 90000);
+  
+      // Mise à jour du statut de la course si nécessaire
       if (ride.status === 'REQUESTED') {
         await db.update(rides).set({ status: "BIDDING" }).where(eq(rides.id, input.rideId));
       }
   
-      // Notification au passager via WebSocket
+      // Notification au passager
       const passenger = await storage.getUser(ride.passengerId);
       const driver = await storage.getUser(req.session.userId);
       sendToUser(ride.passengerId, {
@@ -1479,7 +1515,7 @@ export async function registerRoutes(
         }
       });
   
-      // Notification push dans la base de données
+      // Notification push en base
       await storage.createNotification({
         userId: ride.passengerId,
         title: "Nouvelle offre",
@@ -1487,9 +1523,6 @@ export async function registerRoutes(
         type: "OFFER",
         rideId: input.rideId
       });
-  
-      // Diffusion aux autres conducteurs (optionnel, pour indiquer que des offres existent)
-      // broadcastToDrivers({ type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: { rideId: input.rideId, status: "BIDDING" } });
   
       res.status(201).json(offer);
     } catch (e) {

@@ -7,7 +7,7 @@ import { useAuth } from "./hooks/use-auth";
 import { useOfflineSync } from "./hooks/use-offline-sync";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { capacitorStorage } from "./lib/capacitor-storage";
-import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
+import { useState, useEffect, Component, ErrorInfo, ReactNode, useRef } from "react";
 import { Capacitor } from '@capacitor/core';
 
 // Pages
@@ -31,34 +31,25 @@ const LoadingSpinner = () => (
   </div>
 );
 
-// Error Boundary pour capturer les erreurs de rendu
+// Error Boundary
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
-
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }
-
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
-    // Optionnel : envoyer l'erreur à un service de monitoring
   }
-
   render() {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground p-4 text-center">
           <h1 className="text-2xl font-bold text-red-500 mb-4">Une erreur est survenue</h1>
           <p className="text-muted-foreground mb-6">{this.state.error?.message || "Erreur inconnue"}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-primary text-white rounded-xl"
-          >
-            Rafraîchir la page
-          </button>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-primary text-white rounded-xl">Rafraîchir la page</button>
         </div>
       );
     }
@@ -66,18 +57,20 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
-// Hook pour stocker la dernière route active
+// Hook pour stocker la dernière route active (amélioré)
 function useLastRoute() {
   const STORAGE_KEY = 'farady_last_route';
   const [lastRoute, setLastRoute] = useState<string>('/passenger');
+  const isInitialized = useRef(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setLastRoute(saved);
+    isInitialized.current = true;
   }, []);
 
   const updateLastRoute = (route: string) => {
-    if (route !== '/login' && route !== '/auth' && !route.includes('offline')) {
+    if (route !== '/login' && route !== '/auth' && !route.includes('offline') && route !== '/') {
       setLastRoute(route);
       localStorage.setItem(STORAGE_KEY, route);
     }
@@ -107,28 +100,15 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
     capacitorStorage.isOfflineMode().then(setOfflineMode);
   }, []);
 
-  if (offlineMode) {
-    console.log('🔓 Offline mode: bypassing auth');
-    return <Component />;
-  }
-
+  if (offlineMode) return <Component />;
   if (isLoading) return <LoadingSpinner />;
-
-  if (!user && isConnected) {
-    console.log('🔒 No user, redirecting to login');
-    return <Redirect to="/login" />;
-  }
-
-  if (!user && !isConnected) {
-    return <Redirect to="/login" />;
-  }
-
+  if (!user && isConnected) return <Redirect to="/login" />;
+  if (!user && !isConnected) return <Redirect to="/login" />;
   if (!allowedRoles.includes(user!.role)) {
     if (user!.role === 'DRIVER') return <Redirect to="/driver" />;
     if (user!.role === 'ADMIN') return <Redirect to="/admin" />;
     return <Redirect to="/passenger" />;
   }
-
   return <Component />;
 }
 
@@ -137,31 +117,62 @@ function Router() {
   const [offlineMode, setOfflineMode] = useState(false);
   const { isConnected } = useNetworkStatus();
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const { lastRoute } = useLastRoute();
+  const { lastRoute, updateLastRoute } = useLastRoute();
+  const reconnectingRef = useRef(false);
+  const [location] = useLocation();
 
-  // Reconnexion automatique
+  // Sauvegarder la route courante avant qu'elle ne soit perdue
+  useEffect(() => {
+    if (location && location !== '/login') {
+      updateLastRoute(location);
+    }
+  }, [location, updateLastRoute]);
+
+  // Reconnexion automatique améliorée
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     const handleReconnect = async () => {
+      // Ne rien faire si pas de connexion, ou si déjà en train de reconnecter
       if (!isConnected) return;
-      if (!user && !isLoading && window.location.pathname !== '/login') {
-        setIsReconnecting(true);
-        try {
-          const result = await refetch();
-          if (result.data) {
-            window.location.href = lastRoute;
-          }
-        } catch (err) {
-          console.error('Reconnection auth failed', err);
-        } finally {
-          setTimeout(() => setIsReconnecting(false), 500);
+      if (reconnectingRef.current) return;
+      // Si l'utilisateur est déjà connecté, inutile
+      if (user) return;
+      // Si on est sur la page de login, ne pas reconnecter automatiquement
+      if (location === '/login') return;
+      // Si on est en train de charger, attendre
+      if (isLoading) return;
+
+      console.log('🔄 Tentative de reconnexion automatique...');
+      reconnectingRef.current = true;
+      setIsReconnecting(true);
+
+      try {
+        const result = await refetch();
+        if (result.data) {
+          console.log('✅ Reconnexion réussie, redirection vers:', lastRoute);
+          // Utiliser wouter navigateur pour éviter un rechargement complet
+          window.location.href = lastRoute;
+        } else {
+          console.log('❌ Reconnexion échouée, redirection vers login');
+          window.location.href = '/login';
         }
+      } catch (err) {
+        console.error('Erreur lors de la reconnexion:', err);
+        window.location.href = '/login';
+      } finally {
+        setTimeout(() => {
+          reconnectingRef.current = false;
+          setIsReconnecting(false);
+        }, 500);
       }
     };
-    timeoutId = setTimeout(handleReconnect, 1000);
-    return () => clearTimeout(timeoutId);
-  }, [isConnected, user, isLoading, refetch, lastRoute]);
 
+    // Déclencher après un délai pour laisser le temps à la connexion de se rétablir
+    timeoutId = setTimeout(handleReconnect, 1500);
+    return () => clearTimeout(timeoutId);
+  }, [isConnected, user, isLoading, refetch, lastRoute, location]);
+
+  // Mise à jour du mode hors ligne
   useEffect(() => {
     capacitorStorage.isOfflineMode().then(setOfflineMode);
   }, []);
@@ -169,27 +180,13 @@ function Router() {
   if (offlineMode) {
     return (
       <Switch>
-        <Route path="/passenger">
-          {() => <ProtectedRoute component={PassengerHome} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/history">
-          {() => <ProtectedRoute component={PassengerHistory} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/ride/:id">
-          {() => <ProtectedRoute component={PassengerRide} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/profile">
-          {() => <ProtectedRoute component={Profile} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/settings">
-          {() => <ProtectedRoute component={Settings} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/help">
-          {() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />}
-        </Route>
-        <Route path="/passenger/bookings">
-          {() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />}
-        </Route>
+        <Route path="/passenger" component={PassengerHome} />
+        <Route path="/passenger/history" component={PassengerHistory} />
+        <Route path="/passenger/ride/:id" component={PassengerRide} />
+        <Route path="/passenger/profile" component={Profile} />
+        <Route path="/passenger/settings" component={Settings} />
+        <Route path="/passenger/help" component={Help} />
+        <Route path="/passenger/bookings" component={BookingsPage} />
         <Route path="/"><Redirect to="/passenger" /></Route>
         <Route><Redirect to="/passenger" /></Route>
       </Switch>
@@ -211,44 +208,20 @@ function Router() {
       
       <Route path="/login" component={AuthPage} />
       
-      <Route path="/passenger">
-        {() => <ProtectedRoute component={PassengerHome} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/history">
-        {() => <ProtectedRoute component={PassengerHistory} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/ride/:id">
-        {() => <ProtectedRoute component={PassengerRide} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/profile">
-        {() => <ProtectedRoute component={Profile} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/settings">
-        {() => <ProtectedRoute component={Settings} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/help">
-        {() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />}
-      </Route>
-      <Route path="/passenger/bookings">
-        {() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />}
-      </Route>
+      <Route path="/passenger" component={() => <ProtectedRoute component={PassengerHome} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/history" component={() => <ProtectedRoute component={PassengerHistory} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/ride/:id" component={() => <ProtectedRoute component={PassengerRide} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/profile" component={() => <ProtectedRoute component={Profile} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/settings" component={() => <ProtectedRoute component={Settings} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/help" component={() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />} />
+      <Route path="/passenger/bookings" component={() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />} />
 
-      <Route path="/driver">
-        {() => <ProtectedRoute component={DriverHome} allowedRoles={['DRIVER']} />}
-      </Route>
-      <Route path="/driver/profile">
-        {() => <ProtectedRoute component={Profile} allowedRoles={['DRIVER']} />}
-      </Route>
-      <Route path="/driver/settings">
-        {() => <ProtectedRoute component={Settings} allowedRoles={['DRIVER']} />}
-      </Route>
-      <Route path="/driver/help">
-        {() => <ProtectedRoute component={Help} allowedRoles={['DRIVER']} />}
-      </Route>
+      <Route path="/driver" component={() => <ProtectedRoute component={DriverHome} allowedRoles={['DRIVER']} />} />
+      <Route path="/driver/profile" component={() => <ProtectedRoute component={Profile} allowedRoles={['DRIVER']} />} />
+      <Route path="/driver/settings" component={() => <ProtectedRoute component={Settings} allowedRoles={['DRIVER']} />} />
+      <Route path="/driver/help" component={() => <ProtectedRoute component={Help} allowedRoles={['DRIVER']} />} />
 
-      <Route path="/admin">
-        {() => <ProtectedRoute component={AdminDashboard} allowedRoles={['ADMIN']} />}
-      </Route>
+      <Route path="/admin" component={() => <ProtectedRoute component={AdminDashboard} allowedRoles={['ADMIN']} />} />
 
       <Route>
         <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground p-4 text-center">

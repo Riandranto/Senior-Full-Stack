@@ -2256,10 +2256,20 @@ async function registerRoutes(httpServer2, app2) {
     const ride = await storage.getRide(id);
     if (!ride) return res.status(404).json({ message: "Not found" });
     let driver = void 0;
+    let vehicleDetails = null;
     if (ride.driverId) {
       driver = await storage.getUser(ride.driverId);
+      const profile = await storage.getDriverProfile(ride.driverId);
+      if (profile) {
+        vehicleDetails = {
+          vehicleNumber: profile.vehicleNumber,
+          vehicleMake: profile.vehicleMake,
+          vehicleModel: profile.vehicleModel,
+          vehicleColor: profile.vehicleColor
+        };
+      }
     }
-    res.json({ ...ride, driver });
+    res.json({ ...ride, driver, vehicleDetails });
   });
   app2.get(api.passenger.history.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2292,7 +2302,13 @@ async function registerRoutes(httpServer2, app2) {
       const profile = await storage.getDriverProfile(o.driverId);
       const locResult = await db.select().from(driverLocations).where(eq4(driverLocations.driverId, o.driverId)).orderBy(sql2`timestamp DESC`).limit(1);
       const location = locResult.length > 0 ? { lat: parseFloat(locResult[0].lat), lng: parseFloat(locResult[0].lng) } : null;
-      return { ...o, driver, profile, location };
+      const vehicleDetails = profile ? {
+        vehicleNumber: profile.vehicleNumber,
+        vehicleMake: profile.vehicleMake,
+        vehicleModel: profile.vehicleModel,
+        vehicleColor: profile.vehicleColor
+      } : null;
+      return { ...o, driver, profile, location, vehicleDetails };
     }));
     res.json(enrichedOffers);
   });
@@ -2563,9 +2579,11 @@ async function registerRoutes(httpServer2, app2) {
         return res.status(400).json({ message: "Cette course n'est plus disponible." });
       }
       const existingOffers = await storage.getOffersForRide(input.rideId);
-      const alreadySent = existingOffers.some((o) => o.driverId === req.session.userId && o.status === "SENT");
-      if (alreadySent) {
-        return res.status(400).json({ message: "Vous avez d\xE9j\xE0 envoy\xE9 une offre pour cette course." });
+      const hasActiveOffer = existingOffers.some(
+        (o) => o.driverId === req.session.userId && (o.status === "SENT" || o.status === "ACCEPTED")
+      );
+      if (hasActiveOffer) {
+        return res.status(400).json({ message: "Vous avez d\xE9j\xE0 une offre active pour cette course." });
       }
       const expiresAt = new Date(Date.now() + 9e4);
       const offer = await storage.createOffer({
@@ -2576,6 +2594,20 @@ async function registerRoutes(httpServer2, app2) {
         message: input.message,
         expiresAt
       });
+      setTimeout(async () => {
+        const currentOffer = await db.select().from(offers).where(eq4(offers.id, offer.id)).limit(1);
+        if (currentOffer.length && currentOffer[0].status === "SENT") {
+          await db.update(offers).set({ status: "EXPIRED" }).where(eq4(offers.id, offer.id));
+          sendToUser(ride.passengerId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, passengerId: ride.passengerId, driverId: req.session.userId }
+          });
+          sendToUser(req.session.userId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, driverId: req.session.userId, passengerId: ride.passengerId }
+          });
+        }
+      }, 9e4);
       if (ride.status === "REQUESTED") {
         await db.update(rides).set({ status: "BIDDING" }).where(eq4(rides.id, input.rideId));
       }
@@ -3191,8 +3223,8 @@ async function registerRoutes(httpServer2, app2) {
       if (bookingData.driverId) {
         driver = await storage.getUser(bookingData.driverId);
       }
-      const offers3 = await db.select().from(bookingOffers).where(eq4(bookingOffers.bookingId, id));
-      res.json({ ...bookingData, driver, offers: offers3 });
+      const offers2 = await db.select().from(bookingOffers).where(eq4(bookingOffers.bookingId, id));
+      res.json({ ...bookingData, driver, offers: offers2 });
     } catch (error) {
       console.error("\u274C Error fetching booking:", error);
       res.status(500).json({ message: "Erreur interne" });
@@ -3209,8 +3241,8 @@ async function registerRoutes(httpServer2, app2) {
       if (bookingData.passengerId !== req.session.userId && bookingData.driverId !== req.session.userId && req.session.role !== "ADMIN") {
         return res.status(403).json({ message: "Acc\xE8s non autoris\xE9" });
       }
-      const offers3 = await db.select().from(bookingOffers).where(eq4(bookingOffers.bookingId, id)).orderBy(sql2`${bookingOffers.createdAt} DESC`);
-      const enrichedOffers = await Promise.all(offers3.map(async (o) => {
+      const offers2 = await db.select().from(bookingOffers).where(eq4(bookingOffers.bookingId, id)).orderBy(sql2`${bookingOffers.createdAt} DESC`);
+      const enrichedOffers = await Promise.all(offers2.map(async (o) => {
         const driver = await storage.getUser(o.driverId);
         return { ...o, driver };
       }));
