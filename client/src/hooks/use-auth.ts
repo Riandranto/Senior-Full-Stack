@@ -1,3 +1,4 @@
+// client/src/hooks/use-auth.ts
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { type User } from "@shared/schema";
@@ -5,14 +6,15 @@ import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 import { normalizePhone } from "@/lib/phone-normalizer";
+import { useLocation } from "wouter";
 
 export function useAuth() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { lang } = useTranslation();
+  const [, setLocation] = useLocation();
 
-  // Vérification de l'authentification (une seule requête)
-  const { data: user, isLoading, error, refetch } = useQuery<User | null>({
+  const { data: user, isLoading, refetch } = useQuery<User | null>({
     queryKey: [api.auth.me.path],
     queryFn: async () => {
       try {
@@ -31,17 +33,14 @@ export function useAuth() {
     },
     retry: false,
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: (window as any).capacitor ? false : true,
     refetchInterval: 5 * 60 * 1000,
   });
 
-  // Demande d'OTP
   const requestOtpMutation = useMutation({
     mutationFn: async (phone: string) => {
       const { valid, normalized, error } = normalizePhone(phone);
-      if (!valid) {
-        throw new Error(error || (lang === 'mg' ? "Tsy lavorary ny nomerao" : "Numéro invalide"));
-      }
+      if (!valid) throw new Error(error || (lang === 'mg' ? "Tsy lavorary ny nomerao" : "Numéro invalide"));
       const res = await apiFetch(api.auth.requestOtp.path, {
         method: api.auth.requestOtp.method,
         body: JSON.stringify({ phone: normalized }),
@@ -62,7 +61,6 @@ export function useAuth() {
     },
   });
 
-  // Connexion
   const loginMutation = useMutation({
     mutationFn: async (data: { phone: string; otp: string }) => {
       const { valid, normalized, error } = normalizePhone(data.phone);
@@ -87,9 +85,10 @@ export function useAuth() {
         title: lang === 'mg' ? "Tafiditra!" : "Connecté!",
         description: lang === 'mg' ? "Tonga soa eto Farady" : "Bienvenue sur Farady",
       });
-      if (result.user.role === 'ADMIN') window.location.href = '/admin';
-      else if (result.user.role === 'DRIVER') window.location.href = '/driver';
-      else window.location.href = '/passenger';
+      // Navigation sans rechargement
+      if (result.user.role === 'ADMIN') setLocation('/admin');
+      else if (result.user.role === 'DRIVER') setLocation('/driver');
+      else setLocation('/passenger');
       return result;
     },
     onError: (error: Error) => {
@@ -97,7 +96,6 @@ export function useAuth() {
     },
   });
 
-  // Déconnexion
   const logoutMutation = useMutation({
     mutationFn: async () => {
       const res = await apiFetch(api.auth.logout.path, { method: api.auth.logout.method });
@@ -110,11 +108,18 @@ export function useAuth() {
     onSuccess: () => {
       queryClient.clear();
       localStorage.removeItem('user');
+      sessionStorage.removeItem('offline_mode');
+      localStorage.removeItem('offline_mode');
+      sessionStorage.removeItem('manual_logout');
+      sessionStorage.setItem('manual_logout', 'true');
       toast({ title: lang === 'mg' ? "Tafivoaka" : "Déconnecté" });
-      window.location.href = '/login';
+      setLocation('/login');
     },
     onError: () => {
-      window.location.href = '/login';
+      sessionStorage.removeItem('offline_mode');
+      localStorage.removeItem('offline_mode');
+      sessionStorage.setItem('manual_logout', 'true');
+      setLocation('/login');
     },
   });
 

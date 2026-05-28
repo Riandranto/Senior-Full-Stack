@@ -1,5 +1,5 @@
 // src/pages/passenger/Bookings.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
 import { useTranslation } from '@/lib/i18n';
@@ -49,6 +49,14 @@ export default function BookingsPage() {
   const [cancelReason, setCancelReason] = useState('');
   const [offersMap, setOffersMap] = useState<Map<number, any[]>>(new Map());
 
+  // Ref pour stocker selectedBooking sans provoquer de réabonnement WebSocket
+  const selectedBookingRef = useRef(selectedBooking);
+
+  useEffect(() => {
+    selectedBookingRef.current = selectedBooking;
+  }, [selectedBooking]);
+
+  // Requête principale des réservations avec polling conditionnel
   const { data: bookings = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ['/api/bookings'],
     queryFn: async () => {
@@ -56,9 +64,14 @@ export default function BookingsPage() {
       if (!res.ok) return [];
       return res.json();
     },
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
-  // Récupération des offres pour la réservation sélectionnée via API (en plus du WebSocket)
+  // Récupération des offres pour la réservation sélectionnée
   const { data: fetchedOffers = [], refetch: refetchOffers } = useQuery<any[]>({
     queryKey: ['/api/bookings', selectedBooking?.id, 'offers'],
     queryFn: async () => {
@@ -68,15 +81,19 @@ export default function BookingsPage() {
       return res.json();
     },
     enabled: !!selectedBooking,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 20000;
+    },
+    refetchIntervalInBackground: false,
   });
 
-  // Fusionner les offres WebSocket et celles de l'API
+  // Fusion des offres WebSocket et API
   useEffect(() => {
     if (selectedBooking && fetchedOffers.length > 0) {
       setOffersMap(prev => {
         const newMap = new Map(prev);
         const existing = newMap.get(selectedBooking.id) || [];
-        // Fusionner sans doublon (basé sur l'id)
         const merged = [...existing];
         fetchedOffers.forEach(offer => {
           if (!merged.some(o => o.id === offer.id)) {
@@ -89,30 +106,24 @@ export default function BookingsPage() {
     }
   }, [selectedBooking, fetchedOffers]);
 
-  useEffect(() => {
-    if (selectedBooking) {
-      refetchOffers();
-    }
-  }, [selectedBooking]);
-
-  // Écoute WebSocket pour les nouvelles offres
+  // WebSocket : écoute des nouvelles offres – souscrit une fois et utilise la ref
   useEffect(() => {
     if (!connected) return;
-  
+
     const handleNewOffer = (data: any) => {
-      console.log(' Offre reçue via WebSocket:', data);
+      console.log('Offre reçue via WebSocket:', data);
       const bookingId = data.bookingId || data.booking_id || data.reservationId;
       const driverName = data.driverName || data.driver_name || data.driver?.name || 'Chauffeur';
       const priceAr = data.priceAr || data.price || data.amount;
       const etaMinutes = data.etaMinutes || data.eta || data.eta_minutes || 10;
       const driverId = data.driverId || data.driver_id || data.driver?.id;
       const offerId = data.offerId || data.id || data.offer_id;
-  
+
       if (!bookingId || !priceAr) {
         console.warn('Données d’offre incomplètes:', data);
         return;
       }
-  
+
       setOffersMap(prev => {
         const newMap = new Map(prev);
         const existing = newMap.get(bookingId) || [];
@@ -131,14 +142,15 @@ export default function BookingsPage() {
         }
         return newMap;
       });
-  
-      if (selectedBooking && selectedBooking.id === bookingId) {
+
+      // Utiliser la ref pour la réservation courante
+      if (selectedBookingRef.current?.id === bookingId) {
         toast({
           title: lang === 'mg' ? "Tolobidy vaovao" : "Nouvelle offre",
           description: lang === 'mg' ? `Ny mpamily ${driverName} dia nanolotra ${priceAr} Ar` : `Le chauffeur ${driverName} a proposé ${priceAr} Ar`,
           className: "mobile-toast"
         });
-        refetchOffers(); // Rafraîchir les offres depuis l'API
+        refetchOffers();
       } else {
         toast({
           title: lang === 'mg' ? "Tolobidy vaovao amin'ny reservation" : "Nouvelle offre sur une réservation",
@@ -146,15 +158,14 @@ export default function BookingsPage() {
           className: "mobile-toast",
           duration: 5000,
         });
-        refetch(); // Rafraîchir la liste des réservations
+        refetch();
       }
     };
-  
-    // 🔥 Seul l'événement 'booking_offer:new' est utilisé
+
     const unsub = subscribe('booking_offer:new', handleNewOffer);
-  
     return () => unsub();
-  }, [connected, subscribe, selectedBooking, refetch, refetchOffers, lang, toast]);
+  }, [connected, subscribe, refetch, refetchOffers, lang, toast]);
+
   // Mutation pour accepter une offre
   const acceptOffer = useMutation({
     mutationFn: async ({ bookingId, offerId }: { bookingId: number; offerId: number }) => {

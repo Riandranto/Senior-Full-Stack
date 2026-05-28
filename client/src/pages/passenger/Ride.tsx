@@ -57,6 +57,8 @@ export default function PassengerRide() {
   const { connected, subscribe } = useWebSocket();
   const queryClient = useQueryClient();
 
+  const wsSubscribedRef = useRef(false);
+
   // Timer expiration des offres
   const [offerExpiry, setOfferExpiry] = useState<Record<number, number>>({});
 
@@ -113,22 +115,6 @@ export default function PassengerRide() {
     }
   }, [ride]);
 
-  // Acceptation d'offre (WebSocket)
-  useEffect(() => {
-    if (!connected) return;
-    const unsub = subscribe('OFFER_ACCEPTED', (data: any) => {
-      if (data.rideId === rideId) {
-        setOtherUserName(data.driverName || 'Chauffeur');
-        setOtherUserId(data.driverId);
-        setOtherUserPhone(data.driverPhone || '');
-        setShowChat(true);
-        setChatMinimized(false);
-        toast({ title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!", description: lang === 'mg' ? `Ny mpamily ${data.driverName} dia ho tonga` : `Le chauffeur ${data.driverName} va arriver`, className: "mobile-toast" });
-      }
-    });
-    return () => unsub();
-  }, [connected, rideId, toast, lang]);
-
   // Ouverture automatique du chat si course active
   useEffect(() => {
     if (!ride) return;
@@ -142,25 +128,50 @@ export default function PassengerRide() {
     }
   }, [ride, showChat]);
 
-  // Mise à jour du statut et position conducteur
+  // Souscriptions WebSocket (une seule fois)
   useEffect(() => {
-    if (!connected) return;
-    const unsubStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => { if (data.id === rideId) refetchRide(); });
-    const unsubLoc = subscribe('DRIVER_LOCATION', (data: any) => { if (data.rideId === rideId) setAssignedDriverLoc({ lat: data.lat, lng: data.lng }); });
-    return () => { unsubStatus(); unsubLoc(); };
-  }, [connected, rideId, refetchRide]);
+    if (!connected || wsSubscribedRef.current) return;
+    wsSubscribedRef.current = true;
 
-  // Polling position conducteur
+    const unsubOfferAccepted = subscribe('OFFER_ACCEPTED', (data: any) => {
+      if (data.rideId === rideId) {
+        setOtherUserName(data.driverName || 'Chauffeur');
+        setOtherUserId(data.driverId);
+        setOtherUserPhone(data.driverPhone || '');
+        setShowChat(true);
+        setChatMinimized(false);
+        toast({ title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!", description: lang === 'mg' ? `Ny mpamily ${data.driverName} dia ho tonga` : `Le chauffeur ${data.driverName} va arriver`, className: "mobile-toast" });
+      }
+    });
+
+    const unsubStatus = subscribe('RIDE_STATUS_CHANGED', (data: any) => {
+      if (data.id === rideId) refetchRide();
+    });
+
+    const unsubLoc = subscribe('DRIVER_LOCATION', (data: any) => {
+      if (data.rideId === rideId) setAssignedDriverLoc({ lat: data.lat, lng: data.lng });
+    });
+
+    return () => {
+      unsubOfferAccepted();
+      unsubStatus();
+      unsubLoc();
+      wsSubscribedRef.current = false;
+    };
+  }, [connected, rideId, subscribe, refetchRide, toast, lang]);
+
+  // Polling position conducteur (fallback) avec vérification de visibilité
   useEffect(() => {
     if (!ride?.driverId) return;
     const active = ['ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'];
     if (!active.includes(ride.status)) return;
     const interval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
       try {
         const res = await fetch(`/api/driver/${ride.driverId}/location`, { credentials: 'include' });
         if (res.ok) { const data = await res.json(); if (data?.lat) setAssignedDriverLoc(data); }
       } catch {}
-    }, 10000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [ride?.driverId, ride?.status]);
 
@@ -206,7 +217,11 @@ export default function PassengerRide() {
       return res.json();
     },
     enabled: !!rideId && !!ride && (ride?.status === 'REQUESTED' || ride?.status === 'BIDDING'),
-    refetchInterval: 30000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const handleSubmitRating = () => {
@@ -405,27 +420,77 @@ export default function PassengerRide() {
       {/* Dialog d'annulation */}
       <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
         <DialogContent className="rounded-3xl max-w-sm mx-auto">
-          <DialogHeader><DialogTitle className="font-display text-xl flex items-center gap-2 text-red-600"><AlertTriangle className="w-5 h-5" />{lang === 'mg' ? 'Hanaisotra ny dia?' : 'Annuler la course?'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              {lang === 'mg' ? 'Hanaisotra ny dia?' : 'Annuler la course?'}
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">{lang === 'mg' ? 'Safidio ny antony hanafoanana ny dia:' : 'Veuillez sélectionner la raison de l\'annulation :'}</p>
-            <div className="grid grid-cols-1 gap-2">{cancelReasons.map((reason) => (<button key={reason.id} onClick={() => setSelectedCancelReason(reason.id)} className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${selectedCancelReason === reason.id ? 'border-red-500 bg-red-50 dark:bg-red-950/20' : 'border-border/50 hover:border-muted-foreground/30'}`}><span className="text-xl">{reason.icon}</span><span className="text-sm font-medium flex-1">{reason.label}</span>{selectedCancelReason === reason.id && <CheckCircle2 className="w-5 h-5 text-red-500" />}</button>))}</div>
-            <div className="space-y-2"><label className="text-sm font-medium">{lang === 'mg' ? 'Fanazavana fanampiny (tsy voatery)' : 'Commentaire supplémentaire (optionnel)'}</label><Textarea placeholder={lang === 'mg' ? 'Soraty eto ny antony...' : 'Écrivez votre raison ici...'} value={cancelComment} onChange={(e) => setCancelComment(e.target.value)} className="rounded-xl resize-none" rows={2} /></div>
+            <div className="grid grid-cols-1 gap-2">
+              {cancelReasons.map((reason) => (
+                <button key={reason.id} onClick={() => setSelectedCancelReason(reason.id)} className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${selectedCancelReason === reason.id ? 'border-red-500 bg-red-50 dark:bg-red-950/20' : 'border-border/50 hover:border-muted-foreground/30'}`}>
+                  <span className="text-xl">{reason.icon}</span>
+                  <span className="text-sm font-medium flex-1">{reason.label}</span>
+                  {selectedCancelReason === reason.id && <CheckCircle2 className="w-5 h-5 text-red-500" />}
+                </button>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{lang === 'mg' ? 'Fanazavana fanampiny (tsy voatery)' : 'Commentaire supplémentaire (optionnel)'}</label>
+              <Textarea placeholder={lang === 'mg' ? 'Soraty eto ny antony...' : 'Écrivez votre raison ici...'} value={cancelComment} onChange={(e) => setCancelComment(e.target.value)} className="rounded-xl resize-none" rows={2} />
+            </div>
           </div>
-          <DialogFooter><div className="flex gap-2 w-full"><Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowCancelDialog(false); setSelectedCancelReason(null); setCancelComment(''); }} disabled={isCancelling}>{lang === 'mg' ? 'Ajanony' : 'Retour'}</Button><Button variant="destructive" className="flex-1 rounded-xl" onClick={handleCancelWithReason} disabled={!selectedCancelReason || isCancelling}>{isCancelling ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{lang === 'mg' ? 'Hofoanana...' : 'Annulation...'}</> : (lang === 'mg' ? 'Hanafoana ny dia' : 'Annuler la course')}</Button></div></DialogFooter>
+          <DialogFooter>
+            <div className="flex gap-2 w-full">
+              <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowCancelDialog(false); setSelectedCancelReason(null); setCancelComment(''); }} disabled={isCancelling}>
+                {lang === 'mg' ? 'Ajanony' : 'Retour'}
+              </Button>
+              <Button variant="destructive" className="flex-1 rounded-xl" onClick={handleCancelWithReason} disabled={!selectedCancelReason || isCancelling}>
+                {isCancelling ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{lang === 'mg' ? 'Hofoanana...' : 'Annulation...'}</> : (lang === 'mg' ? 'Hanafoana ny dia' : 'Annuler la course')}
+              </Button>
+            </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Chat Box */}
-      {showChat && rideId && currentUser && otherUserId > 0 && <ChatBox rideId={rideId} currentUserId={currentUser.id} otherUserId={otherUserId} otherUserName={otherUserName} otherUserPhone={otherUserPhone} isOpen={showChat} minimized={chatMinimized} onClose={() => { setShowChat(false); setChatMinimized(false); }} onMinimize={() => setChatMinimized(true)} />}
+      {showChat && rideId && currentUser && otherUserId > 0 && (
+        <ChatBox
+          rideId={rideId}
+          currentUserId={currentUser.id}
+          otherUserId={otherUserId}
+          otherUserName={otherUserName}
+          otherUserPhone={otherUserPhone}
+          isOpen={showChat}
+          minimized={chatMinimized}
+          onClose={() => { setShowChat(false); setChatMinimized(false); }}
+          onMinimize={() => setChatMinimized(true)}
+        />
+      )}
 
       {/* SOS Dialog */}
       <Dialog open={showSOS} onOpenChange={setShowSOS}>
         <DialogContent className="rounded-3xl sm:rounded-3xl border-0 shadow-2xl max-w-sm mx-auto">
-          <DialogHeader><DialogTitle className="text-red-600 font-display text-xl flex items-center gap-2"><ShieldAlert className="w-6 h-6" /> SOS - Urgence</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="text-red-600 font-display text-xl flex items-center gap-2">
+              <ShieldAlert className="w-6 h-6" /> SOS - Urgence
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3 py-2">
-            <a href="tel:117" className="flex items-center gap-3 p-3.5 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-900"><div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center text-white shrink-0"><Phone className="w-5 h-5" /></div><div><p className="font-bold text-sm">Police - 117</p><p className="text-xs text-muted-foreground">Appel d'urgence police</p></div></a>
-            <a href="tel:118" className="flex items-center gap-3 p-3.5 bg-orange-50 dark:bg-orange-950/30 rounded-xl border border-orange-200 dark:border-orange-900"><div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center text-white shrink-0"><Phone className="w-5 h-5" /></div><div><p className="font-bold text-sm">Ambulance - 118</p><p className="text-xs text-muted-foreground">Appel d'urgence médical</p></div></a>
-            <button onClick={() => { if (navigator.share) navigator.share({ title: 'SOS - Farady', text: `J'ai besoin d'aide! Chauffeur: ${ride.driver?.name || ''}, Véhicule: ${ride.vehicleType}, Départ: ${ride.pickupAddress}, Arrivée: ${ride.dropAddress}` }).catch(() => {}); toast({ title: "Position partagée", className: "mobile-toast" }); setShowSOS(false); }} className="flex items-center gap-3 p-3.5 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900 w-full text-left"><div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white shrink-0"><Share2 className="w-5 h-5" /></div><div><p className="font-bold text-sm">Partager ma position</p><p className="text-xs text-muted-foreground">Envoyer à un proche</p></div></button>
+            <a href="tel:117" className="flex items-center gap-3 p-3.5 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-900">
+              <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center text-white shrink-0"><Phone className="w-5 h-5" /></div>
+              <div><p className="font-bold text-sm">Police - 117</p><p className="text-xs text-muted-foreground">Appel d'urgence police</p></div>
+            </a>
+            <a href="tel:118" className="flex items-center gap-3 p-3.5 bg-orange-50 dark:bg-orange-950/30 rounded-xl border border-orange-200 dark:border-orange-900">
+              <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center text-white shrink-0"><Phone className="w-5 h-5" /></div>
+              <div><p className="font-bold text-sm">Ambulance - 118</p><p className="text-xs text-muted-foreground">Appel d'urgence médical</p></div>
+            </a>
+            <button onClick={() => { if (navigator.share) navigator.share({ title: 'SOS - Farady', text: `J'ai besoin d'aide! Chauffeur: ${ride.driver?.name || ''}, Véhicule: ${ride.vehicleType}, Départ: ${ride.pickupAddress}, Arrivée: ${ride.dropAddress}` }).catch(() => {}); toast({ title: "Position partagée", className: "mobile-toast" }); setShowSOS(false); }} className="flex items-center gap-3 p-3.5 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900 w-full text-left">
+              <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white shrink-0"><Share2 className="w-5 h-5" /></div>
+              <div><p className="font-bold text-sm">Partager ma position</p><p className="text-xs text-muted-foreground">Envoyer à un proche</p></div>
+            </button>
           </div>
         </DialogContent>
       </Dialog>

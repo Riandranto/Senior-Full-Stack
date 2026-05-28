@@ -152,7 +152,7 @@ __export(schema_exports, {
 });
 import { pgTable, text, serial, integer, boolean, timestamp, numeric, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var GEOCENTER = { lat: -18.8792, lng: 47.5079 };
+var GEOCENTER = { lat: -18.91894, lng: 47.52422 };
 var MAX_RADIUS_KM = 50;
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -1505,6 +1505,10 @@ async function registerRoutes(httpServer2, app2) {
     ws.on("message", async (message) => {
       try {
         const data = JSON.parse(message.toString());
+        if (data.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
         if (data.type === "auth" && data.payload?.userId) {
           userId = data.payload.userId;
           clients.set(userId, ws);
@@ -2248,6 +2252,90 @@ async function registerRoutes(httpServer2, app2) {
       res.status(500).json({ message: "Internal error" });
     }
   });
+  app2.get("/api/rides/active", async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifi\xE9" });
+    }
+    try {
+      const allRides = await storage.getRideHistory(req.session.userId);
+      const activeRide = allRides.find(
+        (r) => r.status !== "COMPLETED" && r.status !== "CANCELED"
+      );
+      if (!activeRide) {
+        return res.json(null);
+      }
+      res.json(activeRide);
+    } catch (error) {
+      console.error("\u274C Error fetching active ride:", error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+  app2.get("/api/rides/:id/views", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const onlineDrivers = await storage.getAllDrivers();
+    const count = onlineDrivers.filter((d) => d.online).length;
+    res.json({ viewCount: count });
+  });
+  app2.post("/api/rides/:id/eta", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de course invalide" });
+    const { additionalMinutes } = req.body;
+    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
+      return res.status(400).json({ message: "Minutes suppl\xE9mentaires invalides (1-30)" });
+    }
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId) return res.status(403).json({ message: "Forbidden - not your ride" });
+      const currentEta = ride.etaMinutes || 0;
+      const newEta = currentEta + additionalMinutes;
+      const [updated] = await db.update(rides).set({ etaMinutes: newEta, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(rides.id, id)).returning();
+      sendToUser(ride.passengerId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updated });
+      res.json(updated);
+    } catch (error) {
+      console.error("\u274C Error updating ETA:", error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+  app2.patch("/api/rides/:id/status", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de course invalide" });
+    const { status } = req.body;
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      const validTransitions = {
+        "PASSENGER": {
+          "REQUESTED": ["CANCELED"],
+          "BIDDING": ["CANCELED"],
+          "ASSIGNED": ["CANCELED"]
+        },
+        "DRIVER": {
+          "ASSIGNED": ["DRIVER_EN_ROUTE", "CANCELED"],
+          "DRIVER_EN_ROUTE": ["DRIVER_ARRIVED", "CANCELED"],
+          "DRIVER_ARRIVED": ["IN_PROGRESS", "CANCELED"],
+          "IN_PROGRESS": ["COMPLETED", "CANCELED"]
+        }
+      };
+      const userRole = req.session.role || (ride.driverId === req.session.userId ? "DRIVER" : "PASSENGER");
+      const allowedTransitions = validTransitions[userRole]?.[ride.status] || [];
+      if (status && !allowedTransitions.includes(status)) {
+        return res.status(400).json({ message: `Invalid status transition from ${ride.status} to ${status} for ${userRole}` });
+      }
+      const updatedRide = await storage.updateRideStatus(id, status);
+      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
+      if (otherUserId) sendToUser(otherUserId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updatedRide });
+      res.json(updatedRide);
+    } catch (error) {
+      console.error("\u274C Error updating ride status:", error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
   app2.get(api.passenger.getRide.path, async (req, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -2312,53 +2400,329 @@ async function registerRoutes(httpServer2, app2) {
     }));
     res.json(enrichedOffers);
   });
-  app2.get("/api/rides/:id/views", async (req, res) => {
+  app2.post(api.passenger.acceptOffer.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const onlineDrivers = await storage.getAllDrivers();
-    const count = onlineDrivers.filter((d) => d.online).length;
-    res.json({ viewCount: count });
-  });
-  app2.get("/api/rides/active", async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Non authentifi\xE9" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
     }
     try {
-      console.log(`\u{1F50D} Fetching active ride for user ${req.session.userId}`);
-      const allRides = await storage.getRideHistory(req.session.userId);
-      console.log(`\u{1F4CB} Found ${allRides.length} rides total`);
-      const activeRide = allRides.find(
-        (r) => r.status !== "COMPLETED" && r.status !== "CANCELED"
-      );
-      if (!activeRide) {
-        console.log(`\u2139\uFE0F No active ride for user ${req.session.userId}`);
-        return res.status(404).json({ message: "Aucune course active" });
+      const input = api.passenger.acceptOffer.input.parse(req.body);
+      const offer = (await storage.getOffersForRide(id)).find((o) => o.id === input.offerId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const ride = await storage.acceptOffer(id, input.offerId, offer.priceAr, offer.driverId);
+      sendToUser(offer.driverId, { type: WS_EVENTS.OFFER_ACCEPTED, payload: ride });
+      const passenger = await storage.getUser(req.session.userId);
+      await storage.createNotification({
+        userId: offer.driverId,
+        title: "Tolobidy voaray!",
+        message: `${passenger?.name || "Mpandeha"} dia nanaiky ny tolobidy Ar ${offer.priceAr}`,
+        type: "OFFER_ACCEPTED",
+        rideId: id
+      });
+      res.json(ride);
+    } catch (e) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+  app2.post(api.passenger.rateRide.path, async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    try {
+      const input = api.passenger.rateRide.input.parse(req.body);
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.passengerId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
+      if (ride.status !== "COMPLETED") return res.status(400).json({ message: "Ride not completed" });
+      if (!ride.driverId) return res.status(400).json({ message: "No driver assigned" });
+      await storage.rateDriver(ride.driverId, input.rating);
+      await storage.createNotification({
+        userId: ride.driverId,
+        title: "Nahazo note vaovao",
+        message: `Nahazo note ${input.rating}/5 ianao`,
+        type: "RATING",
+        rideId: id
+      });
+      res.json({ message: "Rating submitted" });
+    } catch (e) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+  app2.post(api.driver.setOnline.path, async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    try {
+      const input = api.driver.setOnline.input.parse(req.body);
+      const profile = await storage.updateDriverOnline(req.session.userId, input.online);
+      res.json(profile);
+    } catch (e) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+  app2.get(api.driver.getProfile.path, async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        return res.status(404).json({ message: "Profile not found" });
       }
-      console.log(`\u2705 Found active ride ${activeRide.id} with status ${activeRide.status}`);
-      let otherUser = null;
-      try {
-        if (activeRide.driverId === req.session.userId) {
-          otherUser = await storage.getUser(activeRide.passengerId);
-          console.log(`\u{1F464} Passenger: ${otherUser?.name}`);
-        } else if (activeRide.driverId) {
-          otherUser = await storage.getUser(activeRide.driverId);
-          console.log(`\u{1F464} Driver: ${otherUser?.name}`);
-        }
-      } catch (err) {
-        console.error("Error fetching other user:", err);
-      }
-      const response = {
-        ...activeRide,
-        otherUser: otherUser || null,
-        isDriver: activeRide.driverId === req.session.userId,
-        passengerName: activeRide.driverId === req.session.userId ? otherUser?.name : void 0,
-        passengerPhone: activeRide.driverId === req.session.userId ? otherUser?.phone : void 0,
-        driverName: activeRide.driverId !== req.session.userId ? otherUser?.name : void 0,
-        driverPhone: activeRide.driverId !== req.session.userId ? otherUser?.phone : void 0
-      };
-      res.json(response);
+      const docs = await storage.getDriverDocuments(profile.id);
+      res.json({ ...profile, documents: docs });
     } catch (error) {
-      console.error("\u274C Error fetching active ride:", error);
-      res.status(404).json({ message: "Aucune course active" });
+      console.error("\u274C Error fetching driver profile:", error);
+      res.status(500).json({ message: "Erreur serveur" });
+    }
+  });
+  app2.get(api.driver.getRequests.path, async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const driverProfile = await storage.getDriverProfile(req.session.userId);
+    if (!driverProfile || driverProfile.status !== "APPROVED") {
+      return res.json([]);
+    }
+    const rides2 = await storage.getNearbyRequests(driverProfile.vehicleType);
+    const activeRides = rides2.filter((r) => r.status === "REQUESTED" || r.status === "BIDDING");
+    const enrichedRides = await Promise.all(activeRides.map(async (r) => {
+      const passenger = await storage.getUser(r.passengerId);
+      return { ...r, passenger };
+    }));
+    res.json(enrichedRides);
+  });
+  app2.get("/api/geocode/search", async (req, res) => {
+    const q = req.query.q;
+    if (!q || typeof q !== "string") {
+      return res.json([]);
+    }
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=mg&limit=8&addressdetails=1`;
+      const response = await fetch(url, {
+        headers: {
+          "Accept-Language": "fr",
+          "User-Agent": "Farady/1.0 (https://farady.com; contact@farady.com)"
+        }
+      });
+      if (!response.ok) {
+        return res.status(response.status).json([]);
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error("Geocode proxy error:", error);
+      res.status(500).json([]);
+    }
+  });
+  app2.get("/api/geocode/reverse", async (req, res) => {
+    const lat = req.query.lat;
+    const lng = req.query.lng;
+    if (!lat || !lng) {
+      return res.status(400).json({ error: "Missing lat/lng" });
+    }
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+      const response = await fetch(url, {
+        headers: {
+          "Accept-Language": "fr",
+          "User-Agent": "Farady/1.0 (https://farady.com; contact@farady.com)"
+        }
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Reverse geocoding failed" });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error("Reverse geocode proxy error:", error);
+      res.status(500).json({ error: "Internal error" });
+    }
+  });
+  app2.post(api.driver.sendOffer.path, async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      const input = api.driver.sendOffer.input.parse(req.body);
+      const driverProfile = await storage.getDriverProfile(req.session.userId);
+      if (!driverProfile) {
+        return res.status(403).json({ message: "Vous n'\xEAtes pas enregistr\xE9 comme conducteur." });
+      }
+      const ride = await storage.getRide(input.rideId);
+      if (!ride) {
+        return res.status(404).json({ message: "Course introuvable" });
+      }
+      if (driverProfile.vehicleType !== ride.vehicleType) {
+        return res.status(403).json({
+          message: `Vous ne pouvez faire d'offre que pour les v\xE9hicules de type ${driverProfile.vehicleType}.`
+        });
+      }
+      if (!["REQUESTED", "BIDDING"].includes(ride.status)) {
+        return res.status(400).json({ message: "Cette course n'est plus disponible." });
+      }
+      const existingOffers = await storage.getOffersForRide(input.rideId);
+      const hasActiveOffer = existingOffers.some(
+        (o) => o.driverId === req.session.userId && (o.status === "SENT" || o.status === "ACCEPTED")
+      );
+      if (hasActiveOffer) {
+        return res.status(400).json({ message: "Vous avez d\xE9j\xE0 une offre active pour cette course." });
+      }
+      const expiresAt = new Date(Date.now() + 9e4);
+      const offer = await storage.createOffer({
+        rideId: input.rideId,
+        driverId: req.session.userId,
+        priceAr: input.priceAr,
+        etaMinutes: input.etaMinutes,
+        message: input.message,
+        expiresAt
+      });
+      setTimeout(async () => {
+        const currentOffer = await db.select().from(offers).where(eq4(offers.id, offer.id)).limit(1);
+        if (currentOffer.length && currentOffer[0].status === "SENT") {
+          await db.update(offers).set({ status: "EXPIRED" }).where(eq4(offers.id, offer.id));
+          sendToUser(ride.passengerId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, passengerId: ride.passengerId, driverId: req.session.userId }
+          });
+          sendToUser(req.session.userId, {
+            type: WS_EVENTS.OFFER_EXPIRED,
+            payload: { offerId: offer.id, rideId: input.rideId, driverId: req.session.userId, passengerId: ride.passengerId }
+          });
+        }
+      }, 9e4);
+      if (ride.status === "REQUESTED") {
+        await db.update(rides).set({ status: "BIDDING" }).where(eq4(rides.id, input.rideId));
+      }
+      const passenger = await storage.getUser(ride.passengerId);
+      const driver = await storage.getUser(req.session.userId);
+      sendToUser(ride.passengerId, {
+        type: WS_EVENTS.OFFER_NEW,
+        payload: {
+          ...offer,
+          driver: { id: driver?.id, name: driver?.name, phone: driver?.phone },
+          passenger: { id: passenger?.id, name: passenger?.name }
+        }
+      });
+      await storage.createNotification({
+        userId: ride.passengerId,
+        title: "Nouvelle offre",
+        message: `${driver?.name || "Un conducteur"} propose ${input.priceAr} Ar pour votre trajet.`,
+        type: "OFFER",
+        rideId: input.rideId
+      });
+      res.status(201).json(offer);
+    } catch (e) {
+      if (e instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Donn\xE9es invalides", errors: e.errors });
+      }
+      console.error("\u274C Error sending offer:", e);
+      res.status(500).json({ message: "Erreur interne lors de l'envoi de l'offre." });
+    }
+  });
+  app2.post(api.driver.updateRideStatus.path, async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "ID de course invalide" });
+    }
+    try {
+      const input = api.driver.updateRideStatus.input.parse(req.body);
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId) return res.status(403).json({ message: "Forbidden - not your ride" });
+      const validTransitions = {
+        "ASSIGNED": ["DRIVER_EN_ROUTE"],
+        "DRIVER_EN_ROUTE": ["DRIVER_ARRIVED"],
+        "DRIVER_ARRIVED": ["IN_PROGRESS"],
+        "IN_PROGRESS": ["COMPLETED"]
+      };
+      if (!validTransitions[ride.status]?.includes(input.status)) {
+        return res.status(400).json({ message: `Invalid status transition from ${ride.status} to ${input.status}` });
+      }
+      const updatedRide = await storage.updateRideStatus(id, input.status);
+      sendToUser(ride.passengerId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updatedRide });
+      res.json(updatedRide);
+    } catch (e) {
+      console.error("Error updating ride status:", e);
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+  app2.post(api.driver.updateLocation.path, async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    try {
+      const { lat, lng } = req.body;
+      if (lat && lng) {
+        await db.insert(driverLocations).values({
+          driverId: req.session.userId,
+          lat: lat.toString(),
+          lng: lng.toString()
+        });
+        const activeRides = await db.select().from(rides).where(and4(
+          eq4(rides.driverId, req.session.userId),
+          or2(
+            eq4(rides.status, "ASSIGNED"),
+            eq4(rides.status, "DRIVER_EN_ROUTE"),
+            eq4(rides.status, "DRIVER_ARRIVED"),
+            eq4(rides.status, "IN_PROGRESS")
+          )
+        ));
+        for (const ride of activeRides) {
+          sendToUser(ride.passengerId, {
+            type: WS_EVENTS.DRIVER_LOCATION,
+            payload: { driverId: req.session.userId, lat, lng, rideId: ride.id }
+          });
+        }
+      }
+      res.json({ success: true });
+    } catch {
+      res.json({ success: true });
+    }
+  });
+  app2.get("/api/driver/active-ride", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    try {
+      const activeRide = await storage.getDriverActiveRide(req.session.userId);
+      if (!activeRide) return res.json(null);
+      const passenger = await storage.getUser(activeRide.passengerId);
+      res.json({
+        ...activeRide,
+        passengerName: passenger?.name,
+        passengerPhone: passenger?.phone
+      });
+    } catch (error) {
+      console.error("Error fetching driver active ride:", error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+  app2.post(api.driver.uploadDocument.path, upload.single("file"), async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const docType = req.body.type || "PHOTO";
+    try {
+      let profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        await storage.updateUserRole(req.session.userId, "DRIVER");
+        profile = await storage.createDriverProfile({
+          userId: req.session.userId,
+          vehicleType: req.body.vehicleType || "TAXI",
+          status: "PENDING",
+          vehicleNumber: req.body.vehicleNumber || "",
+          licenseNumber: req.body.licenseNumber || ""
+        });
+      }
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : "";
+      const doc = await storage.createDriverDocument({
+        driverId: profile.id,
+        type: docType,
+        url: fileUrl
+      });
+      res.status(201).json(doc);
+    } catch (error) {
+      console.error("\u274C Error uploading driver document:", error);
+      res.status(500).json({ message: "Erreur serveur" });
     }
   });
   app2.get("/api/driver/:id/location", async (req, res) => {
@@ -2463,379 +2827,6 @@ async function registerRoutes(httpServer2, app2) {
     } catch (error) {
       console.error("\u274C Error registering driver:", error);
       res.status(500).json({ message: "Erreur serveur lors de l'enregistrement." });
-    }
-  });
-  app2.post(api.passenger.acceptOffer.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    try {
-      const input = api.passenger.acceptOffer.input.parse(req.body);
-      const offer = (await storage.getOffersForRide(id)).find((o) => o.id === input.offerId);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const ride = await storage.acceptOffer(id, input.offerId, offer.priceAr, offer.driverId);
-      sendToUser(offer.driverId, { type: WS_EVENTS.OFFER_ACCEPTED, payload: ride });
-      const passenger = await storage.getUser(req.session.userId);
-      await storage.createNotification({
-        userId: offer.driverId,
-        title: "Tolobidy voaray!",
-        message: `${passenger?.name || "Mpandeha"} dia nanaiky ny tolobidy Ar ${offer.priceAr}`,
-        type: "OFFER_ACCEPTED",
-        rideId: id
-      });
-      res.json(ride);
-    } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
-    }
-  });
-  app2.post(api.passenger.rateRide.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    try {
-      const input = api.passenger.rateRide.input.parse(req.body);
-      const ride = await storage.getRide(id);
-      if (!ride) return res.status(404).json({ message: "Ride not found" });
-      if (ride.passengerId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
-      if (ride.status !== "COMPLETED") return res.status(400).json({ message: "Ride not completed" });
-      if (!ride.driverId) return res.status(400).json({ message: "No driver assigned" });
-      await storage.rateDriver(ride.driverId, input.rating);
-      await storage.createNotification({
-        userId: ride.driverId,
-        title: "Nahazo note vaovao",
-        message: `Nahazo note ${input.rating}/5 ianao`,
-        type: "RATING",
-        rideId: id
-      });
-      res.json({ message: "Rating submitted" });
-    } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
-    }
-  });
-  app2.post(api.driver.setOnline.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    try {
-      const input = api.driver.setOnline.input.parse(req.body);
-      const profile = await storage.updateDriverOnline(req.session.userId, input.online);
-      res.json(profile);
-    } catch (e) {
-      res.status(400).json({ message: "Invalid input" });
-    }
-  });
-  app2.get(api.driver.getProfile.path, async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    try {
-      const profile = await storage.getDriverProfile(req.session.userId);
-      if (!profile) {
-        return res.status(404).json({ message: "Profile not found" });
-      }
-      const docs = await storage.getDriverDocuments(profile.id);
-      res.json({ ...profile, documents: docs });
-    } catch (error) {
-      console.error("\u274C Error fetching driver profile:", error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-  app2.get(api.driver.getRequests.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const driverProfile = await storage.getDriverProfile(req.session.userId);
-    if (!driverProfile || driverProfile.status !== "APPROVED") {
-      return res.json([]);
-    }
-    const rides2 = await storage.getNearbyRequests(driverProfile.vehicleType);
-    const activeRides = rides2.filter((r) => r.status === "REQUESTED" || r.status === "BIDDING");
-    const enrichedRides = await Promise.all(activeRides.map(async (r) => {
-      const passenger = await storage.getUser(r.passengerId);
-      return { ...r, passenger };
-    }));
-    res.json(enrichedRides);
-  });
-  app2.post(api.driver.sendOffer.path, async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    try {
-      const input = api.driver.sendOffer.input.parse(req.body);
-      const driverProfile = await storage.getDriverProfile(req.session.userId);
-      if (!driverProfile) {
-        return res.status(403).json({ message: "Vous n'\xEAtes pas enregistr\xE9 comme conducteur." });
-      }
-      const ride = await storage.getRide(input.rideId);
-      if (!ride) {
-        return res.status(404).json({ message: "Course introuvable" });
-      }
-      if (driverProfile.vehicleType !== ride.vehicleType) {
-        return res.status(403).json({
-          message: `Vous ne pouvez faire d'offre que pour les v\xE9hicules de type ${driverProfile.vehicleType}.`
-        });
-      }
-      if (!["REQUESTED", "BIDDING"].includes(ride.status)) {
-        return res.status(400).json({ message: "Cette course n'est plus disponible." });
-      }
-      const existingOffers = await storage.getOffersForRide(input.rideId);
-      const hasActiveOffer = existingOffers.some(
-        (o) => o.driverId === req.session.userId && (o.status === "SENT" || o.status === "ACCEPTED")
-      );
-      if (hasActiveOffer) {
-        return res.status(400).json({ message: "Vous avez d\xE9j\xE0 une offre active pour cette course." });
-      }
-      const expiresAt = new Date(Date.now() + 9e4);
-      const offer = await storage.createOffer({
-        rideId: input.rideId,
-        driverId: req.session.userId,
-        priceAr: input.priceAr,
-        etaMinutes: input.etaMinutes,
-        message: input.message,
-        expiresAt
-      });
-      setTimeout(async () => {
-        const currentOffer = await db.select().from(offers).where(eq4(offers.id, offer.id)).limit(1);
-        if (currentOffer.length && currentOffer[0].status === "SENT") {
-          await db.update(offers).set({ status: "EXPIRED" }).where(eq4(offers.id, offer.id));
-          sendToUser(ride.passengerId, {
-            type: WS_EVENTS.OFFER_EXPIRED,
-            payload: { offerId: offer.id, rideId: input.rideId, passengerId: ride.passengerId, driverId: req.session.userId }
-          });
-          sendToUser(req.session.userId, {
-            type: WS_EVENTS.OFFER_EXPIRED,
-            payload: { offerId: offer.id, rideId: input.rideId, driverId: req.session.userId, passengerId: ride.passengerId }
-          });
-        }
-      }, 9e4);
-      if (ride.status === "REQUESTED") {
-        await db.update(rides).set({ status: "BIDDING" }).where(eq4(rides.id, input.rideId));
-      }
-      const passenger = await storage.getUser(ride.passengerId);
-      const driver = await storage.getUser(req.session.userId);
-      sendToUser(ride.passengerId, {
-        type: WS_EVENTS.OFFER_NEW,
-        payload: {
-          ...offer,
-          driver: { id: driver?.id, name: driver?.name, phone: driver?.phone },
-          passenger: { id: passenger?.id, name: passenger?.name }
-        }
-      });
-      await storage.createNotification({
-        userId: ride.passengerId,
-        title: "Nouvelle offre",
-        message: `${driver?.name || "Un conducteur"} propose ${input.priceAr} Ar pour votre trajet.`,
-        type: "OFFER",
-        rideId: input.rideId
-      });
-      res.status(201).json(offer);
-    } catch (e) {
-      if (e instanceof z2.ZodError) {
-        return res.status(400).json({ message: "Donn\xE9es invalides", errors: e.errors });
-      }
-      console.error("\u274C Error sending offer:", e);
-      res.status(500).json({ message: "Erreur interne lors de l'envoi de l'offre." });
-    }
-  });
-  app2.post(api.driver.updateRideStatus.path, async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    try {
-      const input = api.driver.updateRideStatus.input.parse(req.body);
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      if (ride.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      const validTransitions = {
-        "ASSIGNED": ["DRIVER_EN_ROUTE"],
-        "DRIVER_EN_ROUTE": ["DRIVER_ARRIVED"],
-        "DRIVER_ARRIVED": ["IN_PROGRESS"],
-        "IN_PROGRESS": ["COMPLETED"]
-      };
-      if (!validTransitions[ride.status]?.includes(input.status)) {
-        return res.status(400).json({
-          message: `Invalid status transition from ${ride.status} to ${input.status}`
-        });
-      }
-      const updatedRide = await storage.updateRideStatus(id, input.status);
-      sendToUser(ride.passengerId, {
-        type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: updatedRide
-      });
-      res.json(updatedRide);
-    } catch (e) {
-      console.error("Error updating ride status:", e);
-      res.status(400).json({ message: "Invalid input" });
-    }
-  });
-  app2.post(api.driver.updateLocation.path, async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    try {
-      const { lat, lng } = req.body;
-      if (lat && lng) {
-        await db.insert(driverLocations).values({
-          driverId: req.session.userId,
-          lat: lat.toString(),
-          lng: lng.toString()
-        });
-        const activeRides = await db.select().from(rides).where(and4(
-          eq4(rides.driverId, req.session.userId),
-          or2(
-            eq4(rides.status, "ASSIGNED"),
-            eq4(rides.status, "DRIVER_EN_ROUTE"),
-            eq4(rides.status, "DRIVER_ARRIVED"),
-            eq4(rides.status, "IN_PROGRESS")
-          )
-        ));
-        for (const ride of activeRides) {
-          sendToUser(ride.passengerId, {
-            type: WS_EVENTS.DRIVER_LOCATION,
-            payload: { driverId: req.session.userId, lat, lng, rideId: ride.id }
-          });
-        }
-      }
-      res.json({ success: true });
-    } catch {
-      res.json({ success: true });
-    }
-  });
-  app2.get("/api/driver/active-ride", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    try {
-      const activeRide = await storage.getDriverActiveRide(req.session.userId);
-      if (!activeRide) {
-        return res.json(null);
-      }
-      const passenger = await storage.getUser(activeRide.passengerId);
-      res.json({
-        ...activeRide,
-        passengerName: passenger?.name,
-        passengerPhone: passenger?.phone
-      });
-    } catch (error) {
-      console.error("Error fetching driver active ride:", error);
-      res.status(500).json({ message: "Internal error" });
-    }
-  });
-  app2.patch("/api/rides/:id/status", async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    const { status } = req.body;
-    try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      const validTransitions = {
-        "PASSENGER": {
-          "REQUESTED": ["CANCELED"],
-          "BIDDING": ["CANCELED"],
-          "ASSIGNED": ["CANCELED"]
-        },
-        "DRIVER": {
-          "ASSIGNED": ["DRIVER_EN_ROUTE", "CANCELED"],
-          "DRIVER_EN_ROUTE": ["DRIVER_ARRIVED", "CANCELED"],
-          "DRIVER_ARRIVED": ["IN_PROGRESS", "CANCELED"],
-          "IN_PROGRESS": ["COMPLETED", "CANCELED"]
-        }
-      };
-      const userRole = req.session.role || (ride.driverId === req.session.userId ? "DRIVER" : "PASSENGER");
-      const allowedTransitions = validTransitions[userRole]?.[ride.status] || [];
-      if (status && !allowedTransitions.includes(status)) {
-        return res.status(400).json({
-          message: `Invalid status transition from ${ride.status} to ${status} for ${userRole}`
-        });
-      }
-      const updatedRide = await storage.updateRideStatus(id, status);
-      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
-      if (otherUserId) {
-        sendToUser(otherUserId, {
-          type: WS_EVENTS.RIDE_STATUS_CHANGED,
-          payload: updatedRide
-        });
-      }
-      res.json(updatedRide);
-    } catch (error) {
-      console.error("\u274C Error updating ride status:", error);
-      res.status(500).json({ message: "Internal error" });
-    }
-  });
-  app2.post(api.driver.uploadDocument.path, upload.single("file"), async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    const docType = req.body.type || "PHOTO";
-    try {
-      let profile = await storage.getDriverProfile(req.session.userId);
-      if (!profile) {
-        await storage.updateUserRole(req.session.userId, "DRIVER");
-        profile = await storage.createDriverProfile({
-          userId: req.session.userId,
-          vehicleType: req.body.vehicleType || "TAXI",
-          status: "PENDING",
-          vehicleNumber: req.body.vehicleNumber || "",
-          licenseNumber: req.body.licenseNumber || ""
-        });
-      }
-      const fileUrl = req.file ? `/uploads/${req.file.filename}` : "";
-      const doc = await storage.createDriverDocument({
-        driverId: profile.id,
-        type: docType,
-        url: fileUrl
-      });
-      res.status(201).json(doc);
-    } catch (error) {
-      console.error("\u274C Error uploading driver document:", error);
-      res.status(500).json({ message: "Erreur serveur" });
-    }
-  });
-  app2.post("/api/rides/:id/eta", async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    const { additionalMinutes } = req.body;
-    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
-      return res.status(400).json({ message: "Minutes suppl\xE9mentaires invalides (1-30)" });
-    }
-    try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      if (ride.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      const currentEta = ride.etaMinutes || 0;
-      const newEta = currentEta + additionalMinutes;
-      const [updated] = await db.update(rides).set({ etaMinutes: newEta, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(rides.id, id)).returning();
-      sendToUser(ride.passengerId, {
-        type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: updated
-      });
-      res.json(updated);
-    } catch (error) {
-      console.error("\u274C Error updating ETA:", error);
-      res.status(500).json({ message: "Internal error" });
     }
   });
   app2.get("/api/admin/stats", async (req, res) => {
@@ -3627,7 +3618,8 @@ async function registerRoutes(httpServer2, app2) {
       userId: req.session?.userId,
       role: req.session?.role,
       cookie: req.headers.cookie,
-      sessionStore: sessionRedisAvailable ? "Redis" : "MemoryStore"
+      sessionStore: "MemoryStore"
+      // Ajustez selon votre config
     });
   });
   async function seedDatabase() {

@@ -1,4 +1,4 @@
-// src/pages/admin/Dashboard.tsx - Version mobile optimisée
+// src/pages/admin/Dashboard.tsx - Version complète avec polling conditionnel (document.visibilityState)
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, buildUrl } from '@shared/routes';
@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Car, MapPin, TrendingUp, Activity, Shield, Settings, Star,
   CheckCircle, XCircle, Ban, Eye, Phone, Navigation, Clock, Route,
-  Search, LogOut, ChevronLeft, ChevronRight, DollarSign, 
+  Search, LogOut, ChevronLeft, ChevronRight, DollarSign,
   FileText, Bike, CircleDot, UserCheck, UserX, Loader2, Image, File,
   RefreshCw, Calendar, AlertTriangle,
   SearchX, Clock as ClockIcon, Database
@@ -120,19 +120,18 @@ const RefreshIndicator = ({ isRefreshing }: { isRefreshing: boolean }) => (
   </AnimatePresence>
 );
 
-// Composant Pagination (inchangé, déjà responsive)
-function TablePagination({ 
-  currentPage, 
-  totalPages, 
-  onPageChange, 
+function TablePagination({
+  currentPage,
+  totalPages,
+  onPageChange,
   totalItems,
   pageSize,
   onPageSizeChange,
   pageSizeOptions = PAGE_SIZE_OPTIONS
-}: { 
-  currentPage: number; 
-  totalPages: number; 
-  onPageChange: (p: number) => void; 
+}: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
   totalItems: number;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
@@ -140,7 +139,7 @@ function TablePagination({
 }) {
   const showPagination = totalPages > 1 || totalItems > pageSize;
   if (!showPagination) return null;
-  
+
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
@@ -167,7 +166,7 @@ function TablePagination({
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 border-t border-border/30 bg-muted/10"
@@ -220,7 +219,6 @@ function TablePagination({
   );
 }
 
-// AdminMap (inchangé)
 function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driverLocations: any[] }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
@@ -280,9 +278,9 @@ function AdminMap({ activeRides, driverLocations }: { activeRides: any[]; driver
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5 }}
-      ref={mapRef} 
-      className="h-[250px] sm:h-[350px] w-full rounded-xl overflow-hidden" 
-      data-testid="admin-map" 
+      ref={mapRef}
+      className="h-[250px] sm:h-[350px] w-full rounded-xl overflow-hidden"
+      data-testid="admin-map"
     />
   );
 }
@@ -296,11 +294,11 @@ function StatCard({ icon, label, value, color, bg, sub, delay = 0 }: { icon: any
     >
       <Card className="p-3 md:p-5 rounded-2xl border-0 shadow-sm hover:shadow-md transition-shadow">
         <div className={`w-8 h-8 md:w-10 md:h-10 ${bg} rounded-xl flex items-center justify-center ${color} mb-2 md:mb-3`}>{icon}</div>
-        <motion.div 
+        <motion.div
           initial={{ scale: 0.9 }}
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 300, delay: delay + 0.2 }}
-          className="text-xl md:text-3xl font-bold font-display truncate" 
+          className="text-xl md:text-3xl font-bold font-display truncate"
           data-testid={`stat-${label.toLowerCase().replace(/ /g, '-')}`}
         >
           {value}
@@ -322,7 +320,7 @@ function MiniStat({ label, value, icon, delay = 0 }: { label: string; value: num
       <Card className="p-2 md:p-3 rounded-xl border-0 shadow-sm flex items-center gap-2 md:gap-3 hover:shadow-md transition-shadow">
         {icon}
         <div>
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.8 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", stiffness: 400, delay: delay + 0.1 }}
@@ -345,9 +343,8 @@ function RideDetailView({ ride }: { ride: any }) {
       exit={{ opacity: 0, y: -20 }}
       className="space-y-4"
     >
-      {/* ... même contenu ... */}
       <div className="flex items-center gap-2">
-        <motion.span 
+        <motion.span
           initial={{ scale: 0.8 }}
           animate={{ scale: 1 }}
           className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[ride.status] || ''}`}
@@ -358,7 +355,7 @@ function RideDetailView({ ride }: { ride: any }) {
       </div>
 
       <div className="space-y-2">
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.1 }}
@@ -370,7 +367,7 @@ function RideDetailView({ ride }: { ride: any }) {
             <div className="text-sm font-medium">{ride.pickupAddress}</div>
           </div>
         </motion.div>
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
@@ -384,7 +381,7 @@ function RideDetailView({ ride }: { ride: any }) {
         </motion.div>
       </div>
 
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.3 }}
@@ -405,7 +402,7 @@ function RideDetailView({ ride }: { ride: any }) {
       </motion.div>
 
       <div className="grid grid-cols-2 gap-3">
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.4 }}
@@ -415,7 +412,7 @@ function RideDetailView({ ride }: { ride: any }) {
           <div className="font-medium text-sm">{ride.passenger?.name || '—'}</div>
           <div className="text-xs text-muted-foreground">{ride.passenger?.phone}</div>
         </motion.div>
-        <motion.div 
+        <motion.div
           initial={{ x: 20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.5 }}
@@ -436,7 +433,7 @@ function RideDetailView({ ride }: { ride: any }) {
           <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({ride.offers.length})</div>
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {ride.offers.map((o: any, idx: number) => (
-              <motion.div 
+              <motion.div
                 key={o.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -453,7 +450,7 @@ function RideDetailView({ ride }: { ride: any }) {
       )}
 
       {ride.cancelReason && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.8 }}
@@ -485,7 +482,7 @@ function DriverDetailView({ driver }: { driver: any }) {
       className="space-y-4"
     >
       <div className="flex items-center gap-4">
-        <motion.div 
+        <motion.div
           initial={{ scale: 0.8, rotate: -10 }}
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 300 }}
@@ -587,7 +584,7 @@ function DriverDetailView({ driver }: { driver: any }) {
               </div>
             ) : (
               docs.map((doc: any, idx: number) => (
-                <motion.div 
+                <motion.div
                   key={doc.id}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -649,9 +646,8 @@ function BookingDetailView({ booking }: { booking: any }) {
       exit={{ opacity: 0, y: -20 }}
       className="space-y-4"
     >
-      {/* ... même contenu que dans l'original ... */}
       <div className="flex items-center gap-2">
-        <motion.span 
+        <motion.span
           initial={{ scale: 0.8 }}
           animate={{ scale: 1 }}
           className={`text-xs px-2.5 py-1 rounded-full font-medium ${
@@ -671,7 +667,7 @@ function BookingDetailView({ booking }: { booking: any }) {
       </div>
 
       <div className="space-y-2">
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.1 }}
@@ -683,7 +679,7 @@ function BookingDetailView({ booking }: { booking: any }) {
             <div className="text-sm font-medium">{booking.pickupAddress}</div>
           </div>
         </motion.div>
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
@@ -697,7 +693,7 @@ function BookingDetailView({ booking }: { booking: any }) {
         </motion.div>
       </div>
 
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.3 }}
@@ -723,7 +719,7 @@ function BookingDetailView({ booking }: { booking: any }) {
       </motion.div>
 
       <div className="grid grid-cols-2 gap-3">
-        <motion.div 
+        <motion.div
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.4 }}
@@ -733,7 +729,7 @@ function BookingDetailView({ booking }: { booking: any }) {
           <div className="font-medium text-sm">{booking.passenger?.name || '—'}</div>
           <div className="text-xs text-muted-foreground">{booking.passenger?.phone}</div>
         </motion.div>
-        <motion.div 
+        <motion.div
           initial={{ x: 20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ delay: 0.5 }}
@@ -754,7 +750,7 @@ function BookingDetailView({ booking }: { booking: any }) {
           <div className="text-xs font-bold text-muted-foreground mb-2">Offres ({booking.offers.length})</div>
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {booking.offers.map((o: any, idx: number) => (
-              <motion.div 
+              <motion.div
                 key={o.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -771,7 +767,7 @@ function BookingDetailView({ booking }: { booking: any }) {
       )}
 
       {booking.cancelReason && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.8 }}
@@ -894,6 +890,11 @@ function LocationsManager() {
   const { data: places = [] } = useQuery<any[]>({
     queryKey: ['/api/admin/places'],
     queryFn: async () => (await fetch('/api/admin/places', { credentials: 'include' })).json(),
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const createPlace = useMutation({
@@ -969,12 +970,12 @@ function LocationsManager() {
                 <tr><td colSpan={5} className="p-8 text-center text-muted-foreground text-sm">Aucun lieu personnalisé</td></tr>
               ) : (
                 places.map((p: any, idx: number) => (
-                  <motion.tr 
-                    key={p.id} 
+                  <motion.tr
+                    key={p.id}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.05 }}
-                    className="hover:bg-muted/20" 
+                    className="hover:bg-muted/20"
                     data-testid={`place-row-${p.id}`}
                   >
                     <td className="p-3 font-medium">{p.name}</td>
@@ -1076,7 +1077,7 @@ export default function AdminDashboard() {
   const [rideStatusFilter, setRideStatusFilter] = useState('ALL');
   const [driverStatusFilter, setDriverStatusFilter] = useState('ALL');
   const [userRoleFilter, setUserRoleFilter] = useState('ALL');
-  
+
   // Pagination states
   const [ridesPage, setRidesPage] = useState(1);
   const [ridesPageSize, setRidesPageSize] = useState(20);
@@ -1096,7 +1097,7 @@ export default function AdminDashboard() {
   const [cancelBookingId, setCancelBookingId] = useState<number | null>(null);
   const [cancelBookingReason, setCancelBookingReason] = useState('');
 
-  // API Queries (inchangées)
+  // === QUERIES AVEC POLLING CONDITIONNEL ===
   const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
     queryKey: ['/api/admin/stats'],
     queryFn: async () => {
@@ -1104,7 +1105,11 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error('Failed to fetch stats');
       return res.json();
     },
-    refetchInterval: 10000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const { data: users = [], isLoading: usersLoading, error: usersError } = useQuery({
@@ -1115,6 +1120,11 @@ export default function AdminDashboard() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const { data: drivers = [], isLoading: driversLoading, error: driversError } = useQuery({
@@ -1125,6 +1135,11 @@ export default function AdminDashboard() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const { data: rides = [], isLoading: ridesLoading, error: ridesError } = useQuery({
@@ -1135,7 +1150,11 @@ export default function AdminDashboard() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 15000;
+    },
+    refetchIntervalInBackground: false,  
   });
 
   const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
@@ -1146,7 +1165,11 @@ export default function AdminDashboard() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 10000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 10000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const { data: config } = useQuery({
@@ -1156,6 +1179,11 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error('Failed to fetch config');
       return res.json();
     },
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 60000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const { data: driverLocations = [] } = useQuery({
@@ -1166,18 +1194,22 @@ export default function AdminDashboard() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 10000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 10000;
+    },
+    refetchIntervalInBackground: false,
   });
 
   // Mutations (inchangées)
   const updateDriverStatus = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) => {
       const url = buildUrl(api.admin.updateDriverStatus.path, { id });
-      const res = await fetch(url, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ action }), 
-        credentials: 'include' 
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Failed');
       return res.json();
@@ -1187,7 +1219,7 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/stats'] });
       queryClient.invalidateQueries({ queryKey: [api.admin.getUsers.path] });
       if (variables.action === 'REJECT') {
-        toast({ 
+        toast({
           title: 'Conducteur rejeté',
           description: 'L\'utilisateur a été rétrogradé en passager.',
           variant: 'destructive'
@@ -1199,8 +1231,8 @@ export default function AdminDashboard() {
       }
     },
     onError: (error) => {
-      toast({ 
-        title: 'Erreur', 
+      toast({
+        title: 'Erreur',
         description: 'Impossible de mettre à jour le statut',
         variant: 'destructive'
       });
@@ -1209,11 +1241,11 @@ export default function AdminDashboard() {
 
   const blockUser = useMutation({
     mutationFn: async ({ id, blocked }: { id: number; blocked: boolean }) => {
-      const res = await fetch(`/api/admin/users/${id}/block`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ blocked }), 
-        credentials: 'include' 
+      const res = await fetch(`/api/admin/users/${id}/block`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blocked }),
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Failed');
       return res.json();
@@ -1229,11 +1261,11 @@ export default function AdminDashboard() {
 
   const adminCancelRide = useMutation({
     mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
-      const res = await fetch(`/api/admin/rides/${id}/cancel`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ reason }), 
-        credentials: 'include' 
+      const res = await fetch(`/api/admin/rides/${id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Failed');
       return res.json();
@@ -1274,11 +1306,11 @@ export default function AdminDashboard() {
 
   const updateConfig = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(api.admin.updateConfig.path, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(data), 
-        credentials: 'include' 
+      const res = await fetch(api.admin.updateConfig.path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include'
       });
       if (!res.ok) throw new Error('Failed');
       return res.json();
@@ -1292,7 +1324,7 @@ export default function AdminDashboard() {
     },
   });
 
-  // Filtering data (inchangé)
+  // Filtering data
   const filteredRides = useMemo(() => {
     let result = Array.isArray(rides) ? [...rides] : [];
     if (rideStatusFilter !== 'ALL') {
@@ -1362,7 +1394,7 @@ export default function AdminDashboard() {
     return result;
   }, [bookings, bookingStatusFilter, searchBookings]);
 
-  // Calculate total pages
+  // Total pages
   const rideTotalPages = Math.max(1, Math.ceil(filteredRides.length / ridesPageSize));
   const driverTotalPages = Math.max(1, Math.ceil(filteredDrivers.length / driversPageSize));
   const userTotalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPageSize));
@@ -1380,20 +1412,13 @@ export default function AdminDashboard() {
   useEffect(() => { setUsersPage(1); }, [userRoleFilter, searchUsers, usersPageSize]);
   useEffect(() => { setBookingsPage(1); }, [bookingStatusFilter, searchBookings, bookingsPageSize]);
 
-  useEffect(() => {
-    if (ridesPage > rideTotalPages) setRidesPage(1);
-  }, [rideTotalPages, ridesPage]);
-  useEffect(() => {
-    if (driversPage > driverTotalPages) setDriversPage(1);
-  }, [driverTotalPages, driversPage]);
-  useEffect(() => {
-    if (usersPage > userTotalPages) setUsersPage(1);
-  }, [userTotalPages, usersPage]);
-  useEffect(() => {
-    if (bookingsPage > bookingTotalPages) setBookingsPage(1);
-  }, [bookingTotalPages, bookingsPage]);
+  // Adjust if page out of bounds
+  useEffect(() => { if (ridesPage > rideTotalPages) setRidesPage(1); }, [rideTotalPages, ridesPage]);
+  useEffect(() => { if (driversPage > driverTotalPages) setDriversPage(1); }, [driverTotalPages, driversPage]);
+  useEffect(() => { if (usersPage > userTotalPages) setUsersPage(1); }, [userTotalPages, usersPage]);
+  useEffect(() => { if (bookingsPage > bookingTotalPages) setBookingsPage(1); }, [bookingTotalPages, bookingsPage]);
 
-  const activeRides = Array.isArray(rides) ? rides.filter((r: any) => 
+  const activeRides = Array.isArray(rides) ? rides.filter((r: any) =>
     ['REQUESTED', 'BIDDING', 'ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'].includes(r.status)
   ) : [];
 
@@ -1406,32 +1431,32 @@ export default function AdminDashboard() {
   const UnknownSearchesManager = () => {
     const [searches, setSearches] = useState<UnknownSearch[]>([]);
     const [filter, setFilter] = useState<'all' | 'pickup' | 'dropoff'>('all');
-    
+
     useEffect(() => {
       setSearches(getUnknownSearches());
     }, []);
-    
+
     const refresh = () => {
       setSearches(getUnknownSearches());
     };
-    
+
     const handleClearAll = () => {
       if (confirm('Supprimer toutes les recherches non trouvées ?')) {
         clearUnknownSearches();
         setSearches([]);
       }
     };
-    
+
     const handleDelete = (index: number) => {
       deleteUnknownSearch(index);
       refresh();
     };
-    
+
     const filteredSearches = searches.filter(s => {
       if (filter === 'all') return true;
       return s.type === filter;
     });
-    
+
     const formatDate = (timestamp: number) => {
       return new Date(timestamp).toLocaleString('fr-FR', {
         day: '2-digit',
@@ -1440,13 +1465,13 @@ export default function AdminDashboard() {
         minute: '2-digit'
       });
     };
-    
+
     const getTypeLabel = (type: string) => {
-      return type === 'pickup' 
+      return type === 'pickup'
         ? { label: 'Départ', color: 'bg-emerald-100 text-emerald-700' }
         : { label: 'Arrivée', color: 'bg-red-100 text-red-700' };
     };
-    
+
     return (
       <div className="space-y-4">
         <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
@@ -1540,7 +1565,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <RefreshIndicator isRefreshing={isRefreshing} />
-      
+
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border-b border-border/50 px-4 py-3">
         <div className="max-w-[1400px] mx-auto flex justify-between items-center">
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-3">
@@ -1777,11 +1802,11 @@ export default function AdminDashboard() {
                           </td>
                           <td className="p-3 hidden md:table-cell max-w-[200px]">
                             <div className="text-xs truncate flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-green-500 shrink-0" /> 
+                              <MapPin className="w-3 h-3 text-green-500 shrink-0" />
                               <span className="truncate">{r.pickupAddress}</span>
                             </div>
                             <div className="text-xs truncate flex items-center gap-1 text-muted-foreground">
-                              <Navigation className="w-3 h-3 text-red-400 shrink-0" /> 
+                              <Navigation className="w-3 h-3 text-red-400 shrink-0" />
                               <span className="truncate">{r.dropAddress}</span>
                             </div>
                           </td>

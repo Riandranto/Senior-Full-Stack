@@ -8,8 +8,8 @@ import { relations } from "drizzle-orm";
 //export const MAX_RADIUS_KM = 100;
 
 // Nouvelles valeurs pour Anamalamanga
-export const GEOCENTER = { lat: -18.8792, lng: 47.5079 };  // Centre d'Anamalamanga
-export const MAX_RADIUS_KM = 50;  // Rayon de 50km autour d'Anamalamanga
+export const GEOCENTER = { lat: -18.91894, lng: 47.52422 };  // Mahamasina, Antananarivo
+export const MAX_RADIUS_KM = 50;
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;

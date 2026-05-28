@@ -1,4 +1,4 @@
-// server/routes.ts - Version complète corrigée
+// server/routes.ts - Version complète corrigée (routes spécifiques avant /api/rides/:id)
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
@@ -119,6 +119,11 @@ export async function registerRoutes(
     ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message.toString());
+
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
         
         if (data.type === 'auth' && data.payload?.userId) {
           userId = data.payload.userId;
@@ -1006,6 +1011,7 @@ export async function registerRoutes(
   });
 
   // ==================== PASSENGER ROUTES ====================
+  // IMPORTANT: Les routes spécifiques (active, views, eta, status) doivent être déclarées AVANT la route paramétrée /api/rides/:id
 
   app.post(api.passenger.createRide.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
@@ -1049,12 +1055,107 @@ export async function registerRoutes(
     }
   });
 
+  // 1. Route spécifique /api/rides/active
+  app.get('/api/rides/active', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    try {
+      const allRides = await storage.getRideHistory(req.session.userId);
+      const activeRide = allRides.find(r => 
+        r.status !== 'COMPLETED' && r.status !== 'CANCELED'
+      );
+      if (!activeRide) {
+        return res.json(null);
+      }
+      res.json(activeRide);
+    } catch (error) {
+      console.error('❌ Error fetching active ride:', error);
+      res.status(500).json({ message: "Erreur interne" });
+    }
+  });
+
+  // 2. Route spécifique /api/rides/:id/views
+  app.get('/api/rides/:id/views', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const onlineDrivers = await storage.getAllDrivers();
+    const count = onlineDrivers.filter(d => d.online).length;
+    res.json({ viewCount: count });
+  });
+
+  // 3. Route spécifique /api/rides/:id/eta
+  app.post('/api/rides/:id/eta', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de course invalide" });
+    const { additionalMinutes } = req.body;
+    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
+      return res.status(400).json({ message: "Minutes supplémentaires invalides (1-30)" });
+    }
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId) return res.status(403).json({ message: "Forbidden - not your ride" });
+      const currentEta = ride.etaMinutes || 0;
+      const newEta = currentEta + additionalMinutes;
+      const [updated] = await db.update(rides)
+        .set({ etaMinutes: newEta, updatedAt: new Date() })
+        .where(eq(rides.id, id))
+        .returning();
+      sendToUser(ride.passengerId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updated });
+      res.json(updated);
+    } catch (error) {
+      console.error('❌ Error updating ETA:', error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // 4. Route spécifique PATCH /api/rides/:id/status
+  app.patch('/api/rides/:id/status', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de course invalide" });
+    const { status } = req.body;
+    try {
+      const ride = await storage.getRide(id);
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden - not your ride" });
+      }
+      const validTransitions: Record<string, Record<string, string[]>> = {
+        'PASSENGER': {
+          'REQUESTED': ['CANCELED'],
+          'BIDDING': ['CANCELED'],
+          'ASSIGNED': ['CANCELED'],
+        },
+        'DRIVER': {
+          'ASSIGNED': ['DRIVER_EN_ROUTE', 'CANCELED'],
+          'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED', 'CANCELED'],
+          'DRIVER_ARRIVED': ['IN_PROGRESS', 'CANCELED'],
+          'IN_PROGRESS': ['COMPLETED', 'CANCELED'],
+        }
+      };
+      const userRole = req.session.role || (ride.driverId === req.session.userId ? 'DRIVER' : 'PASSENGER');
+      const allowedTransitions = validTransitions[userRole]?.[ride.status] || [];
+      if (status && !allowedTransitions.includes(status)) {
+        return res.status(400).json({ message: `Invalid status transition from ${ride.status} to ${status} for ${userRole}` });
+      }
+      const updatedRide = await storage.updateRideStatus(id, status);
+      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
+      if (otherUserId) sendToUser(otherUserId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updatedRide });
+      res.json(updatedRide);
+    } catch (error) {
+      console.error('❌ Error updating ride status:', error);
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // Ensuite, la route paramétrée /api/rides/:id (GET)
   app.get(api.passenger.getRide.path, async (req, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     const ride = await storage.getRide(id);
     if (!ride) return res.status(404).json({ message: "Not found" });
     
@@ -1087,13 +1188,10 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     try {
       const input = api.passenger.cancelRide.input.parse(req.body);
       const ride = await storage.cancelRide(id, input.reason, req.session.role || "PASSENGER");
-      
       await broadcastToDrivers({ type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: ride });
-      
       res.json(ride);
     } catch (e) {
       res.status(400).json({ message: "Invalid input" });
@@ -1105,9 +1203,7 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     const rideOffers = await storage.getOffersForRide(id);
-    
     const enrichedOffers = await Promise.all(rideOffers.map(async o => {
       const driver = await storage.getUser(o.driverId);
       const profile = await storage.getDriverProfile(o.driverId);
@@ -1116,7 +1212,6 @@ export async function registerRoutes(
         .orderBy(sql`timestamp DESC`)
         .limit(1);
       const location = locResult.length > 0 ? { lat: parseFloat(locResult[0].lat as any), lng: parseFloat(locResult[0].lng as any) } : null;
-      
       const vehicleDetails = profile ? {
         vehicleNumber: profile.vehicleNumber,
         vehicleMake: profile.vehicleMake,
@@ -1125,196 +1220,7 @@ export async function registerRoutes(
       } : null;
       return { ...o, driver, profile, location, vehicleDetails };
     }));
-    
     res.json(enrichedOffers);
-  });
-
-  app.get('/api/rides/:id/views', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const onlineDrivers = await storage.getAllDrivers();
-    const count = onlineDrivers.filter(d => d.online).length;
-    res.json({ viewCount: count });
-  });
-
-  app.get('/api/rides/active', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Non authentifié" });
-    }
-    
-    try {
-      console.log(`🔍 Fetching active ride for user ${req.session.userId}`);
-      
-      const allRides = await storage.getRideHistory(req.session.userId);
-      console.log(`📋 Found ${allRides.length} rides total`);
-      
-      const activeRide = allRides.find(r => 
-        r.status !== 'COMPLETED' && 
-        r.status !== 'CANCELED'
-      );
-      
-      if (!activeRide) {
-        console.log(`ℹ️ No active ride for user ${req.session.userId}`);
-        return res.status(404).json({ message: "Aucune course active" });
-      }
-      
-      console.log(`✅ Found active ride ${activeRide.id} with status ${activeRide.status}`);
-      
-      let otherUser = null;
-      try {
-        if (activeRide.driverId === req.session.userId) {
-          otherUser = await storage.getUser(activeRide.passengerId);
-          console.log(`👤 Passenger: ${otherUser?.name}`);
-        } else if (activeRide.driverId) {
-          otherUser = await storage.getUser(activeRide.driverId);
-          console.log(`👤 Driver: ${otherUser?.name}`);
-        }
-      } catch (err) {
-        console.error('Error fetching other user:', err);
-      }
-      
-      const response = {
-        ...activeRide,
-        otherUser: otherUser || null,
-        isDriver: activeRide.driverId === req.session.userId,
-        passengerName: activeRide.driverId === req.session.userId ? otherUser?.name : undefined,
-        passengerPhone: activeRide.driverId === req.session.userId ? otherUser?.phone : undefined,
-        driverName: activeRide.driverId !== req.session.userId ? otherUser?.name : undefined,
-        driverPhone: activeRide.driverId !== req.session.userId ? otherUser?.phone : undefined,
-      };
-      
-      res.json(response);
-    } catch (error) {
-      console.error('❌ Error fetching active ride:', error);
-      res.status(404).json({ message: "Aucune course active" });
-    }
-  });
-
-  app.get('/api/driver/:id/location', async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    const driverId = parseInt(req.params.id);
-    if (isNaN(driverId)) {
-      return res.status(400).json({ message: "ID de conducteur invalide" });
-    }
-    
-    const locResult = await db.select().from(driverLocations)
-      .where(eq(driverLocations.driverId, driverId))
-      .orderBy(sql`timestamp DESC`)
-      .limit(1);
-    if (locResult.length > 0) {
-      res.json({ lat: parseFloat(locResult[0].lat as any), lng: parseFloat(locResult[0].lng as any) });
-    } else {
-      res.json(null);
-    }
-  });
-
-  app.get('/api/driver/documents', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Non authentifié" });
-    }
-    
-    try {
-      console.log('📄 Fetching driver documents for user:', req.session.userId);
-      
-      const profile = await storage.getDriverProfile(req.session.userId);
-      if (!profile) {
-        console.log('ℹ️ No driver profile found for user:', req.session.userId);
-        return res.json([]);
-      }
-      
-      const docs = await storage.getDriverDocuments(profile.id);
-      console.log(`✅ Found ${docs.length} driver documents`);
-      res.json(docs);
-    } catch (error) {
-      console.error('❌ Error fetching driver documents:', error);
-      res.status(500).json({ 
-        message: "Erreur serveur",
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  });
-  
-  app.post('/api/driver/register', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Non authentifié" });
-    }
-  
-    try {
-      const {
-        vehicleType,
-        vehicleNumber,
-        licenseNumber,
-        vehicleMake,
-        vehicleModel,
-        vehicleColor,
-        vehicleSeats
-      } = req.body;
-  
-      if (!vehicleType || !vehicleNumber || !licenseNumber) {
-        return res.status(400).json({ message: "Veuillez fournir le type de véhicule, la plaque et le numéro de permis." });
-      }
-  
-      let existingProfile = await storage.getDriverProfile(req.session.userId);
-      let profile;
-  
-      if (existingProfile) {
-        // Mise à jour du profil existant
-        const [updated] = await db.update(driverProfiles)
-          .set({
-            vehicleType,
-            vehicleNumber,
-            licenseNumber,
-            vehicleMake: vehicleMake || null,
-            vehicleModel: vehicleModel || null,
-            vehicleColor: vehicleColor || null,
-            vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
-            status: "PENDING",
-            online: false
-          })
-          .where(eq(driverProfiles.id, existingProfile.id))
-          .returning();
-        profile = updated;
-      } else {
-        // Création d'un nouveau profil conducteur
-        await storage.updateUserRole(req.session.userId, "DRIVER");
-        profile = await storage.createDriverProfile({
-          userId: req.session.userId,
-          vehicleType,
-          vehicleNumber,
-          licenseNumber,
-          vehicleMake: vehicleMake || null,
-          vehicleModel: vehicleModel || null,
-          vehicleColor: vehicleColor || null,
-          vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
-          status: "PENDING",
-          online: false
-        });
-      }
-  
-      // Mise à jour du rôle dans la session
-      req.session.role = "DRIVER";
-      await new Promise<void>((resolve, reject) => {
-        req.session.save((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-  
-      // Notifier les administrateurs
-      const admins = await db.select().from(users).where(eq(users.role, 'ADMIN'));
-      for (const admin of admins) {
-        await storage.createNotification({
-          userId: admin.id,
-          title: "Nouvelle demande conducteur",
-          message: `${req.session.userId} a demandé à devenir conducteur.`,
-          type: "INFO"
-        });
-      }
-  
-      res.status(201).json(profile);
-    } catch (error) {
-      console.error('❌ Error registering driver:', error);
-      res.status(500).json({ message: "Erreur serveur lors de l'enregistrement." });
-    }
   });
 
   app.post(api.passenger.acceptOffer.path, async (req, res) => {
@@ -1323,16 +1229,12 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     try {
       const input = api.passenger.acceptOffer.input.parse(req.body);
       const offer = (await storage.getOffersForRide(id)).find(o => o.id === input.offerId);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
-
       const ride = await storage.acceptOffer(id, input.offerId, offer.priceAr, offer.driverId);
-      
       sendToUser(offer.driverId, { type: WS_EVENTS.OFFER_ACCEPTED, payload: ride });
-      
       const passenger = await storage.getUser(req.session.userId);
       await storage.createNotification({
         userId: offer.driverId,
@@ -1341,7 +1243,6 @@ export async function registerRoutes(
         type: "OFFER_ACCEPTED",
         rideId: id,
       });
-      
       res.json(ride);
     } catch (e) {
       res.status(400).json({ message: "Invalid input" });
@@ -1354,7 +1255,6 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     try {
       const input = api.passenger.rateRide.input.parse(req.body);
       const ride = await storage.getRide(id);
@@ -1362,9 +1262,7 @@ export async function registerRoutes(
       if (ride.passengerId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
       if (ride.status !== "COMPLETED") return res.status(400).json({ message: "Ride not completed" });
       if (!ride.driverId) return res.status(400).json({ message: "No driver assigned" });
-
       await storage.rateDriver(ride.driverId, input.rating);
-
       await storage.createNotification({
         userId: ride.driverId,
         title: "Nahazo note vaovao",
@@ -1372,7 +1270,6 @@ export async function registerRoutes(
         type: "RATING",
         rideId: id,
       });
-
       res.json({ message: "Rating submitted" });
     } catch (e) {
       res.status(400).json({ message: "Invalid input" });
@@ -1396,13 +1293,11 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const profile = await storage.getDriverProfile(req.session.userId);
       if (!profile) {
         return res.status(404).json({ message: "Profile not found" });
       }
-      
       const docs = await storage.getDriverDocuments(profile.id);
       res.json({ ...profile, documents: docs });
     } catch (error) {
@@ -1413,53 +1308,91 @@ export async function registerRoutes(
 
   app.get(api.driver.getRequests.path, async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    
     const driverProfile = await storage.getDriverProfile(req.session.userId);
     if (!driverProfile || driverProfile.status !== 'APPROVED') {
       return res.json([]);
     }
-    
     const rides = await storage.getNearbyRequests(driverProfile.vehicleType);
-    // Filtrer également en front (sécurité)
     const activeRides = rides.filter(r => r.status === 'REQUESTED' || r.status === 'BIDDING');
     const enrichedRides = await Promise.all(activeRides.map(async r => {
       const passenger = await storage.getUser(r.passengerId);
       return { ...r, passenger };
     }));
-    
     res.json(enrichedRides);
+  });
+
+  // Proxy pour Nominatim
+  app.get('/api/geocode/search', async (req, res) => {
+    const q = req.query.q;
+    if (!q || typeof q !== 'string') {
+      return res.json([]);
+    }
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=mg&limit=8&addressdetails=1`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept-Language': 'fr',
+          'User-Agent': 'Farady/1.0 (https://farady.com; contact@farady.com)'
+        }
+      });
+      if (!response.ok) {
+        return res.status(response.status).json([]);
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error('Geocode proxy error:', error);
+      res.status(500).json([]);
+    }
+  });
+
+  app.get('/api/geocode/reverse', async (req, res) => {
+    const lat = req.query.lat;
+    const lng = req.query.lng;
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'Missing lat/lng' });
+    }
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept-Language': 'fr',
+          'User-Agent': 'Farady/1.0 (https://farady.com; contact@farady.com)'
+        }
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: 'Reverse geocoding failed' });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error('Reverse geocode proxy error:', error);
+      res.status(500).json({ error: 'Internal error' });
+    }
   });
 
   app.post(api.driver.sendOffer.path, async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-  
     try {
       const input = api.driver.sendOffer.input.parse(req.body);
-  
-      // Vérification du profil conducteur
       const driverProfile = await storage.getDriverProfile(req.session.userId);
       if (!driverProfile) {
         return res.status(403).json({ message: "Vous n'êtes pas enregistré comme conducteur." });
       }
-  
       const ride = await storage.getRide(input.rideId);
       if (!ride) {
         return res.status(404).json({ message: "Course introuvable" });
       }
-  
       if (driverProfile.vehicleType !== ride.vehicleType) {
         return res.status(403).json({
           message: `Vous ne pouvez faire d'offre que pour les véhicules de type ${driverProfile.vehicleType}.`
         });
       }
-  
       if (!['REQUESTED', 'BIDDING'].includes(ride.status)) {
         return res.status(400).json({ message: "Cette course n'est plus disponible." });
       }
-  
-      // Vérifier qu'il n'y a pas déjà une offre active du même conducteur
       const existingOffers = await storage.getOffersForRide(input.rideId);
       const hasActiveOffer = existingOffers.some(o =>
         o.driverId === req.session.userId &&
@@ -1468,10 +1401,7 @@ export async function registerRoutes(
       if (hasActiveOffer) {
         return res.status(400).json({ message: "Vous avez déjà une offre active pour cette course." });
       }
-  
-      const expiresAt = new Date(Date.now() + 90000); // 90 secondes
-  
-      // Création de l'offre
+      const expiresAt = new Date(Date.now() + 90000);
       const offer = await storage.createOffer({
         rideId: input.rideId,
         driverId: req.session.userId,
@@ -1480,13 +1410,10 @@ export async function registerRoutes(
         message: input.message,
         expiresAt
       });
-  
-      // Planification de l'expiration
       setTimeout(async () => {
         const currentOffer = await db.select().from(offers).where(eq(offers.id, offer.id)).limit(1);
         if (currentOffer.length && currentOffer[0].status === 'SENT') {
           await db.update(offers).set({ status: 'EXPIRED' }).where(eq(offers.id, offer.id));
-          // Notifications
           sendToUser(ride.passengerId, {
             type: WS_EVENTS.OFFER_EXPIRED,
             payload: { offerId: offer.id, rideId: input.rideId, passengerId: ride.passengerId, driverId: req.session.userId }
@@ -1497,13 +1424,9 @@ export async function registerRoutes(
           });
         }
       }, 90000);
-  
-      // Mise à jour du statut de la course si nécessaire
       if (ride.status === 'REQUESTED') {
         await db.update(rides).set({ status: "BIDDING" }).where(eq(rides.id, input.rideId));
       }
-  
-      // Notification au passager
       const passenger = await storage.getUser(ride.passengerId);
       const driver = await storage.getUser(req.session.userId);
       sendToUser(ride.passengerId, {
@@ -1514,8 +1437,6 @@ export async function registerRoutes(
           passenger: { id: passenger?.id, name: passenger?.name }
         }
       });
-  
-      // Notification push en base
       await storage.createNotification({
         userId: ride.passengerId,
         title: "Nouvelle offre",
@@ -1523,7 +1444,6 @@ export async function registerRoutes(
         type: "OFFER",
         rideId: input.rideId
       });
-  
       res.status(201).json(offer);
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -1538,44 +1458,26 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     try {
       const input = api.driver.updateRideStatus.input.parse(req.body);
-      
       const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      
-      if (ride.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      
+      if (!ride) return res.status(404).json({ message: "Ride not found" });
+      if (ride.driverId !== req.session.userId) return res.status(403).json({ message: "Forbidden - not your ride" });
       const validTransitions: Record<string, string[]> = {
         'ASSIGNED': ['DRIVER_EN_ROUTE'],
         'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED'],
         'DRIVER_ARRIVED': ['IN_PROGRESS'],
         'IN_PROGRESS': ['COMPLETED'],
       };
-      
       if (!validTransitions[ride.status]?.includes(input.status)) {
-        return res.status(400).json({ 
-          message: `Invalid status transition from ${ride.status} to ${input.status}` 
-        });
+        return res.status(400).json({ message: `Invalid status transition from ${ride.status} to ${input.status}` });
       }
-      
       const updatedRide = await storage.updateRideStatus(id, input.status);
-      
-      sendToUser(ride.passengerId, { 
-        type: WS_EVENTS.RIDE_STATUS_CHANGED, 
-        payload: updatedRide 
-      });
-      
+      sendToUser(ride.passengerId, { type: WS_EVENTS.RIDE_STATUS_CHANGED, payload: updatedRide });
       res.json(updatedRide);
     } catch (e) {
       console.error("Error updating ride status:", e);
@@ -1593,7 +1495,6 @@ export async function registerRoutes(
           lat: lat.toString(),
           lng: lng.toString(),
         });
-
         const activeRides = await db.select().from(rides)
           .where(and(
             eq(rides.driverId, req.session.userId),
@@ -1619,12 +1520,9 @@ export async function registerRoutes(
 
   app.get('/api/driver/active-ride', async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-    
     try {
       const activeRide = await storage.getDriverActiveRide(req.session.userId);
-      if (!activeRide) {
-        return res.json(null); // 200 avec null, pas 404
-      }
+      if (!activeRide) return res.json(null);
       const passenger = await storage.getUser(activeRide.passengerId);
       res.json({
         ...activeRide,
@@ -1637,75 +1535,11 @@ export async function registerRoutes(
     }
   });
 
-  app.patch('/api/rides/:id/status', async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    
-    const { status } = req.body;
-    
-    try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
-      }
-      
-      if (ride.driverId !== req.session.userId && ride.passengerId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      
-      const validTransitions: Record<string, Record<string, string[]>> = {
-        'PASSENGER': {
-          'REQUESTED': ['CANCELED'],
-          'BIDDING': ['CANCELED'],
-          'ASSIGNED': ['CANCELED'],
-        },
-        'DRIVER': {
-          'ASSIGNED': ['DRIVER_EN_ROUTE', 'CANCELED'],
-          'DRIVER_EN_ROUTE': ['DRIVER_ARRIVED', 'CANCELED'],
-          'DRIVER_ARRIVED': ['IN_PROGRESS', 'CANCELED'],
-          'IN_PROGRESS': ['COMPLETED', 'CANCELED'],
-        }
-      };
-      
-      const userRole = req.session.role || (ride.driverId === req.session.userId ? 'DRIVER' : 'PASSENGER');
-      const allowedTransitions = validTransitions[userRole]?.[ride.status] || [];
-      
-      if (status && !allowedTransitions.includes(status)) {
-        return res.status(400).json({ 
-          message: `Invalid status transition from ${ride.status} to ${status} for ${userRole}` 
-        });
-      }
-      
-      const updatedRide = await storage.updateRideStatus(id, status);
-      
-      const otherUserId = ride.passengerId === req.session.userId ? ride.driverId : ride.passengerId;
-      if (otherUserId) {
-        sendToUser(otherUserId, {
-          type: WS_EVENTS.RIDE_STATUS_CHANGED,
-          payload: updatedRide
-        });
-      }
-      
-      res.json(updatedRide);
-    } catch (error) {
-      console.error('❌ Error updating ride status:', error);
-      res.status(500).json({ message: "Internal error" });
-    }
-  });
-
   app.post(api.driver.uploadDocument.path, upload.single('file'), async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     const docType = req.body.type || 'PHOTO';
-    
     try {
       let profile = await storage.getDriverProfile(req.session.userId);
       if (!profile) {
@@ -1718,14 +1552,12 @@ export async function registerRoutes(
           licenseNumber: req.body.licenseNumber || ""
         });
       }
-      
       const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
       const doc = await storage.createDriverDocument({
         driverId: profile.id,
         type: docType,
         url: fileUrl,
       });
-      
       res.status(201).json(doc);
     } catch (error) {
       console.error('❌ Error uploading driver document:', error);
@@ -1733,49 +1565,116 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/rides/:id/eta', async (req, res) => {
+  app.get('/api/driver/:id/location', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const driverId = parseInt(req.params.id);
+    if (isNaN(driverId)) {
+      return res.status(400).json({ message: "ID de conducteur invalide" });
+    }
+    const locResult = await db.select().from(driverLocations)
+      .where(eq(driverLocations.driverId, driverId))
+      .orderBy(sql`timestamp DESC`)
+      .limit(1);
+    if (locResult.length > 0) {
+      res.json({ lat: parseFloat(locResult[0].lat as any), lng: parseFloat(locResult[0].lng as any) });
+    } else {
+      res.json(null);
+    }
+  });
+
+  app.get('/api/driver/documents', async (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return res.status(401).json({ message: "Non authentifié" });
     }
-    
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-      return res.status(400).json({ message: "ID de course invalide" });
-    }
-    
-    const { additionalMinutes } = req.body;
-    
-    if (!additionalMinutes || additionalMinutes < 1 || additionalMinutes > 30) {
-      return res.status(400).json({ message: "Minutes supplémentaires invalides (1-30)" });
-    }
-    
     try {
-      const ride = await storage.getRide(id);
-      if (!ride) {
-        return res.status(404).json({ message: "Ride not found" });
+      console.log('📄 Fetching driver documents for user:', req.session.userId);
+      const profile = await storage.getDriverProfile(req.session.userId);
+      if (!profile) {
+        console.log('ℹ️ No driver profile found for user:', req.session.userId);
+        return res.json([]);
       }
-      
-      if (ride.driverId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden - not your ride" });
-      }
-      
-      const currentEta = ride.etaMinutes || 0;
-      const newEta = currentEta + additionalMinutes;
-      
-      const [updated] = await db.update(rides)
-        .set({ etaMinutes: newEta, updatedAt: new Date() })
-        .where(eq(rides.id, id))
-        .returning();
-      
-      sendToUser(ride.passengerId, {
-        type: WS_EVENTS.RIDE_STATUS_CHANGED,
-        payload: updated
-      });
-      
-      res.json(updated);
+      const docs = await storage.getDriverDocuments(profile.id);
+      console.log(`✅ Found ${docs.length} driver documents`);
+      res.json(docs);
     } catch (error) {
-      console.error('❌ Error updating ETA:', error);
-      res.status(500).json({ message: "Internal error" });
+      console.error('❌ Error fetching driver documents:', error);
+      res.status(500).json({ 
+        message: "Erreur serveur",
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+  
+  app.post('/api/driver/register', async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Non authentifié" });
+    }
+    try {
+      const {
+        vehicleType,
+        vehicleNumber,
+        licenseNumber,
+        vehicleMake,
+        vehicleModel,
+        vehicleColor,
+        vehicleSeats
+      } = req.body;
+      if (!vehicleType || !vehicleNumber || !licenseNumber) {
+        return res.status(400).json({ message: "Veuillez fournir le type de véhicule, la plaque et le numéro de permis." });
+      }
+      let existingProfile = await storage.getDriverProfile(req.session.userId);
+      let profile;
+      if (existingProfile) {
+        const [updated] = await db.update(driverProfiles)
+          .set({
+            vehicleType,
+            vehicleNumber,
+            licenseNumber,
+            vehicleMake: vehicleMake || null,
+            vehicleModel: vehicleModel || null,
+            vehicleColor: vehicleColor || null,
+            vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
+            status: "PENDING",
+            online: false
+          })
+          .where(eq(driverProfiles.id, existingProfile.id))
+          .returning();
+        profile = updated;
+      } else {
+        await storage.updateUserRole(req.session.userId, "DRIVER");
+        profile = await storage.createDriverProfile({
+          userId: req.session.userId,
+          vehicleType,
+          vehicleNumber,
+          licenseNumber,
+          vehicleMake: vehicleMake || null,
+          vehicleModel: vehicleModel || null,
+          vehicleColor: vehicleColor || null,
+          vehicleSeats: vehicleSeats ? parseInt(vehicleSeats) : null,
+          status: "PENDING",
+          online: false
+        });
+      }
+      req.session.role = "DRIVER";
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      const admins = await db.select().from(users).where(eq(users.role, 'ADMIN'));
+      for (const admin of admins) {
+        await storage.createNotification({
+          userId: admin.id,
+          title: "Nouvelle demande conducteur",
+          message: `${req.session.userId} a demandé à devenir conducteur.`,
+          type: "INFO"
+        });
+      }
+      res.status(201).json(profile);
+    } catch (error) {
+      console.error('❌ Error registering driver:', error);
+      res.status(500).json({ message: "Erreur serveur lors de l'enregistrement." });
     }
   });
 
@@ -1783,17 +1682,14 @@ export async function registerRoutes(
 
   app.get('/api/admin/stats', async (req, res) => {
     console.log('📊 Admin stats called');
-    
     if (!req.session.userId) {
       console.log('❌ No userId in session');
       return res.status(401).json({ message: "Non authentifié" });
     }
-    
     if (req.session.role !== 'ADMIN') {
       console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
       return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
     }
-    
     try {
       const stats = await storage.getAdminStats();
       console.log('✅ Stats retrieved successfully');
@@ -1811,22 +1707,18 @@ export async function registerRoutes(
       role: req.session?.role,
       sessionId: req.sessionID
     });
-    
     if (!req.session.userId) {
       console.log('❌ No userId in session');
       return res.status(401).json({ message: "Non authentifié" });
     }
-    
     if (req.session.role !== 'ADMIN') {
       console.log(`❌ Forbidden - role is ${req.session.role}, expected ADMIN`);
       return res.status(403).json({ message: "Accès refusé - rôle incorrect" });
     }
-    
     try {
       console.log('🔄 Fetching drivers from storage...');
       const drivers = await storage.getDriversWithDetails();
       console.log(`✅ Successfully retrieved ${drivers.length} drivers`);
-      
       if (drivers.length > 0) {
         console.log('📊 Sample driver:', {
           id: drivers[0].id,
@@ -1837,10 +1729,8 @@ export async function registerRoutes(
         });
       } else {
         console.log('⚠️ No drivers found in database');
-        
         const allProfiles = await db.select().from(driverProfiles);
         console.log(`📋 Total driver profiles in DB: ${allProfiles.length}`);
-        
         if (allProfiles.length > 0) {
           console.log('📋 Profiles found but users might be missing:');
           for (const p of allProfiles) {
@@ -1849,7 +1739,6 @@ export async function registerRoutes(
           }
         }
       }
-      
       res.json(drivers);
     } catch (error) {
       console.error('❌ Error getting drivers:', error);
@@ -1866,12 +1755,10 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de profil invalide" });
     }
-    
     try {
       const input = api.admin.updateDriverStatus.input.parse(req.body);
       const status = input.action === "APPROVE" ? "APPROVED" : input.action === "REJECT" ? "REJECTED" : "SUSPENDED";
       const profile = await storage.updateDriverStatus(id, status);
-      
       if (input.action === "REJECT") {
         const driverProfile = await storage.getDriverProfileById(id);
         if (driverProfile) {
@@ -1879,11 +1766,9 @@ export async function registerRoutes(
           console.log(`✅ User ${driverProfile.userId} reverted to PASSENGER after rejection`);
         }
       }
-      
       if (input.action === "SUSPEND") {
         await storage.updateDriverOnlineByProfileId(id, false);
       }
-      
       res.json(profile);
     } catch (e) {
       console.error('❌ Error updating driver status:', e);
@@ -1893,12 +1778,10 @@ export async function registerRoutes(
 
   app.get(api.admin.getUsers.path, async (req, res) => {
     console.log('👥 Admin getUsers called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
-    
     try {
       const allUsers = await storage.getAllUsers();
       console.log(`✅ ${allUsers.length} users retrieved`);
@@ -1911,12 +1794,10 @@ export async function registerRoutes(
 
   app.get(api.admin.getRides.path, async (req, res) => {
     console.log('🚗 Admin getRides called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
-    
     try {
       const ridesData = await storage.getRidesWithDetails();
       console.log(`✅ ${ridesData.length} rides retrieved`);
@@ -1933,7 +1814,6 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID utilisateur invalide" });
     }
-    
     const { blocked } = req.body;
     const user = await storage.blockUser(id, blocked);
     res.json(user);
@@ -1945,7 +1825,6 @@ export async function registerRoutes(
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de course invalide" });
     }
-    
     const { reason } = req.body;
     const ride = await storage.adminCancelRide(id, reason || "Cancelled by admin");
     res.json(ride);
@@ -1968,12 +1847,10 @@ export async function registerRoutes(
 
   app.get(api.admin.getConfig.path, async (req, res) => {
     console.log('⚙️ Admin getConfig called');
-    
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       console.log('❌ Forbidden - not admin');
       return res.status(403).json({ message: "Forbidden" });
     }
-    
     try {
       const config = await storage.getConfig();
       console.log('✅ Config retrieved');
@@ -2040,13 +1917,10 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
     }
-    
     try {
       console.log('📄 Fetching passenger documents for user:', req.session.userId);
-      
       const docs = await db.select().from(passengerDocuments)
         .where(eq(passengerDocuments.userId, req.session.userId));
-      
       console.log(`✅ Found ${docs.length} passenger documents`);
       res.json(docs);
     } catch (error) {
@@ -2062,29 +1936,23 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
     }
-    
     try {
       const docType = req.body.type || 'CIN';
       const fileUrl = req.file ? `/uploads/${req.file.filename}` : '';
-      
       console.log('📤 Uploading passenger document:', { docType, fileUrl, userId: req.session.userId });
-      
       if (!req.file) {
         return res.status(400).json({ message: "Aucun fichier fourni" });
       }
-      
       const [doc] = await db.insert(passengerDocuments).values({
         userId: req.session.userId,
         type: docType,
         url: fileUrl,
         uploadedAt: new Date(),
       }).returning();
-      
       await storage.updateUser(req.session.userId, { 
         idCardUrl: fileUrl,
         isApproved: true
       });
-      
       console.log('✅ Passenger document uploaded successfully:', doc.id);
       res.status(201).json(doc);
     } catch (error) {
@@ -2100,21 +1968,17 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Non authentifié" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de document invalide" });
     }
-    
     try {
       console.log('🗑️ Deleting passenger document:', id);
-      
       await db.delete(passengerDocuments)
         .where(and(
           eq(passengerDocuments.id, id),
           eq(passengerDocuments.userId, req.session.userId)
         ));
-      
       console.log('✅ Passenger document deleted');
       res.json({ message: "Document supprimé" });
     } catch (error) {
@@ -2129,39 +1993,32 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       console.log('📅 Creating booking with data:', req.body);
-      
       const { 
         pickupLat, pickupLng, pickupAddress,
         dropLat, dropLng, dropAddress,
         vehicleType, scheduledFor, note,
         distanceKm, etaMinutes, estimatedPriceAr
       } = req.body;
-      
       if (!pickupLat || !pickupLng || !pickupAddress || 
           !dropLat || !dropLng || !dropAddress || 
           !vehicleType || !scheduledFor) {
         console.log('❌ Missing required fields');
         return res.status(400).json({ message: "Champs requis manquants" });
       }
-      
       if (!isWithinRange(pickupLat, pickupLng) || !isWithinRange(dropLat, dropLng)) {
         return res.status(400).json({ 
           message: "Miala tsiny, tsy mbola misy ny Farady amin’ity faritra ity." 
         });
       }
-      
       const scheduledDate = new Date(scheduledFor);
       if (isNaN(scheduledDate.getTime())) {
         return res.status(400).json({ message: "Date invalide" });
       }
-      
       if (scheduledDate <= new Date()) {
         return res.status(400).json({ message: "La réservation doit être dans le futur" });
       }
-      
       const [booking] = await db.insert(bookings).values({
         passengerId: req.session.userId,
         status: "PENDING",
@@ -2178,9 +2035,7 @@ export async function registerRoutes(
         etaMinutes: etaMinutes || null,
         estimatedPriceAr: estimatedPriceAr || null,
       }).returning();
-      
       console.log('✅ Booking created:', booking.id);
-      
       try {
         const passenger = await storage.getUser(req.session.userId);
         await broadcastToDrivers({
@@ -2190,7 +2045,6 @@ export async function registerRoutes(
       } catch (err) {
         console.error('Error broadcasting to drivers:', err);
       }
-      
       res.status(201).json(booking);
     } catch (error) {
       console.error('❌ Error creating booking:', error);
@@ -2205,12 +2059,10 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const userBookings = await db.select().from(bookings)
         .where(eq(bookings.passengerId, req.session.userId))
         .orderBy(sql`${bookings.scheduledFor} DESC`);
-      
       res.json(userBookings);
     } catch (error) {
       console.error('❌ Error fetching bookings:', error);
@@ -2222,35 +2074,27 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de réservation invalide" });
     }
-    
     try {
       const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-      
       if (!booking.length) {
         return res.status(404).json({ message: "Réservation non trouvée" });
       }
-      
       const bookingData = booking[0];
-      
       if (bookingData.passengerId !== req.session.userId && 
           (!bookingData.driverId || bookingData.driverId !== req.session.userId) &&
           req.session.role !== 'ADMIN') {
         return res.status(403).json({ message: "Accès non autorisé" });
       }
-      
       let driver = null;
       if (bookingData.driverId) {
         driver = await storage.getUser(bookingData.driverId);
       }
-      
       const offers = await db.select().from(bookingOffers)
         .where(eq(bookingOffers.bookingId, id));
-      
       res.json({ ...bookingData, driver, offers });
     } catch (error) {
       console.error('❌ Error fetching booking:', error);
@@ -2258,81 +2102,75 @@ export async function registerRoutes(
     }
   });
 
-  // ==================== GET /api/bookings/:id/offers ====================
-app.get('/api/bookings/:id/offers', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
-  try {
-    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
-    const bookingData = booking[0];
-    if (bookingData.passengerId !== req.session.userId && 
-        bookingData.driverId !== req.session.userId &&
-        req.session.role !== 'ADMIN') {
-      return res.status(403).json({ message: "Accès non autorisé" });
+  app.get('/api/bookings/:id/offers', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+      const bookingData = booking[0];
+      if (bookingData.passengerId !== req.session.userId && 
+          bookingData.driverId !== req.session.userId &&
+          req.session.role !== 'ADMIN') {
+        return res.status(403).json({ message: "Accès non autorisé" });
+      }
+      const offers = await db.select().from(bookingOffers)
+        .where(eq(bookingOffers.bookingId, id))
+        .orderBy(sql`${bookingOffers.createdAt} DESC`);
+      const enrichedOffers = await Promise.all(offers.map(async o => {
+        const driver = await storage.getUser(o.driverId);
+        return { ...o, driver };
+      }));
+      res.json(enrichedOffers);
+    } catch (error) {
+      console.error('❌ Error fetching booking offers:', error);
+      res.status(500).json({ message: "Erreur interne" });
     }
-    const offers = await db.select().from(bookingOffers)
-      .where(eq(bookingOffers.bookingId, id))
-      .orderBy(sql`${bookingOffers.createdAt} DESC`);
-    const enrichedOffers = await Promise.all(offers.map(async o => {
-      const driver = await storage.getUser(o.driverId);
-      return { ...o, driver };
-    }));
-    res.json(enrichedOffers);
-  } catch (error) {
-    console.error('❌ Error fetching booking offers:', error);
-    res.status(500).json({ message: "Erreur interne" });
-  }
-});
+  });
 
-// ==================== POST /api/bookings/:id/offers ====================
-app.post('/api/bookings/:id/offers', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-  if (req.session.role !== 'DRIVER') return res.status(403).json({ message: "Seuls les conducteurs peuvent faire des offres" });
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
-  const { priceAr, etaMinutes, message } = req.body;
-  if (!priceAr || !etaMinutes) return res.status(400).json({ message: "Prix et ETA requis" });
-  try {
-    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
-    const bookingData = booking[0];
-    if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
-    if (bookingData.driverId === req.session.userId) return res.status(400).json({ message: "Vous avez déjà accepté cette réservation" });
-    const existingOffer = await db.select().from(bookingOffers)
-      .where(and(eq(bookingOffers.bookingId, id), eq(bookingOffers.driverId, req.session.userId), eq(bookingOffers.status, 'SENT')));
-    if (existingOffer.length) return res.status(400).json({ message: "Vous avez déjà envoyé une offre" });
-    
-    // Calcul de l'expiration : 7 jours par défaut, ou 1h avant la réservation si celle-ci a lieu dans moins de 7j
-    const now = new Date();
-    const scheduledFor = new Date(bookingData.scheduledFor);
-    const sevenDays = 7 * 24 * 60 * 60 * 1000;
-    let finalExpires = new Date(now.getTime() + sevenDays);
-    const timeUntilBooking = scheduledFor.getTime() - now.getTime();
-    if (timeUntilBooking > 0 && timeUntilBooking < sevenDays) {
-      const expiresAt = new Date(scheduledFor.getTime() - 60 * 60 * 1000);
-      finalExpires = expiresAt > now ? expiresAt : new Date(now.getTime() + 60 * 60 * 1000);
+  app.post('/api/bookings/:id/offers', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    if (req.session.role !== 'DRIVER') return res.status(403).json({ message: "Seuls les conducteurs peuvent faire des offres" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+    const { priceAr, etaMinutes, message } = req.body;
+    if (!priceAr || !etaMinutes) return res.status(400).json({ message: "Prix et ETA requis" });
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+      const bookingData = booking[0];
+      if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+      if (bookingData.driverId === req.session.userId) return res.status(400).json({ message: "Vous avez déjà accepté cette réservation" });
+      const existingOffer = await db.select().from(bookingOffers)
+        .where(and(eq(bookingOffers.bookingId, id), eq(bookingOffers.driverId, req.session.userId), eq(bookingOffers.status, 'SENT')));
+      if (existingOffer.length) return res.status(400).json({ message: "Vous avez déjà envoyé une offre" });
+      const now = new Date();
+      const scheduledFor = new Date(bookingData.scheduledFor);
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      let finalExpires = new Date(now.getTime() + sevenDays);
+      const timeUntilBooking = scheduledFor.getTime() - now.getTime();
+      if (timeUntilBooking > 0 && timeUntilBooking < sevenDays) {
+        const expiresAt = new Date(scheduledFor.getTime() - 60 * 60 * 1000);
+        finalExpires = expiresAt > now ? expiresAt : new Date(now.getTime() + 60 * 60 * 1000);
+      }
+      console.log(`📅 Offre pour réservation ${id} – expire le ${finalExpires.toISOString()}`);
+      const [offer] = await db.insert(bookingOffers).values({
+        bookingId: id, driverId: req.session.userId, priceAr, etaMinutes,
+        message: message || null, expiresAt: finalExpires,
+      }).returning();
+      const driver = await storage.getUser(req.session.userId);
+      sendToUser(bookingData.passengerId, {
+        type: WS_EVENTS.BOOKING_OFFER_NEW,
+        payload: { ...offer, bookingId: offer.bookingId, driver: { name: driver?.name, id: driver?.id, phone: driver?.phone }, booking: bookingData }
+      });
+      res.status(201).json(offer);
+    } catch (error) {
+      console.error('❌ Error creating booking offer:', error);
+      res.status(500).json({ message: "Erreur interne" });
     }
-    console.log(`📅 Offre pour réservation ${id} – expire le ${finalExpires.toISOString()}`);
-    
-    const [offer] = await db.insert(bookingOffers).values({
-      bookingId: id, driverId: req.session.userId, priceAr, etaMinutes,
-      message: message || null, expiresAt: finalExpires,
-    }).returning();
-    const driver = await storage.getUser(req.session.userId);
-    sendToUser(bookingData.passengerId, {
-      type: WS_EVENTS.BOOKING_OFFER_NEW,
-      payload: { ...offer, bookingId: offer.bookingId, driver: { name: driver?.name, id: driver?.id, phone: driver?.phone }, booking: bookingData }
-    });
-    res.status(201).json(offer);
-  } catch (error) {
-    console.error('❌ Error creating booking offer:', error);
-    res.status(500).json({ message: "Erreur interne" });
-  }
-});
+  });
 
-  // ==================== ACCEPTER UNE OFFRE DE RÉSERVATION (URL alternative) ====================
   app.post('/api/bookings/:bookingId/offers/:offerId/accept', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -2342,23 +2180,17 @@ app.post('/api/bookings/:id/offers', async (req, res) => {
     if (isNaN(bookingId) || isNaN(offerId)) {
       return res.status(400).json({ message: "IDs invalides" });
     }
-
     try {
-      // Vérifier l'offre
       const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
       if (!offer.length || offer[0].bookingId !== bookingId) {
         return res.status(404).json({ message: "Offre non trouvée" });
       }
       const offerData = offer[0];
-
-      // Vérifier la réservation
       const booking = await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1);
       if (!booking.length) {
         return res.status(404).json({ message: "Réservation non trouvée" });
       }
       const bookingData = booking[0];
-
-      // Contrôles d'autorisation et d'état
       if (bookingData.passengerId !== req.session.userId) {
         return res.status(403).json({ message: "Non autorisé" });
       }
@@ -2372,8 +2204,6 @@ app.post('/api/bookings/:id/offers', async (req, res) => {
         await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
         return res.status(400).json({ message: "L'offre a expiré" });
       }
-
-      // Accepter l'offre
       await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
       await db.update(bookingOffers)
         .set({ status: 'EXPIRED' })
@@ -2381,8 +2211,6 @@ app.post('/api/bookings/:id/offers', async (req, res) => {
           eq(bookingOffers.bookingId, bookingId),
           sql`${bookingOffers.id} != ${offerId}`
         ));
-
-      // Mettre à jour la réservation
       const [updatedBooking] = await db.update(bookings)
         .set({ 
           status: 'CONFIRMED', 
@@ -2392,14 +2220,11 @@ app.post('/api/bookings/:id/offers', async (req, res) => {
         })
         .where(eq(bookings.id, bookingId))
         .returning();
-
-      // Notifier le conducteur
       const passenger = await storage.getUser(req.session.userId);
       sendToUser(offerData.driverId, {
         type: WS_EVENTS.BOOKING_OFFER_ACCEPTED,
         payload: { ...updatedBooking, passenger }
       });
-
       res.json(updatedBooking);
     } catch (error) {
       console.error('❌ Error accepting booking offer:', error);
@@ -2407,74 +2232,64 @@ app.post('/api/bookings/:id/offers', async (req, res) => {
     }
   });
 
-  // ==================== POST /api/bookings/:id/accept-offer ====================
-app.post('/api/bookings/:id/accept-offer', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
-  const { offerId } = req.body;
-  try {
-    const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-    if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
-    const bookingData = booking[0];
-    if (bookingData.passengerId !== req.session.userId) return res.status(403).json({ message: "Non autorisé" });
-    if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
-    const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
-    if (!offer.length || offer[0].bookingId !== id) return res.status(404).json({ message: "Offre non trouvée" });
-    const offerData = offer[0];
-    if (offerData.status !== 'SENT') return res.status(400).json({ message: "Cette offre n'est plus valide" });
-    if (new Date() > offerData.expiresAt) {
-      await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
-      return res.status(400).json({ message: "L'offre a expiré" });
+  app.post('/api/bookings/:id/accept-offer', async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Unauthorized" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID de réservation invalide" });
+    const { offerId } = req.body;
+    try {
+      const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      if (!booking.length) return res.status(404).json({ message: "Réservation non trouvée" });
+      const bookingData = booking[0];
+      if (bookingData.passengerId !== req.session.userId) return res.status(403).json({ message: "Non autorisé" });
+      if (bookingData.status !== 'PENDING') return res.status(400).json({ message: "Cette réservation n'est plus disponible" });
+      const offer = await db.select().from(bookingOffers).where(eq(bookingOffers.id, offerId)).limit(1);
+      if (!offer.length || offer[0].bookingId !== id) return res.status(404).json({ message: "Offre non trouvée" });
+      const offerData = offer[0];
+      if (offerData.status !== 'SENT') return res.status(400).json({ message: "Cette offre n'est plus valide" });
+      if (new Date() > offerData.expiresAt) {
+        await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(eq(bookingOffers.id, offerId));
+        return res.status(400).json({ message: "L'offre a expiré" });
+      }
+      await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
+      await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(and(eq(bookingOffers.bookingId, id), sql`${bookingOffers.id} != ${offerId}`));
+      const [updatedBooking] = await db.update(bookings)
+        .set({ status: 'CONFIRMED', driverId: offerData.driverId, finalPriceAr: offerData.priceAr, updatedAt: new Date() })
+        .where(eq(bookings.id, id)).returning();
+      const passenger = await storage.getUser(req.session.userId);
+      sendToUser(offerData.driverId, { type: WS_EVENTS.BOOKING_OFFER_ACCEPTED, payload: { ...updatedBooking, passenger } });
+      res.json(updatedBooking);
+    } catch (error) {
+      console.error('❌ Error accepting booking offer:', error);
+      res.status(500).json({ message: "Erreur interne" });
     }
-    await db.update(bookingOffers).set({ status: 'ACCEPTED' }).where(eq(bookingOffers.id, offerId));
-    await db.update(bookingOffers).set({ status: 'EXPIRED' }).where(and(eq(bookingOffers.bookingId, id), sql`${bookingOffers.id} != ${offerId}`));
-    const [updatedBooking] = await db.update(bookings)
-      .set({ status: 'CONFIRMED', driverId: offerData.driverId, finalPriceAr: offerData.priceAr, updatedAt: new Date() })
-      .where(eq(bookings.id, id)).returning();
-    const passenger = await storage.getUser(req.session.userId);
-    sendToUser(offerData.driverId, { type: WS_EVENTS.BOOKING_OFFER_ACCEPTED, payload: { ...updatedBooking, passenger } });
-    res.json(updatedBooking);
-  } catch (error) {
-    console.error('❌ Error accepting booking offer:', error);
-    res.status(500).json({ message: "Erreur interne" });
-  }
-});
+  });
 
   app.post('/api/bookings/:id/cancel', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de réservation invalide" });
     }
-    
     const { reason } = req.body;
-    
     try {
       const booking = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-      
       if (!booking.length) {
         return res.status(404).json({ message: "Réservation non trouvée" });
       }
-      
       const bookingData = booking[0];
-      
       if (bookingData.passengerId !== req.session.userId && 
           (!bookingData.driverId || bookingData.driverId !== req.session.userId) &&
           req.session.role !== 'ADMIN') {
         return res.status(403).json({ message: "Non autorisé" });
       }
-      
       if (bookingData.status === 'COMPLETED' || bookingData.status === 'CANCELED') {
         return res.status(400).json({ message: "Impossible d'annuler cette réservation" });
       }
-      
       const cancelBy = req.session.role === 'ADMIN' ? 'ADMIN' : 
                        (bookingData.driverId === req.session.userId ? 'DRIVER' : 'PASSENGER');
-      
       const [cancelledBooking] = await db.update(bookings)
         .set({ 
           status: 'CANCELED',
@@ -2484,7 +2299,6 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
         })
         .where(eq(bookings.id, id))
         .returning();
-      
       const otherUserId = bookingData.passengerId === req.session.userId ? bookingData.driverId : bookingData.passengerId;
       if (otherUserId) {
         sendToUser(otherUserId, {
@@ -2492,7 +2306,6 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
           payload: cancelledBooking
         });
       }
-      
       res.json(cancelledBooking);
     } catch (error) {
       console.error('❌ Error canceling booking:', error);
@@ -2504,19 +2317,14 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'DRIVER') {
       return res.status(401).json({ message: "Unauthorized" });
     }
-  
     try {
       console.log(`🔍 Fetching bookings for driver ${req.session.userId}`);
-  
-      // 1. Réservations disponibles (PENDING, dans le futur)
       const available = await db.select().from(bookings)
         .where(and(
           eq(bookings.status, 'PENDING'),
           sql`${bookings.scheduledFor} > NOW()`
         ))
         .orderBy(sql`${bookings.scheduledFor} ASC`);
-  
-      // 2. Réservations assignées à ce conducteur (CONFIRMED/ASSIGNED, dans le futur)
       const myUpcoming = await db.select().from(bookings)
         .where(and(
           eq(bookings.driverId, req.session.userId),
@@ -2527,18 +2335,14 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
           sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
         ))
         .orderBy(sql`${bookings.scheduledFor} ASC`);
-  
-      // Fusionner les deux listes (sans doublon)
       const allBookings = [...available, ...myUpcoming];
       const uniqueById = allBookings.filter((b, i, self) => 
         i === self.findIndex(t => t.id === b.id)
       );
-  
       const enriched = await Promise.all(uniqueById.map(async b => {
         const passenger = await storage.getUser(b.passengerId);
         return { ...b, passenger };
       }));
-  
       console.log(`✅ ${enriched.length} bookings sent to driver (${available.length} available, ${myUpcoming.length} assigned)`);
       res.json(enriched);
     } catch (error) {
@@ -2551,7 +2355,6 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'DRIVER') {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const myBookings = await db.select().from(bookings)
         .where(and(
@@ -2559,12 +2362,10 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
           sql`${bookings.status} != 'CANCELED'`
         ))
         .orderBy(sql`${bookings.scheduledFor} ASC`);
-      
       const enrichedBookings = await Promise.all(myBookings.map(async b => {
         const passenger = await storage.getUser(b.passengerId);
         return { ...b, passenger };
       }));
-      
       res.json(enrichedBookings);
     } catch (error) {
       console.error('❌ Error fetching my driver bookings:', error);
@@ -2576,7 +2377,6 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'DRIVER') {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     try {
       const bookings = await db.select().from(bookings)
         .where(and(
@@ -2588,12 +2388,10 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
           sql`${bookings.scheduledFor} > NOW() - INTERVAL '1 hour'`
         ))
         .orderBy(sql`${bookings.scheduledFor} ASC`);
-      
       const enriched = await Promise.all(bookings.map(async b => {
         const passenger = await storage.getUser(b.passengerId);
         return { ...b, passenger };
       }));
-      
       res.json(enriched);
     } catch (error) {
       console.error('❌ Error fetching upcoming bookings:', error);
@@ -2605,49 +2403,38 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    
     if (req.session.role !== 'DRIVER') {
       return res.status(403).json({ message: "Seuls les conducteurs peuvent démarrer une réservation" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de réservation invalide" });
     }
-    
     try {
       const booking = await storage.getBooking(id);
       if (!booking) {
         return res.status(404).json({ message: "Réservation non trouvée" });
       }
-      
       if (booking.driverId !== req.session.userId) {
         return res.status(403).json({ message: "Vous n'êtes pas le conducteur assigné" });
       }
-      
       if (booking.status !== 'CONFIRMED') {
         return res.status(400).json({ message: "La réservation n'est pas confirmée" });
       }
-      
       const scheduledFor = new Date(booking.scheduledFor);
       const now = new Date();
       const hoursDiff = (scheduledFor.getTime() - now.getTime()) / (1000 * 60 * 60);
-      
       if (hoursDiff > 2) {
         return res.status(400).json({ 
           message: `Vous ne pouvez démarrer que 2h avant l'heure prévue (${hoursDiff.toFixed(1)}h restantes)` 
         });
       }
-      
       const ride = await storage.createRideFromBooking(booking.id, req.session.userId);
-      
       await storage.updateBookingStatus(id, 'IN_PROGRESS', booking.driverId);
-      
       sendToUser(booking.passengerId, {
         type: WS_EVENTS.RIDE_STATUS_CHANGED,
         payload: ride
       });
-      
       res.status(201).json(ride);
     } catch (error) {
       console.error('❌ Error starting ride from booking:', error);
@@ -2659,16 +2446,13 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
-    
     try {
       const allBookings = await storage.getAllBookings();
-      
       const enrichedBookings = await Promise.all(allBookings.map(async b => {
         const passenger = await storage.getUser(b.passengerId);
         const driver = b.driverId ? await storage.getUser(b.driverId) : null;
         return { ...b, passenger, driver };
       }));
-      
       res.json(enrichedBookings);
     } catch (error) {
       console.error('❌ Error fetching bookings:', error);
@@ -2680,17 +2464,13 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
     if (!req.session.userId || req.session.role !== 'ADMIN') {
       return res.status(403).json({ message: "Forbidden" });
     }
-    
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ message: "ID de réservation invalide" });
     }
-    
     const { reason } = req.body;
-    
     try {
       const cancelledBooking = await storage.cancelBooking(id, reason || "Annulé par l'admin", "ADMIN");
-      
       if (cancelledBooking.passengerId) {
         sendToUser(cancelledBooking.passengerId, {
           type: WS_EVENTS.BOOKING_STATUS_CHANGED,
@@ -2703,7 +2483,6 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
           payload: cancelledBooking
         });
       }
-      
       res.json(cancelledBooking);
     } catch (error) {
       console.error('❌ Error canceling booking:', error);
@@ -2760,7 +2539,7 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
       userId: req.session?.userId,
       role: req.session?.role,
       cookie: req.headers.cookie,
-      sessionStore: sessionRedisAvailable ? 'Redis' : 'MemoryStore'
+      sessionStore: 'MemoryStore' // Ajustez selon votre config
     });
   });
 
@@ -2773,13 +2552,11 @@ app.post('/api/bookings/:id/accept-offer', async (req, res) => {
         await storage.createUser({ phone: "0340000000", name: "Admin Farady", role: "ADMIN" });
         console.log('✅ Admin user created');
       }
-      
       const passenger = await storage.getUserByPhone("0341111111");
       if (!passenger) {
         await storage.createUser({ phone: "0341111111", name: "Rabe Passenger", role: "PASSENGER" });
         console.log('✅ Passenger user created');
       }
-      
       const driver = await storage.getUserByPhone("0342222222");
       if (!driver) {
         const d = await storage.createUser({ phone: "0342222222", name: "Rakoto Driver", role: "DRIVER" });

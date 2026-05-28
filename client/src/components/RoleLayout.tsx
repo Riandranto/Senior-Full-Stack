@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation } from 'wouter';
 import { Home, History, User, LogOut, Menu, HelpCircle, Bell, Settings, BookMarked } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
@@ -9,56 +9,36 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Notification } from '@shared/schema';
 
-export function MobileLayout({ children, role }: { children: React.ReactNode, role: 'passenger' | 'driver' }) {
+export function MobileLayout({ children, role }: { children: React.ReactNode; role: 'passenger' | 'driver' }) {
   const [location, setLocation] = useLocation();
   const { logout } = useAuth();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [showNotifs, setShowNotifs] = useState(false);
-  const [isRefreshingNotifs, setIsRefreshingNotifs] = useState(false);
-  const refreshIntervalRef = useRef<NodeJS.Timeout>();
 
+  // Compteur non lus – polling seulement si l’onglet est visible
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ['/api/notifications/unread-count'],
-    refetchInterval: 10000,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000; // 30 secondes
+    },
+    refetchIntervalInBackground: false,
+    staleTime: 20000,
   });
 
+  // Liste des notifications – chargée uniquement quand le panneau est ouvert
   const { data: notifs = [], refetch: refetchNotifs } = useQuery<Notification[]>({
     queryKey: ['/api/notifications'],
     enabled: showNotifs,
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return showNotifs ? 30000 : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const unreadCount = unreadData?.count || 0;
-
-  const refreshNotifications = useCallback(async () => {
-    if (!showNotifs) return;
-    setIsRefreshingNotifs(true);
-    try {
-      await refetchNotifs();
-      await queryClient.invalidateQueries({ queryKey: ['/api/notifications/unread-count'] });
-    } catch (error) {
-      console.error('Erreur lors du rafraîchissement des notifications:', error);
-    } finally {
-      setTimeout(() => setIsRefreshingNotifs(false), 300);
-    }
-  }, [showNotifs, refetchNotifs, queryClient]);
-
-  useEffect(() => {
-    if (showNotifs) {
-      refreshIntervalRef.current = setInterval(() => {
-        refreshNotifications();
-      }, 15000);
-    } else {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    }
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    };
-  }, [showNotifs, refreshNotifications]);
 
   const markAllRead = async () => {
     await fetch('/api/notifications/read-all', { method: 'POST', credentials: 'include' });
@@ -66,19 +46,21 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
     queryClient.invalidateQueries({ queryKey: ['/api/notifications/unread-count'] });
   };
 
-  const navItems = role === 'passenger' ? [
-    { href: '/passenger', icon: Home, label: t('request_ride') },
-    { href: '/passenger/history', icon: History, label: t('history') },
-    { href: '/passenger/bookings', icon: BookMarked, label: t('bookings') },
-    { href: '/passenger/profile', icon: User, label: t('profile') },
-    { href: '/passenger/settings', icon: Settings, label: t('settings') || 'Settings' },
-    { href: '/passenger/help', icon: HelpCircle, label: t('help') },
-  ] : [
-    { href: '/driver', icon: Home, label: t('online') },
-    { href: '/driver/profile', icon: User, label: t('profile') },
-    { href: '/driver/settings', icon: Settings, label: t('settings') || 'Settings' },
-    { href: '/driver/help', icon: HelpCircle, label: t('help') },
-  ];
+  const navItems = role === 'passenger' 
+    ? [
+        { href: '/passenger', icon: Home, label: t('request_ride') },
+        { href: '/passenger/history', icon: History, label: t('history') },
+        { href: '/passenger/bookings', icon: BookMarked, label: t('bookings') },
+        { href: '/passenger/profile', icon: User, label: t('profile') },
+        { href: '/passenger/settings', icon: Settings, label: t('settings') || 'Settings' },
+        { href: '/passenger/help', icon: HelpCircle, label: t('help') },
+      ]
+    : [
+        { href: '/driver', icon: Home, label: t('online') },
+        { href: '/driver/profile', icon: User, label: t('profile') },
+        { href: '/driver/settings', icon: Settings, label: t('settings') || 'Settings' },
+        { href: '/driver/help', icon: HelpCircle, label: t('help') },
+      ];
 
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-background">
@@ -106,7 +88,6 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
-                  data-testid="badge-unread-count"
                 >
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </motion.span>
@@ -123,21 +104,12 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
                     transition={{ type: "spring", damping: 20 }}
                     className="absolute right-0 top-12 w-[calc(100vw_-_24px)] sm:w-80 max-h-96 bg-background border rounded-2xl shadow-2xl z-40 overflow-hidden"
-                    data-testid="notifications-panel"
                   >
                     <div className="flex items-center justify-between p-3 border-b">
                       <span className="font-bold text-sm">Fampandrenesana</span>
                       <div className="flex items-center gap-2">
-                        {isRefreshingNotifs && (
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                          >
-                            <Bell className="w-3 h-3 text-muted-foreground" />
-                          </motion.div>
-                        )}
                         {unreadCount > 0 && (
-                          <button onClick={markAllRead} className="text-xs text-primary font-medium" data-testid="button-mark-all-read">
+                          <button onClick={markAllRead} className="text-xs text-primary font-medium">
                             Voaky daholo
                           </button>
                         )}
@@ -239,10 +211,7 @@ export function MobileLayout({ children, role }: { children: React.ReactNode, ro
           </Sheet>
         </div>
       </header>
-
-      <main className="flex-1 relative overflow-hidden">
-        {children}
-      </main>
+      <main className="flex-1 relative overflow-hidden">{children}</main>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// src/pages/passenger/Home.tsx
+// src/pages/passenger/Home.tsx - Version complète corrigée
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useLocation } from 'wouter';
 import { MobileLayout } from '@/components/RoleLayout';
@@ -27,7 +27,6 @@ import { useAuth } from '@/hooks/use-auth';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { FullscreenAd } from '@/components/FullscreenAd';
 
-// Stockage local pour recherches non trouvées
 const STORAGE_KEY = 'farady_unknown_searches';
 
 interface UnknownSearch {
@@ -36,7 +35,7 @@ interface UnknownSearch {
   type: 'pickup' | 'dropoff';
 }
 
-const saveUnknownSearch = (query: string, type: 'pickup' | 'dropoff') => {
+const saveUnknownSearchLocal = (query: string, type: 'pickup' | 'dropoff') => {
   try {
     const existing: UnknownSearch[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
     const newSearch: UnknownSearch = { query, timestamp: Date.now(), type };
@@ -93,8 +92,17 @@ async function searchPlaces(query: string): Promise<NominatimResult[]> {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=mg&limit=8&addressdetails=1`,
-      { headers: { 'Accept-Language': 'fr' } }
+      {
+        headers: {
+          'Accept-Language': 'fr',
+          'User-Agent': 'Farady/1.0 (https://farady.com; contact@farady.com)'
+        }
+      }
     );
+    if (!res.ok) {
+      console.warn(`Nominatim search failed: ${res.status}`);
+      return [];
+    }
     return await res.json();
   } catch (error) {
     console.error('Geocoding error:', error);
@@ -104,9 +112,19 @@ async function searchPlaces(query: string): Promise<NominatimResult[]> {
 
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
-      headers: { 'Accept-Language': 'fr' }
-    });
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+      {
+        headers: {
+          'Accept-Language': 'fr',
+          'User-Agent': 'Farady/1.0 (https://farady.com; contact@farady.com)'
+        }
+      }
+    );
+    if (!res.ok) {
+      console.warn(`Nominatim reverse failed: ${res.status}`);
+      return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
     const data = await res.json();
     if (data.address) {
       const parts = [
@@ -171,18 +189,15 @@ interface CustomPlace {
 
 async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]> {
   if (!query || query.length < 2) return [];
-  
   try {
     const res = await fetch('/api/places', { credentials: 'include' });
     if (!res.ok) return [];
-    
     const customPlaces: CustomPlace[] = await res.json();
     const qLower = query.toLowerCase();
     const matched = customPlaces.filter(place => 
       place.name.toLowerCase().includes(qLower) || 
       place.nameFr.toLowerCase().includes(qLower)
     );
-    
     const results: NominatimResult[] = matched.map(place => ({
       place_id: place.id,
       display_name: `${place.name} (${place.nameFr})`,
@@ -192,7 +207,6 @@ async function searchPlacesWithCustom(query: string): Promise<NominatimResult[]>
       class: 'place',
       address: { city: place.name, state: place.nameFr }
     }));
-    
     return results;
   } catch (error) {
     console.error('Erreur lors de la recherche de lieux personnalisés :', error);
@@ -207,23 +221,91 @@ export default function PassengerHome() {
   const createBooking = useCreateBooking();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { connected } = useWebSocket();
+  const queryClient = useQueryClient();
 
-  // --- Gestion de la localisation obligatoire pour le passager ---
+  // --- États ---
   const [passengerLocation, setPassengerLocation] = useState<LatLng | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
   const [gpsDenied, setGpsDenied] = useState(false);
+  const [pickup, setPickup] = useState('');
+  const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
+  const [dropoff, setDropoff] = useState('');
+  const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
+  const [vehicle, setVehicle] = useState<'TAXI' | 'BAJAJ' | 'CAMION' | '4X4'>('TAXI');
+  const [selectMode, setSelectMode] = useState<'pickup' | 'dropoff' | null>(null);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [mapCenter, setMapCenter] = useState<LatLng>(GEOCENTER);
+  const [flyTrigger, setFlyTrigger] = useState(0);
+  const [hasActiveRide, setHasActiveRide] = useState(false);
+  const [pickupSuggestions, setPickupSuggestions] = useState<NominatimResult[]>([]);
+  const [dropoffSuggestions, setDropoffSuggestions] = useState<NominatimResult[]>([]);
+  const [isSearchingPickup, setIsSearchingPickup] = useState(false);
+  const [isSearchingDropoff, setIsSearchingDropoff] = useState(false);
+  const [showPickupSuggestions, setShowPickupSuggestions] = useState(false);
+  const [showDropoffSuggestions, setShowDropoffSuggestions] = useState(false);
+  const [pickupNoResults, setPickupNoResults] = useState(false);
+  const [dropoffNoResults, setDropoffNoResults] = useState(false);
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('');
+  const [bookingNote, setBookingNote] = useState('');
+  const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
+  const [osrmDistance, setOsrmDistance] = useState<number | null>(null);
+  const [osrmDuration, setOsrmDuration] = useState<number | null>(null);
+  const [showTopAd, setShowTopAd] = useState(true);
+  const [showFullscreenAd, setShowFullscreenAd] = useState(true);
 
+  const handleCloseFullscreenAd = useCallback(() => setShowFullscreenAd(false), []);
+  const handleCloseTopAd = useCallback(() => setShowTopAd(false), []);
+
+  const pickupDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropoffDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // --- Vérification de course active (polling optimisé) ---
+  const { data: activeRide } = useQuery({
+    queryKey: ['/api/rides/active'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/rides/active', { credentials: 'include' });
+        if (res.status === 404) return null;
+        if (!res.ok) return null;
+        return res.json();
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
+      return 30000; // 30 secondes
+    },
+    refetchIntervalInBackground: false,
+  });
+
+  useEffect(() => {
+    setHasActiveRide(!!(activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED'));
+  }, [activeRide]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && gpsDenied) {
+        // Ne rien faire, l'utilisateur doit cliquer sur réessayer
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [gpsDenied]);
+
+  // --- Géolocalisation (appelée manuellement) ---
   const requestPassengerLocation = useCallback(async (): Promise<boolean> => {
     if (!navigator.geolocation) {
       setLocationError(lang === 'mg' ? "Tsy manohana GPS ity navigateur ity" : "Ce navigateur ne supporte pas la géolocalisation");
       setGpsDenied(true);
       return false;
     }
-  
     setIsLocating(true);
     setLocationError(null);
-  
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -243,180 +325,126 @@ export default function PassengerHome() {
           console.error('GPS error:', error);
           setIsLocating(false);
           let message = '';
-          let showRetryButton = true;
-          
           if (error.code === error.PERMISSION_DENIED) {
-            message = lang === 'mg' 
-              ? "Navela ny GPS, ilaina ny mamela azy. Tsindrio ny bokotra 'Réessayer' raha vao manome alalana ianao."
-              : "Permission GPS refusée. Veuillez autoriser la localisation dans les paramètres de votre appareil, puis appuyez sur 'Réessayer'.";
+            message = lang === 'mg' ? "Navela ny GPS" : "Permission GPS refusée";
             setGpsDenied(true);
-            showRetryButton = true;
           } else if (error.code === error.POSITION_UNAVAILABLE) {
             message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
-            showRetryButton = false;
           } else if (error.code === error.TIMEOUT) {
             message = lang === 'mg' ? "Lany daty ny GPS" : "Délai dépassé";
-            showRetryButton = true;
           } else {
             message = error.message;
-            showRetryButton = true;
           }
-          
           setLocationError(message);
           toast({
             variant: "destructive",
             title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée",
             description: message,
             className: "mobile-toast",
-            duration: showRetryButton ? 8000 : 4000,
           });
           resolve(false);
         },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
       );
     });
   }, [lang, toast]);
-  
-  useEffect(() => {
-    requestPassengerLocation();
-  }, [requestPassengerLocation]);
 
+  // --- CORRECTION: useMyLocationAsPickup - Version stable ---
   const useMyLocationAsPickup = useCallback(async () => {
-    if (!passengerLocation) {
-      const ok = await requestPassengerLocation();
-      if (!ok) return;
-    }
-    if (passengerLocation) {
-      setIsLocating(true);
-      const address = await reverseGeocode(passengerLocation.lat, passengerLocation.lng);
+    // Éviter les appels multiples
+    if (isLocating) return;
+    
+    setIsLocating(true);
+    try {
+      let loc = passengerLocation;
+      
+      // Si pas de position, demander la géolocalisation
+      if (!loc) {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          });
+        });
+        loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setPassengerLocation(loc);
+      }
+      
+      if (loc) {
+        const address = await reverseGeocode(loc.lat, loc.lng);
+        setPickup(address);
+        setPickupCoords(loc);
+        setMapCenter(loc);
+        setFlyTrigger(prev => prev + 1);
+        toast({
+          title: lang === 'mg' ? "Toerana fiaingana" : "Point de départ",
+          description: address,
+          className: "mobile-toast"
+        });
+      }
+    } catch (error) {
+      console.error('Location error:', error);
+      toast({
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée",
+        description: error instanceof Error ? error.message : lang === 'mg' ? "Tsy nahazo ny toerana misy anao" : "Impossible d'obtenir votre position",
+        className: "mobile-toast"
+      });
+      setGpsDenied(true);
+    } finally {
       setIsLocating(false);
-      setPickup(address);
-      setPickupCoords(passengerLocation);
-      setMapCenter(passengerLocation);
-      setFlyTrigger(prev => prev + 1);
-      toast({
-        title: lang === 'mg' ? "Toerana fiaingana" : "Point de départ",
-        description: address,
-        className: "mobile-toast"
-      });
     }
-  }, [passengerLocation, requestPassengerLocation, lang, toast]);
+  }, [passengerLocation, lang, toast, isLocating]);
 
-  // Correction des notifications sur mobile
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      @media (max-width: 640px) {
-        [data-radix-toast-root], [data-sonner-toast], .toast-root, .mobile-toast {
-          top: 70px !important;
-          bottom: auto !important;
-          left: 50% !important;
-          transform: translateX(-50%) !important;
-          right: auto !important;
-          margin: 0 !important;
-        }
+  // --- CORRECTION: handleMapSelect - Version stable avec prevention du rafraîchissement ---
+  const handleMapSelect = useCallback(async (loc: LatLng, event?: any) => {
+    // Empêcher la propagation et le comportement par défaut
+    if (event) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+    }
+    
+    // Éviter les appels multiples pendant le géocodage
+    if (isGeocoding) return;
+    
+    setIsGeocoding(true);
+    try {
+      const address = await reverseGeocode(loc.lat, loc.lng);
+      
+      if (selectMode === 'pickup') {
+        setPickupCoords(loc);
+        setPickup(address);
+        setSelectMode(null); // Désactiver le mode sélection après avoir choisi
+        toast({
+          title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
+          description: address,
+          className: "mobile-toast"
+        });
+      } else if (selectMode === 'dropoff') {
+        setDropoffCoords(loc);
+        setDropoff(address);
+        setSelectMode(null);
+        toast({
+          title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné",
+          description: address,
+          className: "mobile-toast"
+        });
       }
-    `;
-    document.head.appendChild(style);
-    return () => { document.head.removeChild(style); };
-  }, []);
-
-  const [pickup, setPickup] = useState('');
-  const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
-  const [dropoff, setDropoff] = useState('');
-  const [dropoffCoords, setDropoffCoords] = useState<LatLng | null>(null);
-  const [vehicle, setVehicle] = useState<'TAXI' | 'BAJAJ' | 'CAMION' | '4X4'>('TAXI');
-  const [selectMode, setSelectMode] = useState<'pickup' | 'dropoff' | null>(null);
-  const [isGeocoding, setIsGeocoding] = useState(false);
-  const [mapCenter, setMapCenter] = useState<LatLng>(GEOCENTER);
-  const [flyTrigger, setFlyTrigger] = useState(0);
-  const [hasActiveRide, setHasActiveRide] = useState(false);
-
-  const [pickupSuggestions, setPickupSuggestions] = useState<NominatimResult[]>([]);
-  const [dropoffSuggestions, setDropoffSuggestions] = useState<NominatimResult[]>([]);
-  const [isSearchingPickup, setIsSearchingPickup] = useState(false);
-  const [isSearchingDropoff, setIsSearchingDropoff] = useState(false);
-  const [showPickupSuggestions, setShowPickupSuggestions] = useState(false);
-  const [showDropoffSuggestions, setShowDropoffSuggestions] = useState(false);
-  const [pickupNoResults, setPickupNoResults] = useState(false);
-  const [dropoffNoResults, setDropoffNoResults] = useState(false);
-
-  const pickupDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropoffDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [showBookingModal, setShowBookingModal] = useState(false);
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('');
-  const [bookingNote, setBookingNote] = useState('');
-
-  const [routeCoords, setRouteCoords] = useState<[number, number][] | undefined>(undefined);
-  const [osrmDistance, setOsrmDistance] = useState<number | null>(null);
-  const [osrmDuration, setOsrmDuration] = useState<number | null>(null);
-
-  const [showTopAd, setShowTopAd] = useState(true);
-  const { connected, subscribe } = useWebSocket();
-  const queryClient = useQueryClient();
-  const [showFullscreenAd, setShowFullscreenAd] = useState(true);
-
-  const [unreadBookingOffers, setUnreadBookingOffers] = useState(0);
-
-  const { data: activeRide } = useQuery({
-    queryKey: ['/api/rides/active'],
-    queryFn: async () => {
-      try {
-        const res = await fetch('/api/rides/active', { credentials: 'include' });
-        if (res.status === 404) return null;
-        if (!res.ok) return null;
-        return res.json();
-      } catch {
-        return null;
-      }
-    },
-    refetchInterval: 15000,
-  });
-
-  useEffect(() => {
-    setHasActiveRide(!!(activeRide && activeRide.status !== 'COMPLETED' && activeRide.status !== 'CANCELED'));
-  }, [activeRide]);
-
-  useEffect(() => {
-    const unloadHandler = () => {
-      if (window.location.pathname === '/passenger/bookings') {
-        setUnreadBookingOffers(0);
-      }
-    };
-    window.addEventListener('popstate', unloadHandler);
-    return () => window.removeEventListener('popstate', unloadHandler);
-  }, []);
-
-  useEffect(() => {
-    if (!connected) return;
-    const unsub = subscribe('BOOKING_NEW_OFFER', (data) => {
-      console.log('📩 Nouvelle offre reçue côté passager:', data);
-      setUnreadBookingOffers(prev => prev + 1);
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
       toast({
-        title: lang === 'mg' ? "Tolobidy vaovao" : "Nouvelle offre",
-        description: lang === 'mg' ? `Tolobidy ho an'ny reservation #${data.bookingId}` : `Offre pour la réservation #${data.bookingId}`,
-        className: "mobile-toast",
-        duration: 5000,
-      });
-    });
-    return () => unsub();
-  }, [connected, subscribe, lang, toast]);
-
-  useEffect(() => {
-    if (!connected) return;
-    const unsubscribe = subscribe('OFFER_ACCEPTED', (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-      toast({
-        title: lang === 'mg' ? "Tolobidy voaray!" : "Offre acceptée!",
-        description: lang === 'mg' ? `Ny mpamily ${data.driverName} dia ho tonga` : `Le chauffeur ${data.driverName} va arriver`,
+        variant: "destructive",
+        title: lang === 'mg' ? "Tsy nety" : "Erreur",
+        description: lang === 'mg' ? "Tsy hita ny adiresy" : "Adresse non trouvée",
         className: "mobile-toast"
       });
-    });
-    return () => unsubscribe();
-  }, [connected, queryClient, toast, lang]);
+    } finally {
+      setIsGeocoding(false);
+    }
+  }, [selectMode, lang, toast, isGeocoding]);
 
+  // --- Route OSRM ---
   useEffect(() => {
     if (pickupCoords && dropoffCoords) {
       fetchOSRMRoute(pickupCoords, dropoffCoords).then(result => {
@@ -513,7 +541,7 @@ export default function PassengerHome() {
     setShowPickupSuggestions(false);
     setSelectMode('pickup');
     if (pickup && pickup.length > 2) {
-      saveUnknownSearch(pickup, 'pickup');
+      saveUnknownSearchLocal(pickup, 'pickup');
       toast({
         title: lang === 'mg' ? "Toerana tsy hita" : "Lieu non trouvé",
         description: lang === 'mg'
@@ -528,7 +556,7 @@ export default function PassengerHome() {
     setShowDropoffSuggestions(false);
     setSelectMode('dropoff');
     if (dropoff && dropoff.length > 2) {
-      saveUnknownSearch(dropoff, 'dropoff');
+      saveUnknownSearchLocal(dropoff, 'dropoff');
       toast({
         title: lang === 'mg' ? "Toerana tsy hita" : "Lieu non trouvé",
         description: lang === 'mg'
@@ -538,28 +566,6 @@ export default function PassengerHome() {
       });
     }
   }, [dropoff, lang, toast]);
-
-  const handleMapSelect = useCallback(async (loc: LatLng) => {
-    setIsGeocoding(true);
-    try {
-      const address = await reverseGeocode(loc.lat, loc.lng);
-      if (selectMode === 'pickup') {
-        setPickupCoords(loc);
-        setPickup(address);
-        setSelectMode('dropoff');
-        toast({ title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné", description: address, className: "mobile-toast" });
-      } else if (selectMode === 'dropoff') {
-        setDropoffCoords(loc);
-        setDropoff(address);
-        setSelectMode(null);
-        toast({ title: lang === 'mg' ? "Toerana voafidy" : "Lieu sélectionné", description: address, className: "mobile-toast" });
-      }
-    } catch (error) {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: lang === 'mg' ? "Tsy hita ny adiresy" : "Adresse non trouvée", className: "mobile-toast" });
-    } finally {
-      setIsGeocoding(false);
-    }
-  }, [selectMode, lang, toast]);
 
   const clearSelection = (type: 'pickup' | 'dropoff') => {
     if (type === 'pickup') {
@@ -623,7 +629,6 @@ export default function PassengerHome() {
     );
   }
 
-  // Affichage d'un écran de blocage si le GPS est refusé
   if (gpsDenied) {
     return (
       <MobileLayout role="passenger">
@@ -632,8 +637,8 @@ export default function PassengerHome() {
           <h2 className="text-xl font-bold mb-2">{lang === 'mg' ? 'GPS tsy azo' : 'Localisation requise'}</h2>
           <p className="text-muted-foreground mb-6">
             {lang === 'mg'
-              ? 'Ity fampiharana ity dia mila ny toerana misy anao mba hahitana mpamily akaiky sy hanomezanao traikefa tsara.'
-              : 'Cette application a besoin de votre position pour trouver des chauffeurs à proximité et vous offrir la meilleure expérience.'}
+              ? 'Ity fampiharana ity dia mila ny toerana misy anao mba hahitana mpamily akaiky.'
+              : 'Cette application a besoin de votre position pour trouver des chauffeurs à proximité.'}
           </p>
           <Button onClick={() => { setGpsDenied(false); requestPassengerLocation(); }} className="rounded-xl">
             {lang === 'mg' ? 'Andramo indray' : 'Réessayer'}
@@ -648,21 +653,14 @@ export default function PassengerHome() {
 
   return (
     <>
-      {showFullscreenAd && (
-        <FullscreenAd 
-          onClose={() => setShowFullscreenAd(false)} 
-          delay={1000}
-        />
-      )}
+      {showFullscreenAd && <FullscreenAd onClose={handleCloseFullscreenAd} delay={1000} />}
       <MobileLayout role="passenger">
-        {/* Indicateur de connexion WebSocket */}
         <div className="absolute top-14 left-4 z-20">
           <div className={`px-2 py-1 rounded-full text-xs font-medium ${connected ? 'bg-emerald-500/20 text-emerald-700' : 'bg-red-500/20 text-red-700'}`}>
             {connected ? (lang === 'mg' ? 'Mifandray' : 'Connecté') : (lang === 'mg' ? 'Tsy mifandray' : 'Déconnecté')}
           </div>
         </div>
 
-        {/* Indicateur de localisation du passager */}
         {passengerLocation && (
           <div className="absolute top-14 right-4 z-20">
             <div className="px-2 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-700 flex items-center gap-1">
@@ -674,7 +672,9 @@ export default function PassengerHome() {
 
         {showTopAd && (
           <div className="absolute top-24 left-0 right-0 z-20 px-3 pointer-events-none">
-            <div className="pointer-events-auto"><AdBanner position="HOME_TOP" onClose={() => setShowTopAd(false)} /></div>
+            <div className="pointer-events-auto">
+              <AdBanner position="HOME_TOP" onClose={handleCloseTopAd} />
+            </div>
           </div>
         )}
 
@@ -714,7 +714,7 @@ export default function PassengerHome() {
                   <div className="absolute right-2 flex items-center gap-1">
                     {isSearchingPickup && <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />}
                     {pickup && <button onClick={() => clearSelection('pickup')} className="p-1.5 hover:bg-muted rounded-full transition-colors"><X className="w-4 h-4 text-muted-foreground" /></button>}
-                    <button onClick={useMyLocationAsPickup} className="p-1.5 hover:bg-muted rounded-full transition-colors" title={lang === 'mg' ? 'Toeranako' : 'Ma position'}><LocateFixed className="w-4 h-4 text-primary" /></button>
+                    <button onClick={useMyLocationAsPickup} disabled={isLocating} className="p-1.5 hover:bg-muted rounded-full transition-colors" title={lang === 'mg' ? 'Toeranako' : 'Ma position'}><LocateFixed className="w-4 h-4 text-primary" /></button>
                     <button onClick={() => setSelectMode('pickup')} className="p-1.5 hover:bg-muted rounded-full transition-colors"><Crosshair className={`w-4 h-4 ${selectMode === 'pickup' ? 'text-emerald-500 animate-pulse' : 'text-muted-foreground'}`} /></button>
                   </div>
                 </div>

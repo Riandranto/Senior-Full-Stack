@@ -16,15 +16,13 @@ L.Icon.Default.mergeOptions({
 const getVehicleIconUrl = (vehicleType?: string): string => {
   const type = vehicleType?.toUpperCase() || 'DEFAULT';
   const baseUrl = '/images/vehicles/';
-  
-  const mapping: Record<string, string> = {
+  const mapping = {
     'TAXI': 'taxi.png',
     'BAJAJ': 'bajaj.png',
     'CAMION': 'camion.png',
     '4X4': '4x4.png',
     'DEFAULT': 'default.png'
   };
-  
   const filename = mapping[type] || mapping.DEFAULT;
   return `${baseUrl}${filename}`;
 };
@@ -153,18 +151,21 @@ interface MapPickerProps {
   driverMarkers?: DriverMarkerInfo[];
   interactive?: boolean;
   selectMode?: 'pickup' | 'dropoff' | null;
-  onLocationSelect?: (loc: LatLng) => void;
+  onLocationSelect?: (loc: LatLng, event?: any) => void;
   flyToTrigger?: number;
   showRoute?: boolean;
   routeCoordinates?: [number, number][];
 }
 
-// ==================== COMPOSANTS INTERNES ====================
-function LocationMarker({ onSelect, selectMode }: { onSelect?: (loc: LatLng) => void; selectMode?: 'pickup' | 'dropoff' | null }) {
-  useMapEvents({
+// ==================== COMPOSANTS INTERNES CORRIGÉS ====================
+
+function LocationMarker({ onSelect, selectMode }: { onSelect?: (loc: LatLng, event?: any) => void; selectMode?: 'pickup' | 'dropoff' | null }) {
+  const map = useMapEvents({
     click(e) {
       if (onSelect && selectMode) {
-        onSelect(e.latlng);
+        e.originalEvent.stopPropagation();
+        e.originalEvent.preventDefault();
+        onSelect({ lat: e.latlng.lat, lng: e.latlng.lng }, e.originalEvent);
       }
     },
   });
@@ -183,34 +184,38 @@ function MapUpdater({ center, zoom, flyToTrigger }: { center: LatLng; zoom?: num
   return null;
 }
 
+// Composant FitBounds OPTIMISÉ - évite les recentrages répétés
 function FitBounds({ pickup, dropoff, driverMarkers }: { pickup?: LatLng | null; dropoff?: LatLng | null; driverMarkers?: DriverMarkerInfo[] }) {
   const map = useMap();
-  const fitted = useRef(false);
+  const lastBoundsKeyRef = useRef<string>('');
+
   useEffect(() => {
-    if (pickup && dropoff && !fitted.current) {
-      const points: [number, number][] = [
-        [pickup.lat, pickup.lng],
-        [dropoff.lat, dropoff.lng],
-      ];
-      if (driverMarkers) {
-        driverMarkers.forEach(d => points.push([d.lat, d.lng]));
-      }
-      if (points.length > 0) {
-        const bounds = L.latLngBounds(points);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
-        fitted.current = true;
-      }
+    if (!pickup && !dropoff && (!driverMarkers || driverMarkers.length === 0)) return;
+
+    const points: [number, number][] = [];
+    if (pickup) points.push([pickup.lat, pickup.lng]);
+    if (dropoff) points.push([dropoff.lat, dropoff.lng]);
+    if (driverMarkers) {
+      driverMarkers.forEach(d => points.push([d.lat, d.lng]));
     }
-    if (!pickup || !dropoff) {
-      fitted.current = false;
-    }
+
+    if (points.length === 0) return;
+
+    // Créer une clé unique basée sur toutes les coordonnées
+    const boundsKey = points.map(p => `${p[0]},${p[1]}`).join('|');
+    if (boundsKey === lastBoundsKeyRef.current) return;
+    lastBoundsKeyRef.current = boundsKey;
+
+    const bounds = L.latLngBounds(points);
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
   }, [pickup, dropoff, driverMarkers, map]);
+
   return null;
 }
 
 // ==================== COMPOSANT PRINCIPAL ====================
 export function MapView({ 
-  center = { lat: -18.8792, lng: 47.5079 },  
+  center = { lat: -18.91894, lng: 47.52422 },  
   zoom = 15,
   pickupMarker,
   dropoffMarker,
@@ -277,7 +282,7 @@ export function MapView({
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         
         <MapUpdater center={center} zoom={zoom} flyToTrigger={flyToTrigger} />

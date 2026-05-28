@@ -1,4 +1,4 @@
-// client/src/lib/api.ts - CORRECTION COMPLÈTE
+// client/src/lib/api.ts - Version corrigée (suppression de l'erreur endpoint)
 import { api } from '@shared/routes';
 
 // Détection de l'environnement Capacitor pour APK
@@ -10,14 +10,11 @@ const isLocalDev = window.location.hostname === 'localhost' ||
                    window.location.hostname.includes('10.');
 
 // IMPORTANT: Priorité: VITE_API_URL > détection auto > fallback
-// Pour le développement local, forcer localhost
 let apiUrl = import.meta.env.VITE_API_URL;
 
-// Si pas de VITE_API_URL ou si c'est l'URL de production en développement local
 if (!apiUrl || (isLocalDev && apiUrl.includes('onrender.com'))) {
   if (isCapacitor) {
-    // Pour APK, utiliser l'URL du serveur (à modifier)
-    apiUrl = 'https://senior-full-stack.onrender.com'; // À remplacer par votre URL
+    apiUrl = 'https://senior-full-stack.onrender.com';
   } else if (isLocalDev) {
     apiUrl = 'http://localhost:5000';
   } else {
@@ -27,14 +24,25 @@ if (!apiUrl || (isLocalDev && apiUrl.includes('onrender.com'))) {
 
 export const API_BASE_URL = apiUrl;
 
-console.log('🔧 ========== API CONFIG ==========');
-console.log('🔧 API_BASE_URL:', API_BASE_URL);
-console.log('🔧 MODE:', import.meta.env.MODE);
-console.log('🔧 Hostname:', window.location.hostname);
-console.log('🔧 isLocalDev:', isLocalDev);
-console.log('🔧 isCapacitor:', isCapacitor);
-console.log('🔧 VITE_API_URL from env:', import.meta.env.VITE_API_URL);
-console.log('🔧 =================================');
+// Logs de configuration (uniquement en développement, et sans variable undefined)
+if (import.meta.env.DEV) {
+  console.log('🔧 ========== API CONFIG ==========');
+  console.log('🔧 API_BASE_URL:', API_BASE_URL);
+  console.log('🔧 MODE:', import.meta.env.MODE);
+  console.log('🔧 Hostname:', window.location.hostname);
+  console.log('🔧 isLocalDev:', isLocalDev);
+  console.log('🔧 isCapacitor:', isCapacitor);
+  console.log('🔧 VITE_API_URL from env:', import.meta.env.VITE_API_URL);
+  console.log('🔧 =================================');
+}
+
+export function getWebSocketUrl(): string {
+  let base = API_BASE_URL;
+  let wsUrl = base.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
+  if (!wsUrl.endsWith('/')) wsUrl += '/';
+  wsUrl += 'ws';
+  return wsUrl;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -54,7 +62,10 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`;
   
-  console.log(`🌐 [apiFetch] ${endpoint} -> ${url}`);
+  // Log uniquement en développement
+  if (import.meta.env.DEV) {
+    console.log(`🌐 [apiFetch] ${endpoint} -> ${url}`);
+  }
   
   const defaultOptions: RequestInit = {
     credentials: 'include',
@@ -64,7 +75,6 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     },
   };
   
-  // Ne pas ajouter Content-Type pour FormData
   if (!(options.body instanceof FormData)) {
     defaultOptions.headers = {
       ...defaultOptions.headers,
@@ -78,7 +88,9 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
       ...options,
     });
     
-    console.log(`📡 [apiFetch] Response status: ${response.status} for ${endpoint}`);
+    if (import.meta.env.DEV) {
+      console.log(`📡 [apiFetch] Response status: ${response.status} for ${endpoint}`);
+    }
     
     if (!response.ok) {
       let errorData;
@@ -113,7 +125,6 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
   }
 }
 
-// Le reste du code reste identique...
 export async function apiGet<T>(endpoint: string): Promise<T> {
   const response = await apiFetch(endpoint);
   return response.json();
@@ -241,7 +252,6 @@ export async function uploadDriverDocument(file: File, type: string, vehicleType
   if (vehicleType) formData.append('vehicleType', vehicleType);
   if (vehicleNumber) formData.append('vehicleNumber', vehicleNumber);
   if (licenseNumber) formData.append('licenseNumber', licenseNumber);
-  
   return apiPost(api.driver.uploadDocument.path, formData);
 }
 
@@ -318,7 +328,6 @@ export async function recordAdClick(adId: number, screen?: string) {
   return apiPost(`/api/ads/${adId}/click`, { screen });
 }
 
-// Admin ad routes
 export async function getAllAds() {
   return apiGet('/api/admin/ads');
 }
@@ -523,9 +532,7 @@ export async function getDriverLocation(driverId: number) {
 // ==================== WEBSOCKET ====================
 
 export function createWebSocketConnection(): WebSocket {
-  // Utiliser la même logique que pour API_BASE_URL
   let wsUrl: string;
-  
   if (isCapacitor) {
     wsUrl = `wss://ton-serveur-render.com/ws`;
   } else if (isLocalDev) {
@@ -534,7 +541,6 @@ export function createWebSocketConnection(): WebSocket {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsUrl = `${protocol}//${window.location.host}/ws`;
   }
-  
   console.log('🔌 Creating WebSocket connection to:', wsUrl);
   return new WebSocket(wsUrl);
 }

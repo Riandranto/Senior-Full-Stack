@@ -1,9 +1,11 @@
+// client/src/hooks/use-driver.ts
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { type Ride, type CreateOfferRequest, type DriverProfile } from "@shared/schema";
 import { useToast } from "./use-toast";
 import { useTranslation } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
+import { useRef, useCallback } from "react";
 
 export interface DriverDocument {
   id: number;
@@ -13,7 +15,6 @@ export interface DriverDocument {
   status?: 'PENDING' | 'APPROVED' | 'REJECTED';
 }
 
-// Profil conducteur avec documents
 export function useDriverProfile() {
   const { toast } = useToast();
   const { lang } = useTranslation();
@@ -21,29 +22,21 @@ export function useDriverProfile() {
   return useQuery<DriverProfile & { documents: DriverDocument[] }>({
     queryKey: [api.driver.getProfile.path],
     queryFn: async () => {
-      const res = await apiFetch(api.driver.getProfile.path, { 
+      const res = await apiFetch(api.driver.getProfile.path, {
         credentials: "include",
-        headers: {
-          'Cache-Control': 'no-cache'
-        }
+        headers: { 'Cache-Control': 'no-cache' }
       });
-      
       if (!res.ok) {
-        if (res.status === 404) {
-          // Profil pas encore créé - c'est OK pour les nouveaux conducteurs
-          return null;
-        }
+        if (res.status === 404) return null;
         const error = await res.json();
-        throw new Error(error.message || "Failed to apiFetch driver profile");
+        throw new Error(error.message || "Failed to fetch driver profile");
       }
-      
       return res.json();
     },
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    staleTime: 2 * 60 * 1000,
   });
 }
 
-// Upload de document sécurisé
 export function useUploadDocument() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -51,23 +44,10 @@ export function useUploadDocument() {
 
   return useMutation({
     mutationFn: async ({ file, type }: { file: File; type: string }) => {
-      // Validation du fichier côté client
-      const maxSize = 10 * 1024 * 1024; // 10MB
-      if (file.size > maxSize) {
-        throw new Error(lang === 'mg'
-          ? "Lehibe loatra ny rakitra. 10MB ny fetra."
-          : "Fichier trop volumineux. Limite: 10MB"
-        );
-      }
-
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) throw new Error(lang === 'mg' ? "Lehibe loatra ny rakitra. 10MB ny fetra." : "Fichier trop volumineux. Limite: 10MB");
       const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
-      if (!allowedTypes.includes(file.type)) {
-        throw new Error(lang === 'mg'
-          ? "Karazana rakitra tsy mety. JPEG, PNG, PDF ihany."
-          : "Type de fichier non autorisé. JPEG, PNG, PDF uniquement."
-        );
-      }
-
+      if (!allowedTypes.includes(file.type)) throw new Error(lang === 'mg' ? "Karazana rakitra tsy mety. JPEG, PNG, PDF ihany." : "Type de fichier non autorisé. JPEG, PNG, PDF uniquement.");
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', type);
@@ -77,54 +57,35 @@ export function useUploadDocument() {
         body: formData,
         credentials: "include",
       });
-
       const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.message || (lang === 'mg'
-          ? "Tsy afaka nampiditra antontan-taratasy"
-          : "Échec du téléchargement"
-        ));
-      }
-
+      if (!res.ok) throw new Error(data.message || (lang === 'mg' ? "Tsy afaka nampiditra antontan-taratasy" : "Échec du téléchargement"));
       return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.driver.getProfile.path] });
       queryClient.invalidateQueries({ queryKey: ['/api/driver/documents'] });
-      
       toast({
         title: lang === 'mg' ? "Voaray ny antontan-taratasy" : "Document reçu",
-        description: lang === 'mg' 
-          ? "Hiandry fankatoavana"
-          : "En attente de validation",
+        description: lang === 'mg' ? "Hiandry fankatoavana" : "En attente de validation",
       });
     },
     onError: (error: Error) => {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message,
-      });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
     },
   });
 }
 
-// Documents du conducteur
 export function useDriverDocuments() {
   return useQuery<DriverDocument[]>({
     queryKey: ['/api/driver/documents'],
     queryFn: async () => {
-      const res = await apiFetch('/api/driver/documents', {
-        credentials: 'include'
-      });
+      const res = await apiFetch('/api/driver/documents', { credentials: 'include' });
       if (!res.ok) return [];
       return res.json();
     },
   });
 }
 
-// Statut en ligne/offline
 export function useSetOnline() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -138,72 +99,43 @@ export function useSetOnline() {
         body: JSON.stringify({ online }),
         credentials: "include",
       });
-      
       if (!res.ok) {
         const error = await res.json();
         throw new Error(error.message || "Failed to update status");
       }
-      
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData([api.driver.getProfile.path], (old: any) => ({
-        ...old,
-        online: data.online
-      }));
-      
-      toast({
-        title: data.online 
-          ? (lang === 'mg' ? "Miasa" : "En ligne")
-          : (lang === 'mg' ? "Tsy miasa" : "Hors ligne"),
-      });
+      queryClient.setQueryData([api.driver.getProfile.path], (old: any) => ({ ...old, online: data.online }));
+      toast({ title: data.online ? (lang === 'mg' ? "Miasa" : "En ligne") : (lang === 'mg' ? "Tsy miasa" : "Hors ligne") });
     },
     onError: (error: Error) => {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message,
-      });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
     },
   });
 }
 
-// Demandes de courses avec géolocalisation
 export function useDriverRequests() {
-  const { toast } = useToast();
-  const { lang } = useTranslation();
-
   return useQuery<any[]>({
     queryKey: [api.driver.getRequests.path],
     queryFn: async () => {
-      const res = await apiFetch(api.driver.getRequests.path, { 
-        credentials: "include",
-        headers: {
-          'Cache-Control': 'no-cache'
-        }
-      });
-      
+      const res = await apiFetch(api.driver.getRequests.path, { credentials: "include", headers: { 'Cache-Control': 'no-cache' } });
       if (!res.ok) {
-        if (res.status === 403) {
-          return { error: 'NOT_APPROVED' };
-        }
+        if (res.status === 403) return { error: 'NOT_APPROVED' };
         return [];
       }
-      
       return res.json();
     },
-    // FIX: Change 'reapiFetchInterval' to 'refetchInterval'
     refetchInterval: (query) => {
+      if (document.visibilityState !== 'visible') return false;
       const data = query.state.data;
-      if (data && typeof data === 'object' && 'error' in data) {
-        return false;
-      }
-      return 5000;
+      if (!data || (data && typeof data === 'object' && 'error' in data)) return false;
+      return 20000;
     },
+    refetchIntervalInBackground: false,
   });
 }
 
-// Envoi d'offre avec validation
 export function useSendOffer() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -211,199 +143,166 @@ export function useSendOffer() {
 
   return useMutation({
     mutationFn: async (data: CreateOfferRequest) => {
-      // Validation
-      if (data.priceAr < 1000) {
-        throw new Error(lang === 'mg'
-          ? "Vidiny kely loatra (1000 Ar ny farany ambany)"
-          : "Prix trop bas (minimum 1000 Ar)"
-        );
-      }
-
-      if (data.etaMinutes < 1 || data.etaMinutes > 120) {
-        throw new Error(lang === 'mg'
-          ? "Fotoana tsy mety (1-120 minitra)"
-          : "Temps invalide (1-120 minutes)"
-        );
-      }
-
+      if (data.priceAr < 1000) throw new Error(lang === 'mg' ? "Vidiny kely loatra (1000 Ar ny farany ambany)" : "Prix trop bas (minimum 1000 Ar)");
+      if (data.etaMinutes < 1 || data.etaMinutes > 120) throw new Error(lang === 'mg' ? "Fotoana tsy mety (1-120 minitra)" : "Temps invalide (1-120 minutes)");
       const res = await apiFetch(api.driver.sendOffer.path, {
         method: api.driver.sendOffer.method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
         credentials: "include",
       });
-
       const result = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(result.message || (lang === 'mg'
-          ? "Tsy afaka nandefa tolo-bidy"
-          : "Échec de l'envoi de l'offre"
-        ));
-      }
-
+      if (!res.ok) throw new Error(result.message || (lang === 'mg' ? "Tsy afaka nandefa tolo-bidy" : "Échec de l'envoi de l'offre"));
       return result;
     },
     onSuccess: (_, variables) => {
-      // Invalider les requêtes
       queryClient.invalidateQueries({ queryKey: [api.driver.getRequests.path] });
-      
-      toast({
-        title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!",
-        description: lang === 'mg'
-          ? `${variables.priceAr} Ar - ${variables.etaMinutes} min`
-          : `${variables.priceAr} Ar - ${variables.etaMinutes} min`,
-      });
+      toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!", description: `${variables.priceAr} Ar - ${variables.etaMinutes} min` });
     },
     onError: (error: Error) => {
-      toast({
-        variant: "destructive",
-        title: lang === 'mg' ? "Tsy nety" : "Erreur",
-        description: error.message,
-      });
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
     },
   });
 }
 
-// Mise à jour de la position GPS
+// Throttling corrigé (useRef)
 export function useUpdateLocation() {
+  const timeoutRef = useRef<NodeJS.Timeout>();
+  const lastSentLocation = useRef({ lat: 0, lng: 0 });
+  const lastSendTime = useRef(0);
+
+  const mutate = useCallback(async (location: { lat: number; lng: number }) => {
+    if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
+      console.warn('useUpdateLocation: invalid location', location);
+      return;
+    }
+    const now = Date.now();
+    const latDiff = Math.abs(location.lat - lastSentLocation.current.lat);
+    const lngDiff = Math.abs(location.lng - lastSentLocation.current.lng);
+    const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff) * 111000;
+    if (distance < 300 && (now - lastSendTime.current) < 15000) return;
+
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await apiFetch(api.driver.updateLocation.path, {
+          method: api.driver.updateLocation.method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(location),
+          credentials: "include",
+        });
+        if (res.ok) {
+          lastSentLocation.current = location;
+          lastSendTime.current = Date.now();
+        }
+      } catch (error) {
+        // ignore
+      } finally {
+        timeoutRef.current = undefined;
+      }
+    }, 500);
+  }, []);
+
+  return { mutate };
+}
+
+export function useDriverActiveRide() {
+  return useQuery({
+    queryKey: ['/api/driver/active-ride'],
+    queryFn: async () => {
+      try {
+        const res = await apiFetch('/api/driver/active-ride', { credentials: 'include' });
+        if (res.status === 404) return null;
+        if (res.status === 400) {
+          console.warn('Bad request for /api/driver/active-ride, returning null');
+          return null;
+        }
+        if (!res.ok) return null;
+        return res.json();
+      } catch (error) {
+        console.error('Error fetching active ride:', error);
+        return null;
+      }
+    },
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+export function useUpdateRideStatus(rideId: number) {
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const { lang } = useTranslation();
 
   return useMutation({
-    mutationFn: async (location: { lat: number; lng: number }) => {
-      const res = await apiFetch(api.driver.updateLocation.path, {
-        method: api.driver.updateLocation.method,
+    mutationFn: async (status: string) => {
+      console.log(`🔄 Updating ride ${rideId} status to: ${status}`);
+      const res = await apiFetch(`/api/rides/${rideId}/status`, {
+        method: 'PATCH',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(location),
+        body: JSON.stringify({ status }),
         credentials: "include",
       });
-
       if (!res.ok) {
-        throw new Error("Failed to update location");
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.message || "Failed to update ride status");
       }
-
       return res.json();
     },
-    onError: () => {
-      // Silently fail - pas de toast pour éviter le spam
-      console.error("Location update failed");
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
+      const messages: Record<string, { mg: string; fr: string }> = {
+        DRIVER_EN_ROUTE: { mg: "Eny an-dalana!", fr: "En route!" },
+        DRIVER_ARRIVED: { mg: "Tonga teo amin'ny toerana!", fr: "Arrivé au point de départ!" },
+        IN_PROGRESS: { mg: "Manomboka ny dia", fr: "Course en cours" },
+        COMPLETED: { mg: "Vita ny dia", fr: "Course terminée" },
+      };
+      if (messages[data.status]) {
+        toast({ title: lang === 'mg' ? messages[data.status].mg : messages[data.status].fr });
+      }
+    },
+    onError: (error: Error) => {
+      console.error('Error updating ride status:', error);
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
     },
   });
 }
 
-  // 🔥 NOUVEAU: Hook pour récupérer la course active du conducteur
-  export function useDriverActiveRide() {
-    return useQuery({
-      queryKey: ['/api/driver/active-ride'],
-      queryFn: async () => {
-        try {
-          const res = await apiFetch('/api/driver/active-ride', { credentials: 'include' });
-          if (res.status === 404) return null;
-          if (!res.ok) return null;
-          return res.json();
-        } catch (error) {
-          console.error('Error fetching active ride:', error);
-          return null;
-        }
-      },
-      refetchInterval: 10000,
-      retry: false,
-      staleTime: 0,
-    });
-  }
+export function useExtendEta(rideId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { lang } = useTranslation();
 
-  // 🔥 NOUVEAU: Hook pour mettre à jour le statut d'une course
-  export function useUpdateRideStatus(rideId: number) {
-    const queryClient = useQueryClient();
-    const { toast } = useToast();
-    const { lang } = useTranslation();
-  
-    return useMutation({
-      mutationFn: async (status: string) => {
-        console.log(`🔄 Updating ride ${rideId} status to: ${status}`);
-        
-        const res = await apiFetch(`/api/rides/${rideId}/status`, {
-          method: 'PATCH',
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
-          credentials: "include",
-        });
-  
-        if (!res.ok) {
-          const error = await res.json().catch(() => ({}));
-          throw new Error(error.message || "Failed to update ride status");
-        }
-  
-        return res.json();
-      },
-      onSuccess: (data) => {
-        queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-        queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-        
-        const messages: Record<string, { mg: string; fr: string }> = {
-          DRIVER_EN_ROUTE: { mg: "Eny an-dalana!", fr: "En route!" },
-          DRIVER_ARRIVED: { mg: "Tonga teo amin'ny toerana!", fr: "Arrivé au point de départ!" },
-          IN_PROGRESS: { mg: "Manomboka ny dia", fr: "Course en cours" },
-          COMPLETED: { mg: "Vita ny dia", fr: "Course terminée" },
-        };
-  
-        if (messages[data.status]) {
-          toast({
-            title: lang === 'mg' ? messages[data.status].mg : messages[data.status].fr,
-          });
-        }
-      },
-      onError: (error: Error) => {
-        console.error('Error updating ride status:', error);
-        toast({
-          variant: "destructive",
-          title: lang === 'mg' ? "Tsy nety" : "Erreur",
-          description: error.message,
-        });
-      },
-    });
-  }
-
-  // 🔥 NOUVEAU: Hook pour prolonger l'ETA
-  export function useExtendEta(rideId: number) {
-    const queryClient = useQueryClient();
-    const { toast } = useToast();
-    const { lang } = useTranslation();
-  
-    return useMutation({
-      mutationFn: async (additionalMinutes: number) => {
-        const res = await apiFetch(`/api/rides/${rideId}/eta`, {
-          method: 'POST',
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ additionalMinutes }),
-          credentials: "include",
-        });
-  
-        if (!res.ok) {
-          const error = await res.json();
-          throw new Error(error.message || "Failed to extend ETA");
-        }
-  
-        return res.json();
-      },
-      onSuccess: (data, additionalMinutes) => {
-        queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-        
-        toast({
-          title: lang === 'mg' ? "Fotoana fanampiny" : "Temps supplémentaire",
-          description: lang === 'mg' 
-            ? `+${additionalMinutes} minitra fanampiny (total: ${data.etaMinutes} min)`
-            : `+${additionalMinutes} minutes supplémentaires (total: ${data.etaMinutes} min)`,
-        });
-      },
-      onError: (error: Error) => {
-        toast({
-          variant: "destructive",
-          title: lang === 'mg' ? "Tsy nety" : "Erreur",
-          description: error.message,
-        });
-      },
-    });
-  }
+  return useMutation({
+    mutationFn: async (additionalMinutes: number) => {
+      const res = await apiFetch(`/api/rides/${rideId}/eta`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ additionalMinutes }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to extend ETA");
+      }
+      return res.json();
+    },
+    onSuccess: (data, additionalMinutes) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
+      toast({
+        title: lang === 'mg' ? "Fotoana fanampiny" : "Temps supplémentaire",
+        description: lang === 'mg' 
+          ? `+${additionalMinutes} minitra fanampiny (total: ${data.etaMinutes} min)`
+          : `+${additionalMinutes} minutes supplémentaires (total: ${data.etaMinutes} min)`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
+    },
+  });
+}

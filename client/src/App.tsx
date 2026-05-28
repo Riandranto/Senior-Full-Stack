@@ -7,8 +7,10 @@ import { useAuth } from "./hooks/use-auth";
 import { useOfflineSync } from "./hooks/use-offline-sync";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { capacitorStorage } from "./lib/capacitor-storage";
-import { useState, useEffect, Component, ErrorInfo, ReactNode, useRef } from "react";
-import { Capacitor } from '@capacitor/core';
+import { useState, useEffect, Component, ErrorInfo, ReactNode, useRef, useCallback } from "react";
+import { WebSocketProvider } from '@/context/WebSocketContext';
+import { WebSocketEventManager } from '@/components/WebSocketEventManager';
+import { FullscreenAd } from "@/components/FullscreenAd";
 
 // Pages
 import AuthPage from "./pages/Auth";
@@ -22,7 +24,6 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import Help from "./pages/Help";
 import BookingsPage from './pages/passenger/Bookings';
 
-import { FullscreenAd } from "@/components/FullscreenAd";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
 const LoadingSpinner = () => (
@@ -31,7 +32,6 @@ const LoadingSpinner = () => (
   </div>
 );
 
-// Error Boundary
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -57,37 +57,30 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
-// Hook pour stocker la dernière route active (amélioré)
 function useLastRoute() {
   const STORAGE_KEY = 'farady_last_route';
   const [lastRoute, setLastRoute] = useState<string>('/passenger');
-  const isInitialized = useRef(false);
-
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setLastRoute(saved);
-    isInitialized.current = true;
   }, []);
-
-  const updateLastRoute = (route: string) => {
-    if (route !== '/login' && route !== '/auth' && !route.includes('offline') && route !== '/') {
-      setLastRoute(route);
+  const updateLastRoute = useCallback((route: string) => {
+    if (route && typeof route === 'string' && route !== '/login' && route !== '/auth' && !route.includes('offline') && route !== '/') {
       localStorage.setItem(STORAGE_KEY, route);
     }
-  };
-
+  }, []);
+  useEffect(() => {
+    updateLastRoute(lastRoute);
+  }, [lastRoute, updateLastRoute]);
   return { lastRoute, updateLastRoute };
 }
 
-// Composant pour traquer les changements de route
 function RouteTracker({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { updateLastRoute } = useLastRoute();
-
   useEffect(() => {
     updateLastRoute(location);
   }, [location, updateLastRoute]);
-
   return <>{children}</>;
 }
 
@@ -113,69 +106,41 @@ function ProtectedRoute({ component: Component, allowedRoles }: { component: any
 }
 
 function Router() {
-  const { user, isLoading, refetch } = useAuth();
+  const [, setLocation] = useLocation();
+  const { user, isLoading } = useAuth();
   const [offlineMode, setOfflineMode] = useState(false);
   const { isConnected } = useNetworkStatus();
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const { lastRoute, updateLastRoute } = useLastRoute();
-  const reconnectingRef = useRef(false);
-  const [location] = useLocation();
+  const initialRedirectDone = useRef(false);
+  const previousUserRef = useRef(user);
 
-  // Sauvegarder la route courante avant qu'elle ne soit perdue
-  useEffect(() => {
-    if (location && location !== '/login') {
-      updateLastRoute(location);
-    }
-  }, [location, updateLastRoute]);
-
-  // Reconnexion automatique améliorée
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    const handleReconnect = async () => {
-      // Ne rien faire si pas de connexion, ou si déjà en train de reconnecter
-      if (!isConnected) return;
-      if (reconnectingRef.current) return;
-      // Si l'utilisateur est déjà connecté, inutile
-      if (user) return;
-      // Si on est sur la page de login, ne pas reconnecter automatiquement
-      if (location === '/login') return;
-      // Si on est en train de charger, attendre
-      if (isLoading) return;
-
-      console.log('🔄 Tentative de reconnexion automatique...');
-      reconnectingRef.current = true;
-      setIsReconnecting(true);
-
-      try {
-        const result = await refetch();
-        if (result.data) {
-          console.log('✅ Reconnexion réussie, redirection vers:', lastRoute);
-          // Utiliser wouter navigateur pour éviter un rechargement complet
-          window.location.href = lastRoute;
-        } else {
-          console.log('❌ Reconnexion échouée, redirection vers login');
-          window.location.href = '/login';
-        }
-      } catch (err) {
-        console.error('Erreur lors de la reconnexion:', err);
-        window.location.href = '/login';
-      } finally {
-        setTimeout(() => {
-          reconnectingRef.current = false;
-          setIsReconnecting(false);
-        }, 500);
-      }
-    };
-
-    // Déclencher après un délai pour laisser le temps à la connexion de se rétablir
-    timeoutId = setTimeout(handleReconnect, 1500);
-    return () => clearTimeout(timeoutId);
-  }, [isConnected, user, isLoading, refetch, lastRoute, location]);
-
-  // Mise à jour du mode hors ligne
   useEffect(() => {
     capacitorStorage.isOfflineMode().then(setOfflineMode);
   }, []);
+
+  // Redirection initiale UNIQUEMENT une fois
+  useEffect(() => {
+    if (isLoading) return;
+    if (offlineMode) return;
+    if (!user && isConnected) return;
+    if (user && !offlineMode && !initialRedirectDone.current) {
+      const path = window.location.pathname;
+      if (user.role === 'DRIVER' && !path.startsWith('/driver')) {
+        setLocation('/driver');
+      } else if (user.role === 'ADMIN' && !path.startsWith('/admin')) {
+        setLocation('/admin');
+      } else if (user.role === 'PASSENGER' && !path.startsWith('/passenger')) {
+        setLocation('/passenger');
+      }
+      initialRedirectDone.current = true;
+    }
+    // Réinitialiser le flag si l'utilisateur change (ex: déconnexion)
+    if (user !== previousUserRef.current) {
+      if (!user) {
+        initialRedirectDone.current = false;
+      }
+      previousUserRef.current = user;
+    }
+  }, [user, isLoading, offlineMode, isConnected, setLocation]);
 
   if (offlineMode) {
     return (
@@ -193,21 +158,18 @@ function Router() {
     );
   }
 
-  if (isLoading || isReconnecting) return <LoadingSpinner />;
+  if (isLoading) return <LoadingSpinner />;
 
   return (
     <Switch>
       <Route path="/">
         {user ? (
-          <Redirect to={
-            user.role === 'DRIVER' ? '/driver' : 
-            user.role === 'ADMIN' ? '/admin' : '/passenger'
-          } />
-        ) : <Redirect to="/login" />}
+          <Redirect to={user.role === 'DRIVER' ? '/driver' : user.role === 'ADMIN' ? '/admin' : '/passenger'} />
+        ) : (
+          <Redirect to="/login" />
+        )}
       </Route>
-      
       <Route path="/login" component={AuthPage} />
-      
       <Route path="/passenger" component={() => <ProtectedRoute component={PassengerHome} allowedRoles={['PASSENGER']} />} />
       <Route path="/passenger/history" component={() => <ProtectedRoute component={PassengerHistory} allowedRoles={['PASSENGER']} />} />
       <Route path="/passenger/ride/:id" component={() => <ProtectedRoute component={PassengerRide} allowedRoles={['PASSENGER']} />} />
@@ -215,14 +177,11 @@ function Router() {
       <Route path="/passenger/settings" component={() => <ProtectedRoute component={Settings} allowedRoles={['PASSENGER']} />} />
       <Route path="/passenger/help" component={() => <ProtectedRoute component={Help} allowedRoles={['PASSENGER']} />} />
       <Route path="/passenger/bookings" component={() => <ProtectedRoute component={BookingsPage} allowedRoles={['PASSENGER']} />} />
-
       <Route path="/driver" component={() => <ProtectedRoute component={DriverHome} allowedRoles={['DRIVER']} />} />
       <Route path="/driver/profile" component={() => <ProtectedRoute component={Profile} allowedRoles={['DRIVER']} />} />
       <Route path="/driver/settings" component={() => <ProtectedRoute component={Settings} allowedRoles={['DRIVER']} />} />
       <Route path="/driver/help" component={() => <ProtectedRoute component={Help} allowedRoles={['DRIVER']} />} />
-
       <Route path="/admin" component={() => <ProtectedRoute component={AdminDashboard} allowedRoles={['ADMIN']} />} />
-
       <Route>
         <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground p-4 text-center">
           <h1 className="text-6xl font-display font-bold text-primary mb-4">404</h1>
@@ -249,9 +208,8 @@ function AppContent() {
     const adShown = sessionStorage.getItem('fullscreen_ad_shown');
     const lastAdDate = localStorage.getItem('last_fullscreen_ad_date');
     const today = new Date().toDateString();
-    
     const shouldShowAd = !adShown && lastAdDate !== today;
-    
+
     if (shouldShowAd) {
       const delay = user.role === 'DRIVER' ? 3000 : 2000;
       const timer = setTimeout(() => {
@@ -271,7 +229,6 @@ function AppContent() {
         {isOfflineMode && <OfflineBanner onSync={syncNow} isSyncing={isSyncing} pendingCount={pendingSyncCount} />}
         <Router />
       </RouteTracker>
-      
       {showFullscreenAd && !isLoading && user && !isOfflineMode && (
         <FullscreenAd onClose={handleCloseFullscreenAd} delay={500} />
       )}
@@ -297,7 +254,10 @@ function App() {
       <I18nProvider>
         <TooltipProvider>
           <Toaster />
-          <AppContent />
+          <WebSocketProvider>
+            <WebSocketEventManager />
+            <AppContent />
+          </WebSocketProvider>
         </TooltipProvider>
       </I18nProvider>
     </ErrorBoundary>

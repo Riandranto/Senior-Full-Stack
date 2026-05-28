@@ -20,6 +20,8 @@ const STORAGE_KEYS = {
   OFFLINE_MODE: 'farady_offline_mode',
 };
 
+const OFFLINE_MODE_KEY = 'offline_mode';
+
 export interface OfflineQueueItem {
   id: string;
   url: string;
@@ -211,22 +213,12 @@ class CapacitorStorageService {
   }
 
   async setOfflineMode(enabled: boolean): Promise<void> {
-    if (this.isCapacitor) {
-      await Preferences.set({
-        key: STORAGE_KEYS.OFFLINE_MODE,
-        value: JSON.stringify(enabled),
-      });
-    } else {
-      sessionStorage.setItem('offline_mode', enabled ? 'true' : 'false');
-    }
+    await Preferences.set({ key: OFFLINE_MODE_KEY, value: enabled ? 'true' : 'false' });
   }
 
   async isOfflineMode(): Promise<boolean> {
-    if (this.isCapacitor) {
-      const { value } = await Preferences.get({ key: STORAGE_KEYS.OFFLINE_MODE });
-      return value ? JSON.parse(value) : false;
-    }
-    return sessionStorage.getItem('offline_mode') === 'true';
+    const { value } = await Preferences.get({ key: OFFLINE_MODE_KEY });
+    return value === 'true';
   }
 
   async setLastSync(time: string): Promise<void> {

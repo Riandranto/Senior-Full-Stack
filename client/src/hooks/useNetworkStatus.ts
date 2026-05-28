@@ -1,3 +1,4 @@
+// src/hooks/useNetworkStatus.ts
 import { useEffect, useState } from 'react';
 import { Network } from '@capacitor/network';
 
@@ -9,43 +10,60 @@ export function useNetworkStatus() {
     let isMounted = true;
     let removeListener: (() => void) | null = null;
 
-    const checkNetwork = async () => {
-      try {
-        const status = await Network.getStatus();
+    // Déterminer si on est dans Capacitor (app mobile) ou dans un navigateur web
+    const isCapacitor = !!(window as any).Capacitor?.isNativePlatform();
+
+    const updateStatus = (connected: boolean, type?: string) => {
+      if (isMounted) {
+        setIsConnected(connected);
+        if (type) setConnectionType(type);
+      }
+    };
+
+    if (isCapacitor) {
+      // Utiliser Capacitor
+      Network.getStatus()
+        .then(status => {
+          if (isMounted) {
+            setIsConnected(status.connected);
+            setConnectionType(status.connectionType);
+          }
+        })
+        .catch(console.error);
+
+      Network.addListener('networkStatusChange', (status) => {
         if (isMounted) {
           setIsConnected(status.connected);
           setConnectionType(status.connectionType);
         }
-      } catch (error) {
-        console.error('Network check error:', error);
-      }
-    };
-
-    checkNetwork();
-
-    // Setup listener avec vérification que remove existe
-    Network.addListener('networkStatusChange', (status) => {
-      if (isMounted) {
-        setIsConnected(status.connected);
-        setConnectionType(status.connectionType);
-      }
-    }).then(listener => {
+      }).then(listener => {
+        removeListener = () => {
+          try {
+            listener.remove();
+          } catch (e) {
+            console.warn('Failed to remove network listener:', e);
+          }
+        };
+      }).catch(console.warn);
+    } else {
+      // Environnement web : utiliser navigator.onLine + événements
+      const handleOnline = () => updateStatus(true, 'wifi');
+      const handleOffline = () => updateStatus(false, 'none');
+      
+      updateStatus(navigator.onLine);
+      
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+      
       removeListener = () => {
-        try {
-          listener.remove();
-        } catch (e) {
-          console.warn('Failed to remove network listener:', e);
-        }
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
       };
-    }).catch(err => {
-      console.warn('Failed to add network listener:', err);
-    });
+    }
 
     return () => {
       isMounted = false;
-      if (removeListener) {
-        removeListener();
-      }
+      if (removeListener) removeListener();
     };
   }, []);
 

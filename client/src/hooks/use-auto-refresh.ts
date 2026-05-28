@@ -15,7 +15,7 @@ export function useAutoRefresh({ queryKeys, interval = 10000, enabled = true }: 
   const timeoutRef = useRef<NodeJS.Timeout>();
 
   const refresh = useCallback(async () => {
-    if (!enabled) return;
+    if (!enabled || isRefreshing) return;
     setIsRefreshing(true);
     try {
       await Promise.all(
@@ -24,11 +24,9 @@ export function useAutoRefresh({ queryKeys, interval = 10000, enabled = true }: 
     } catch (error) {
       console.error('Erreur lors du rafraîchissement:', error);
     } finally {
-      // Garder l'indicateur visible un peu plus longtemps
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setIsRefreshing(false), 800);
+      setTimeout(() => setIsRefreshing(false), 1000);
     }
-  }, [queryClient, queryKeys, enabled]);
+  }, [queryClient, queryKeys, enabled, isRefreshing]);
 
   useEffect(() => {
     if (enabled) {

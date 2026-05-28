@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+// src/components/AdBanner.tsx
+import { useState, useEffect, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
-import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/lib/i18n';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 
 interface Ad {
   id: number;
@@ -25,49 +27,41 @@ interface AdBannerProps {
   autoCloseable?: boolean;
 }
 
-export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerProps) {
-  const [ads, setAds] = useState<Ad[]>([]);
+export const AdBanner = memo(function AdBanner({ position, onClose }: AdBannerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
-  const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
-  const { toast } = useToast();
   const { lang } = useTranslation();
 
-  const fetchAds = useCallback(async () => {
-    try {
+  const { data: ads = [], isLoading } = useQuery<Ad[]>({
+    queryKey: ['ads', position, user?.role || 'ALL'],
+    queryFn: async () => {
       const userRole = user?.role || 'ALL';
-      const res = await fetch(`/api/ads?screen=${position}&userRole=${userRole}`, {
+      const res = await apiFetch(`/api/ads?screen=${position}&userRole=${userRole}`, {
         credentials: 'include',
       });
-      
-      if (!res.ok) return;
-      
-      const data = await res.json();
-      setAds(data);
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Failed to fetch ads:', error);
-      setIsLoading(false);
-    }
-  }, [position, user?.role]);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
 
-  useEffect(() => {
-    fetchAds();
-  }, [fetchAds]);
-
-  // Carousel automatique
+  // Rotation des publicités
   useEffect(() => {
     if (ads.length <= 1) return;
-    
     const interval = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % ads.length);
     }, 5000);
-    
     return () => clearInterval(interval);
   }, [ads.length]);
 
-  const handleAdClick = async (ad: Ad) => {
+  // Gestion du clic sur une publicité
+  const handleAdClick = useCallback(async (ad: Ad) => {
     if (ad.linkUrl) {
       try {
         await fetch(`/api/ads/${ad.id}/click`, {
@@ -76,18 +70,18 @@ export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerPr
           body: JSON.stringify({ screen: position }),
           credentials: 'include',
         });
-        
         window.open(ad.linkUrl, '_blank', 'noopener,noreferrer');
       } catch (error) {
         console.error('Error recording ad click:', error);
       }
     }
-  };
+  }, [position]);
 
-  const handleClose = () => {
+  // Fermeture manuelle
+  const handleClose = useCallback(() => {
     setIsVisible(false);
     if (onClose) onClose();
-  };
+  }, [onClose]);
 
   if (isLoading || ads.length === 0 || !isVisible) return null;
 
@@ -103,26 +97,20 @@ export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerPr
         exit={{ opacity: 0, y: 20 }}
         className="relative w-full rounded-2xl overflow-hidden shadow-lg mb-3"
       >
-        {/* Image de fond */}
-        <div 
+        <div
           className="relative w-full cursor-pointer"
           onClick={() => handleAdClick(currentAd)}
         >
-          <img 
-            src={currentAd.imageUrl} 
+          <img
+            src={currentAd.imageUrl}
             alt={title}
             className="w-full h-32 md:h-40 object-cover"
+            loading="lazy"
           />
-          
-          {/* Overlay avec texte */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent flex flex-col justify-end p-3">
-            <h3 className="text-white font-bold text-sm md:text-base">
-              {title}
-            </h3>
+            <h3 className="text-white font-bold text-sm md:text-base">{title}</h3>
             {description && (
-              <p className="text-white/80 text-xs mt-1 line-clamp-2">
-                {description}
-              </p>
+              <p className="text-white/80 text-xs mt-1 line-clamp-2">{description}</p>
             )}
             {currentAd.linkUrl && (
               <div className="flex items-center gap-1 mt-2 text-white/70 text-xs">
@@ -132,20 +120,13 @@ export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerPr
             )}
           </div>
         </div>
-        
-        {/* Bouton fermer - toujours visible */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleClose();
-          }}
+          onClick={handleClose}
           className="absolute top-2 right-2 w-6 h-6 bg-black/70 rounded-full flex items-center justify-center hover:bg-black/90 transition-colors z-10"
           aria-label="Fermer la publicité"
         >
           <X className="w-3 h-3 text-white" />
         </button>
-        
-        {/* Indicateurs de carousel */}
         {ads.length > 1 && (
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
             {ads.map((_, idx) => (
@@ -156,10 +137,9 @@ export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerPr
                   setCurrentIndex(idx);
                 }}
                 className={`w-1.5 h-1.5 rounded-full transition-all ${
-                  idx === currentIndex 
-                    ? 'w-4 bg-white' 
-                    : 'bg-white/50'
+                  idx === currentIndex ? 'w-4 bg-white' : 'bg-white/50'
                 }`}
+                aria-label={`Aller à la publicité ${idx + 1}`}
               />
             ))}
           </div>
@@ -167,4 +147,4 @@ export function AdBanner({ position, onClose, autoCloseable = true }: AdBannerPr
       </motion.div>
     </AnimatePresence>
   );
-}
+});
