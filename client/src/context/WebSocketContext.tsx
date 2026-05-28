@@ -13,9 +13,9 @@ type WebSocketContextType = {
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const BASE_RECONNECT_DELAY = 1000;
-const MAX_RECONNECT_DELAY = 30000;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const BASE_RECONNECT_DELAY = 2000;
+const MAX_RECONNECT_DELAY = 15000;
 const HEARTBEAT_INTERVAL = 30000;
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
@@ -29,16 +29,13 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const isMountedRef = useRef(true);
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const isConnectingRef = useRef(false);
 
   const getWebSocketUrl = useCallback(() => {
-    // Utiliser la même base que l'API
     let base = API_BASE_URL;
-    // Remplacer http:// par ws:// et https:// par wss://
     let wsUrl = base.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
-    // S'assurer qu'il n'y a pas de slash en trop
     if (!wsUrl.endsWith('/')) wsUrl += '/';
     wsUrl += 'ws';
-    console.log('🔌 [WS] Generated URL:', wsUrl);
     return wsUrl;
   }, []);
 
@@ -59,21 +56,16 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const sendAuth = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     try {
-      const storedUser = localStorage.getItem('user');
-      if (storedUser) {
-        const user = JSON.parse(storedUser);
-        if (user.id) {
-          wsRef.current.send(JSON.stringify({
-            type: 'auth',
-            payload: { userId: user.id }
-          }));
-          console.log('🔐 [WS] Auth sent for user', user.id);
-        }
+      if (user?.id) {
+        wsRef.current.send(JSON.stringify({
+          type: 'auth',
+          payload: { userId: user.id }
+        }));
       }
     } catch (e) {
       console.error('[WS] Error sending auth:', e);
     }
-  }, []);
+  }, [user?.id]);
 
   const startHeartbeat = useCallback(() => {
     stopHeartbeat();
@@ -102,28 +94,29 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     if (isMountedRef.current) {
       setConnected(false);
     }
+    isConnectingRef.current = false;
   }, [stopHeartbeat, cancelReconnect]);
 
   const connect = useCallback(() => {
     if (!isMountedRef.current) return;
-    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      console.warn(`[WS] Max reconnection attempts reached (${MAX_RECONNECT_ATTEMPTS})`);
-      return;
-    }
+    if (isConnectingRef.current) return;
+    if (!user?.id) return;
+    
+    isConnectingRef.current = true;
     intentionalCloseRef.current = false;
+    
     if (wsRef.current) {
       closeConnection(1000, "Replacing old connection");
     }
 
     const wsUrl = getWebSocketUrl();
-    console.log(`[WS] Connecting to ${wsUrl} (attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     const connectionTimeout = setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) {
-        console.warn('[WS] Connection timeout');
         ws.close(1000, "Connection timeout");
+        isConnectingRef.current = false;
       }
     }, 10000);
 
@@ -132,7 +125,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       if (!isMountedRef.current) return;
       reconnectAttemptsRef.current = 0;
       setConnected(true);
-      console.log('[WS] Connected successfully');
+      isConnectingRef.current = false;
       sendAuth();
       startHeartbeat();
     };
@@ -142,29 +135,21 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       if (!isMountedRef.current) return;
       setConnected(false);
       stopHeartbeat();
-      console.log(`[WS] Closed: code=${event.code}, reason=${event.reason}`);
+      isConnectingRef.current = false;
 
-      if (intentionalCloseRef.current) {
-        console.log('[WS] Intentional close, no reconnect');
-        return;
-      }
-      if (event.code === 1000 || event.code === 1001) {
-        console.log(`[WS] Clean close (code ${event.code}), not reconnecting`);
-        return;
-      }
-      if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+      if (intentionalCloseRef.current) return;
+      if (event.code === 1000 || event.code === 1001) return;
+      
+      if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS && user?.id) {
         const delay = Math.min(
           BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current),
           MAX_RECONNECT_DELAY
         );
-        console.log(`[WS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
         cancelReconnect();
         reconnectTimerRef.current = setTimeout(() => {
           reconnectAttemptsRef.current++;
           connect();
         }, delay);
-      } else {
-        console.error(`[WS] Max attempts reached, stopping.`);
       }
     };
 
@@ -183,19 +168,11 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             try { handler(payload); } catch (err) { console.error(`[WS] Handler error for ${type}:`, err); }
           });
         }
-        // Invalidation automatique pour certains types
-        if (type === 'RIDE_STATUS_CHANGED' || type === 'OFFER_ACCEPTED') {
-          queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-          queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
-        }
-        if (type === 'BOOKING_NEW' || type === 'BOOKING_OFFER_ACCEPTED') {
-          queryClient.invalidateQueries({ queryKey: ['/api/driver/bookings'] });
-        }
       } catch (err) {
         console.error('[WS] Parse error:', err);
       }
     };
-  }, [getWebSocketUrl, sendAuth, startHeartbeat, stopHeartbeat, closeConnection, cancelReconnect, queryClient]);
+  }, [getWebSocketUrl, sendAuth, startHeartbeat, stopHeartbeat, closeConnection, cancelReconnect, user?.id]);
 
   const disconnect = useCallback(() => {
     closeConnection(1000, "Manual disconnect");
@@ -217,21 +194,19 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         wsRef.current.send(JSON.stringify(message));
         return true;
       } catch (err) {
-        console.error('[WS] Send error:', err);
         return false;
       }
     }
-    console.warn(`[WS] Cannot send, not connected`);
     return false;
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (user?.id) {
       connect();
-    } else {
-      disconnect();
     }
     return () => {
+      isMountedRef.current = false;
       cancelReconnect();
       intentionalCloseRef.current = true;
       if (wsRef.current) {
@@ -240,7 +215,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       }
       stopHeartbeat();
     };
-  }, [user, connect, disconnect, cancelReconnect, stopHeartbeat]);
+  }, [user?.id]);
 
   return (
     <WebSocketContext.Provider value={{ connected, subscribe, sendMessage, disconnect }}>

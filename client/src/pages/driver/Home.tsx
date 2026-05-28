@@ -1,4 +1,4 @@
-// src/pages/driver/Home.tsx - Version stable (pas de rafraîchissement infini)
+// src/pages/driver/Home.tsx - Version corrigée (stable)
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MobileLayout } from '@/components/RoleLayout';
 import { MapView, LatLng, fetchOSRMRoute } from '@/components/Map';
@@ -130,7 +130,9 @@ export default function DriverHome() {
   const [bookingPrice, setBookingPrice] = useState('');
   const [bookingPriceError, setBookingPriceError] = useState<string | null>(null);
   const [hasArrivedAtPickup, setHasArrivedAtPickup] = useState(false);
-  const [showFullscreenAd, setShowFullscreenAd] = useState(true);
+  const [showFullscreenAd, setShowFullscreenAd] = useState(() => {
+    return sessionStorage.getItem('farady_fullscreen_ad_shown') !== 'true';
+  });
   const [showTopAd, setShowTopAd] = useState(true);
 
   const handleCloseFullscreenAd = useCallback(() => {
@@ -150,13 +152,12 @@ export default function DriverHome() {
   const isOnline = profile?.online || false;
   const isPending = profile?.status === 'PENDING';
 
-  // Refs pour géolocalisation (solution stable)
-  const gpsIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isFirstRunRef = useRef(true);
+  // Refs pour géolocalisation
+  const watchIdRef = useRef<number | null>(null);
   const lastSentPosRef = useRef<LatLng | null>(null);
-  const requestLocationRef = useRef<() => Promise<boolean>>();
   const isOnlineRef = useRef(isOnline);
   const gpsDeniedRef = useRef(gpsDenied);
+  const locationRequestedRef = useRef(false);
 
   // Mettre à jour les refs
   useEffect(() => {
@@ -180,11 +181,8 @@ export default function DriverHome() {
         return [];
       }
     },
-    refetchInterval: (query) => {
-      if (document.visibilityState !== 'visible') return false;
-      return 30000;
-    },
-    refetchIntervalInBackground: false,
+    refetchInterval: false,
+    staleTime: 30 * 1000,
     enabled: isOnline && !activeRide,
   });
 
@@ -253,105 +251,80 @@ export default function DriverHome() {
     updateLocationRef.current.mutate(newPos);
   }, []);
 
-  // Récupération unique de la position
-  const requestLocation = useCallback(async (): Promise<boolean> => {
+  // Démarrer le watchPosition (une seule fois)
+  const startWatchingLocation = useCallback(() => {
     if (!navigator.geolocation) {
-      setLocationError(lang === 'mg' ? "Tsy manohana GPS ity navigateur ity" : "Ce navigateur ne supporte pas la géolocalisation");
+      setLocationError(lang === 'mg' ? "Tsy manohana GPS" : "GPS non supporté");
       setGpsDenied(true);
-      return false;
+      return;
     }
-    if (!profileRef.current?.online) return false;
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
     setIsLocating(true);
     setLocationError(null);
-    return new Promise((resolve) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setDriverPos(location);
-          setLocationAccuracy(pos.coords.accuracy);
-          setLocationError(null);
-          setGpsDenied(false);
-          setIsLocating(false);
-          toast({
-            title: lang === 'mg' ? "Toerana hita" : "Position trouvée",
-            description: lang === 'mg' ? `Précision: ${Math.round(pos.coords.accuracy)}m` : `Précision: ${Math.round(pos.coords.accuracy)}m`,
-            className: "mobile-toast"
-          });
-          if (profileRef.current?.online && document.visibilityState === 'visible') {
-            sendLocationIfChanged(location);
-          }
-          resolve(true);
-        },
-        (error) => {
-          console.error('GPS error:', error);
-          setIsLocating(false);
-          let message = '';
-          if (error.code === error.PERMISSION_DENIED) {
-            message = lang === 'mg' ? "Navela ny GPS" : "GPS refusé";
-            setGpsDenied(true);
-          } else if (error.code === error.POSITION_UNAVAILABLE) {
-            message = lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible";
-          } else if (error.code === error.TIMEOUT) {
-            message = lang === 'mg' ? "Lany daty ny GPS" : "Délai dépassé (20s)";
-          } else {
-            message = error.message;
-          }
-          setLocationError(message);
-          toast({
-            variant: "destructive",
-            title: lang === 'mg' ? "Tsy hita ny toerana" : "Position non trouvée",
-            description: message,
-            className: "mobile-toast",
-          });
-          resolve(false);
-        },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-      );
-    });
-  }, [lang, toast, sendLocationIfChanged]);
 
-  // Stocker la fonction requestLocation dans une ref stable
-  useEffect(() => {
-    requestLocationRef.current = requestLocation;
-  }, [requestLocation]);
-
-  // Démarrage périodique (intervalle unique) - uniquement si online et pas gpsDenied
-  const startGpsInterval = useCallback(() => {
-    if (gpsIntervalRef.current) {
-      clearInterval(gpsIntervalRef.current);
-      gpsIntervalRef.current = null;
-    }
-    gpsIntervalRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible' && isOnlineRef.current && !gpsDeniedRef.current) {
-        if (requestLocationRef.current) {
-          requestLocationRef.current();
-        }
-      }
-    }, 60000); // 60 secondes
-  }, []);
-
-  // Démarrage initial et arrêt - corrigé pour éviter boucle infinie
-  useEffect(() => {
-    if (profile?.online && !gpsDenied && !driverPos && isFirstRunRef.current) {
-      isFirstRunRef.current = false;
-      requestLocation().then(() => {
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const location = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setDriverPos(location);
+        setLocationAccuracy(position.coords.accuracy);
+        setLocationError(null);
+        setGpsDenied(false);
+        setIsLocating(false);
+        
         if (profileRef.current?.online && document.visibilityState === 'visible') {
-          startGpsInterval();
+          sendLocationIfChanged(location);
         }
-      });
-    } else if (!profile?.online || gpsDenied) {
-      if (gpsIntervalRef.current) {
-        clearInterval(gpsIntervalRef.current);
-        gpsIntervalRef.current = null;
+      },
+      (error) => {
+        console.error('GPS watch error:', error.code, error.message);
+        setIsLocating(false);
+        
+        if (error.code === error.PERMISSION_DENIED) {
+          setGpsDenied(true);
+          setLocationError(lang === 'mg' ? "GPS navela" : "GPS refusé");
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          setLocationError(lang === 'mg' ? "Tsy hita ny toerana" : "Position indisponible");
+        } else if (error.code === error.TIMEOUT) {
+          setLocationError(lang === 'mg' ? "Lany daty" : "Délai dépassé");
+        } else {
+          setLocationError(error.message);
+        }
+      },
+      { 
+        enableHighAccuracy: true, 
+        timeout: 30000, 
+        maximumAge: 60000
       }
-    }
+    );
+  }, [lang, sendLocationIfChanged]);
+
+  // Nettoyer le watchPosition
+  useEffect(() => {
     return () => {
-      if (gpsIntervalRef.current) {
-        clearInterval(gpsIntervalRef.current);
-        gpsIntervalRef.current = null;
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, [profile?.online, gpsDenied, driverPos, requestLocation, startGpsInterval]);
+  }, []);
+
+  // Démarrer la géolocalisation UNE SEULE FOIS quand le profil est chargé et online
+  useEffect(() => {
+    if (profile && isOnline && !locationRequestedRef.current && !gpsDenied && !driverPos) {
+      locationRequestedRef.current = true;
+      startWatchingLocation();
+    }
+  }, [profile, isOnline, gpsDenied, driverPos, startWatchingLocation]);
+
+  // Redémarrer la géolocalisation quand on passe online
+  useEffect(() => {
+    if (isOnline && !driverPos && !gpsDenied && locationRequestedRef.current) {
+      startWatchingLocation();
+    }
+  }, [isOnline, driverPos, gpsDenied, startWatchingLocation]);
 
   const formattedPrice = useMemo(() => {
     const price = extractPrice(activeRide);
@@ -557,6 +530,15 @@ export default function DriverHome() {
     } finally { setIsUpdating(false); }
   };
 
+  // Demander la position manuellement (bouton)
+  const requestLocationManually = useCallback(() => {
+    if (watchIdRef.current !== null) {
+      // Déjà en écoute, ne rien faire
+      return;
+    }
+    startWatchingLocation();
+  }, [startWatchingLocation]);
+
   const openGoogleMapsNavigation = useCallback(() => {
     if (!driverPos) {
       toast({ variant: "destructive", title: lang === 'mg' ? "Tsy hita ny toerana misy anao" : "Position non trouvée", description: "Veuillez patienter.", className: "mobile-toast" });
@@ -673,7 +655,8 @@ export default function DriverHome() {
                 className="mt-2 w-full rounded-lg"
                 onClick={() => {
                   setGpsDenied(false);
-                  requestLocation();
+                  locationRequestedRef.current = false;
+                  startWatchingLocation();
                 }}
               >
                 {lang === 'mg' ? 'Andramo indray' : 'Réessayer'}
@@ -707,7 +690,7 @@ export default function DriverHome() {
         </div>
 
         <div className="absolute top-4 right-4 z-10">
-          <motion.button whileTap={{ scale: 0.95 }} onClick={() => requestLocation()} className="p-2 rounded-full bg-background/90 backdrop-blur-sm shadow-lg border border-border/30" disabled={isLocating}>
+          <motion.button whileTap={{ scale: 0.95 }} onClick={requestLocationManually} className="p-2 rounded-full bg-background/90 backdrop-blur-sm shadow-lg border border-border/30" disabled={isLocating}>
             <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-pulse text-primary' : 'text-muted-foreground'}`} />
           </motion.button>
         </div>
@@ -745,6 +728,7 @@ export default function DriverHome() {
           </div>
         )}
 
+        {/* Le reste du JSX (AnimatePresence, Dialog, etc.) reste identique */}
         <AnimatePresence>
           {showRideTracking && activeRide && (
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="absolute bottom-0 w-full z-20 p-4">

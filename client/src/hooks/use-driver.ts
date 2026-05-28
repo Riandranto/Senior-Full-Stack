@@ -1,4 +1,4 @@
-// client/src/hooks/use-driver.ts
+// client/src/hooks/use-driver.ts - Version corrigée
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { type Ride, type CreateOfferRequest, type DriverProfile } from "@shared/schema";
@@ -7,82 +7,23 @@ import { useTranslation } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 import { useRef, useCallback } from "react";
 
-export interface DriverDocument {
-  id: number;
-  type: string;
-  url: string;
-  uploadedAt: string;
-  status?: 'PENDING' | 'APPROVED' | 'REJECTED';
-}
-
 export function useDriverProfile() {
   const { toast } = useToast();
   const { lang } = useTranslation();
 
-  return useQuery<DriverProfile & { documents: DriverDocument[] }>({
+  return useQuery<DriverProfile & { documents: any[] }>({
     queryKey: [api.driver.getProfile.path],
     queryFn: async () => {
-      const res = await apiFetch(api.driver.getProfile.path, {
-        credentials: "include",
-        headers: { 'Cache-Control': 'no-cache' }
-      });
+      const res = await apiFetch(api.driver.getProfile.path, { credentials: "include" });
       if (!res.ok) {
         if (res.status === 404) return null;
-        const error = await res.json();
-        throw new Error(error.message || "Failed to fetch driver profile");
+        throw new Error("Failed to fetch driver profile");
       }
       return res.json();
     },
-    staleTime: 2 * 60 * 1000,
-  });
-}
-
-export function useUploadDocument() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { lang } = useTranslation();
-
-  return useMutation({
-    mutationFn: async ({ file, type }: { file: File; type: string }) => {
-      const maxSize = 10 * 1024 * 1024;
-      if (file.size > maxSize) throw new Error(lang === 'mg' ? "Lehibe loatra ny rakitra. 10MB ny fetra." : "Fichier trop volumineux. Limite: 10MB");
-      const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
-      if (!allowedTypes.includes(file.type)) throw new Error(lang === 'mg' ? "Karazana rakitra tsy mety. JPEG, PNG, PDF ihany." : "Type de fichier non autorisé. JPEG, PNG, PDF uniquement.");
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('type', type);
-
-      const res = await apiFetch(api.driver.uploadDocument.path, {
-        method: api.driver.uploadDocument.method,
-        body: formData,
-        credentials: "include",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || (lang === 'mg' ? "Tsy afaka nampiditra antontan-taratasy" : "Échec du téléchargement"));
-      return data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.driver.getProfile.path] });
-      queryClient.invalidateQueries({ queryKey: ['/api/driver/documents'] });
-      toast({
-        title: lang === 'mg' ? "Voaray ny antontan-taratasy" : "Document reçu",
-        description: lang === 'mg' ? "Hiandry fankatoavana" : "En attente de validation",
-      });
-    },
-    onError: (error: Error) => {
-      toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
-    },
-  });
-}
-
-export function useDriverDocuments() {
-  return useQuery<DriverDocument[]>({
-    queryKey: ['/api/driver/documents'],
-    queryFn: async () => {
-      const res = await apiFetch('/api/driver/documents', { credentials: 'include' });
-      if (!res.ok) return [];
-      return res.json();
-    },
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 
@@ -119,20 +60,13 @@ export function useDriverRequests() {
   return useQuery<any[]>({
     queryKey: [api.driver.getRequests.path],
     queryFn: async () => {
-      const res = await apiFetch(api.driver.getRequests.path, { credentials: "include", headers: { 'Cache-Control': 'no-cache' } });
-      if (!res.ok) {
-        if (res.status === 403) return { error: 'NOT_APPROVED' };
-        return [];
-      }
+      const res = await apiFetch(api.driver.getRequests.path, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
-    refetchInterval: (query) => {
-      if (document.visibilityState !== 'visible') return false;
-      const data = query.state.data;
-      if (!data || (data && typeof data === 'object' && 'error' in data)) return false;
-      return 20000;
-    },
-    refetchIntervalInBackground: false,
+    refetchInterval: false,
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -144,7 +78,6 @@ export function useSendOffer() {
   return useMutation({
     mutationFn: async (data: CreateOfferRequest) => {
       if (data.priceAr < 1000) throw new Error(lang === 'mg' ? "Vidiny kely loatra (1000 Ar ny farany ambany)" : "Prix trop bas (minimum 1000 Ar)");
-      if (data.etaMinutes < 1 || data.etaMinutes > 120) throw new Error(lang === 'mg' ? "Fotoana tsy mety (1-120 minitra)" : "Temps invalide (1-120 minutes)");
       const res = await apiFetch(api.driver.sendOffer.path, {
         method: api.driver.sendOffer.method,
         headers: { "Content-Type": "application/json" },
@@ -152,12 +85,12 @@ export function useSendOffer() {
         credentials: "include",
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.message || (lang === 'mg' ? "Tsy afaka nandefa tolo-bidy" : "Échec de l'envoi de l'offre"));
+      if (!res.ok) throw new Error(result.message || "Échec de l'envoi de l'offre");
       return result;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.driver.getRequests.path] });
-      toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!", description: `${variables.priceAr} Ar - ${variables.etaMinutes} min` });
+      toast({ title: lang === 'mg' ? "Tolobidy nalefa!" : "Offre envoyée!" });
     },
     onError: (error: Error) => {
       toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
@@ -165,22 +98,20 @@ export function useSendOffer() {
   });
 }
 
-// Throttling corrigé (useRef)
 export function useUpdateLocation() {
   const timeoutRef = useRef<NodeJS.Timeout>();
   const lastSentLocation = useRef({ lat: 0, lng: 0 });
   const lastSendTime = useRef(0);
 
   const mutate = useCallback(async (location: { lat: number; lng: number }) => {
-    if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
-      console.warn('useUpdateLocation: invalid location', location);
-      return;
-    }
+    if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') return;
+    
     const now = Date.now();
     const latDiff = Math.abs(location.lat - lastSentLocation.current.lat);
     const lngDiff = Math.abs(location.lng - lastSentLocation.current.lng);
     const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff) * 111000;
-    if (distance < 300 && (now - lastSendTime.current) < 15000) return;
+    
+    if (distance < 200 && (now - lastSendTime.current) < 15000) return;
 
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(async () => {
@@ -200,7 +131,7 @@ export function useUpdateLocation() {
       } finally {
         timeoutRef.current = undefined;
       }
-    }, 500);
+    }, 1000);
   }, []);
 
   return { mutate };
@@ -213,22 +144,15 @@ export function useDriverActiveRide() {
       try {
         const res = await apiFetch('/api/driver/active-ride', { credentials: 'include' });
         if (res.status === 404) return null;
-        if (res.status === 400) {
-          console.warn('Bad request for /api/driver/active-ride, returning null');
-          return null;
-        }
         if (!res.ok) return null;
         return res.json();
       } catch (error) {
-        console.error('Error fetching active ride:', error);
         return null;
       }
     },
     refetchInterval: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
     staleTime: Infinity,
-    retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -239,7 +163,6 @@ export function useUpdateRideStatus(rideId: number) {
 
   return useMutation({
     mutationFn: async (status: string) => {
-      console.log(`🔄 Updating ride ${rideId} status to: ${status}`);
       const res = await apiFetch(`/api/rides/${rideId}/status`, {
         method: 'PATCH',
         headers: { "Content-Type": "application/json" },
@@ -255,19 +178,8 @@ export function useUpdateRideStatus(rideId: number) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
       queryClient.invalidateQueries({ queryKey: ['/api/driver/requests'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/rides/active'] });
-      const messages: Record<string, { mg: string; fr: string }> = {
-        DRIVER_EN_ROUTE: { mg: "Eny an-dalana!", fr: "En route!" },
-        DRIVER_ARRIVED: { mg: "Tonga teo amin'ny toerana!", fr: "Arrivé au point de départ!" },
-        IN_PROGRESS: { mg: "Manomboka ny dia", fr: "Course en cours" },
-        COMPLETED: { mg: "Vita ny dia", fr: "Course terminée" },
-      };
-      if (messages[data.status]) {
-        toast({ title: lang === 'mg' ? messages[data.status].mg : messages[data.status].fr });
-      }
     },
     onError: (error: Error) => {
-      console.error('Error updating ride status:', error);
       toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
     },
   });
@@ -296,9 +208,7 @@ export function useExtendEta(rideId: number) {
       queryClient.invalidateQueries({ queryKey: ['/api/driver/active-ride'] });
       toast({
         title: lang === 'mg' ? "Fotoana fanampiny" : "Temps supplémentaire",
-        description: lang === 'mg' 
-          ? `+${additionalMinutes} minitra fanampiny (total: ${data.etaMinutes} min)`
-          : `+${additionalMinutes} minutes supplémentaires (total: ${data.etaMinutes} min)`,
+        description: `+${additionalMinutes} min`,
       });
     },
     onError: (error: Error) => {

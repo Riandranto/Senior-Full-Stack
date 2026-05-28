@@ -54,56 +54,42 @@ export function useCreateRide() {
   });
 }
 
-// ✅ CORRECTION : ajout de document.visibilityState
+// ✅ CORRECTION ICI AUSSI
+export function useRideOffers(rideId: number | null) {
+  return useQuery<any[]>({
+    queryKey: [api.passenger.getOffers.path, rideId],
+    queryFn: async () => {
+      if (!rideId) return [];
+      const url = buildUrl(api.passenger.getOffers.path, { id: rideId });
+      const res = await apiFetch(url, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!rideId,
+    refetchInterval: false, // DÉSACTIVÉ
+    staleTime: 30 * 1000, // 30 secondes
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useRide(id: number | null) {
   const { toast } = useToast();
   const { lang } = useTranslation();
 
   return useQuery<Ride & { driver?: any }>({
     queryKey: [api.passenger.getRide.path, id],
-    queryFn: async () => { /* identique */ },
+    queryFn: async () => {
+      if (!id) return null;
+      const url = buildUrl(api.passenger.getRide.path, { id });
+      const res = await apiFetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch ride");
+      return res.json();
+    },
     enabled: !!id,
-    refetchInterval: (query) => {
-      if (document.visibilityState !== 'visible') return false;
-      const data = query.state.data;
-      if (!data) return 20000;
-      if (data.status === 'COMPLETED' || data.status === 'CANCELED') return false;
-      if (data.status === 'ASSIGNED' || data.status === 'DRIVER_EN_ROUTE' || data.status === 'DRIVER_ARRIVED') return 15000;
-      if (data.status === 'IN_PROGRESS') return 30000;
-      return 15000;
-    },
-    refetchIntervalInBackground: false,
-    staleTime: 8000,
-    retry: (failureCount, error) => {
-      if (error?.message?.includes('429')) return false;
-      return failureCount < 2;
-    },
-    retryDelay: 5000,
-    onError: (error: Error) => {
-      console.error('Error fetching ride:', error);
-      if (!error.message?.includes('429') && !error.message?.includes('500')) {
-        toast({ variant: "destructive", title: lang === 'mg' ? "Tsy nety" : "Erreur", description: error.message });
-      }
-    },
-  });
-}
-
-// ✅ CORRECTION ICI AUSSI
-export function useRideOffers(rideId: number | null) {
-  return useQuery<any[]>({
-    queryKey: [api.passenger.getOffers.path, rideId],
-    queryFn: async () => { /* identique */ },
-    enabled: !!rideId,
-    refetchInterval: (query) => {
-      if (document.visibilityState !== 'visible') return false;
-      const data = query.state.data;
-      if (!data) return 15000;
-      const hasAcceptedOffer = data.some((o: any) => o.status === 'ACCEPTED');
-      if (hasAcceptedOffer) return false;
-      return 15000;
-    },
-    refetchIntervalInBackground: false,
-    staleTime: 8000,
+    refetchInterval: false, // DÉSACTIVÉ - utiliser WebSocket
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 
